@@ -197,6 +197,13 @@ export default function Page() {
   const [isShareOpen, setIsShareOpen] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState<string | null>(null)
+  const [inviteModalData, setInviteModalData] = useState<{
+    token: string
+    title: string
+    role?: string
+    access?: string
+  } | null>(null)
+  const [isProcessingInvite, setIsProcessingInvite] = useState(false)
 
   // Granular project permissions for current user on active project
   const [userPermissions, setUserPermissions] = useState<UserPermissions>({
@@ -340,52 +347,127 @@ export default function Page() {
     }
   }, [user, supabase, activeProjectId])
 
-  // Accept invite once user is authenticated
+  // Handle deleting an owned project or rejecting/removing a shared project from dashboard
+  const handleDeleteOrLeaveProject = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const targetP = projects.find((p) => p.id === id)
+    const isProjectOwner = targetP ? Boolean(user?.id && targetP.userId ? targetP.userId === user.id : isOwner) : isOwner
+
+    if (isProjectOwner) {
+      if (!confirm("Are you sure you want to delete this project? All associated workflows, designs, and comments will be permanently deleted.")) return
+      update((xs) => xs.filter((p) => p.id !== id))
+      if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
+      await supabase.from("projects").delete().eq("id", id)
+    } else {
+      if (!confirm("Are you sure you want to reject and remove this project from your dashboard? You will no longer see this project unless re-invited.")) return
+      update((xs) => xs.filter((p) => p.id !== id))
+      if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
+      try {
+        await supabase.rpc("leave_project", { p_project_id: id })
+      } catch (err) {
+        console.error("Error leaving project:", err)
+      }
+    }
+  }
+
+  // Check and prompt invite once user is authenticated
   useEffect(() => {
     if (!user || !supabase || !inviteToken) return
 
     let cancelled = false
-    const acceptInvite = async () => {
+    const inspectInvite = async () => {
       try {
-        const { data, error } = await supabase.rpc("accept_project_invite", {
-          p_invite_token: inviteToken,
+        const { data, error } = await supabase.rpc("get_project_by_invite", {
+          invite_token: inviteToken,
         })
 
         if (cancelled) return
 
-        if (error) {
-          console.error("Accept invite error:", error.message || error)
-          alert(error.message || "Failed to accept invite.")
-          setAuthMessage(error.message)
-        } else if (data) {
-          // Clear query param from browser URL
-          window.history.replaceState({}, "", window.location.pathname)
-          setInviteToken(null)
-          const loadedProjects = await loadWorkspace()
-          if (data.project_id) {
-            setActiveProjectId(data.project_id)
-            const targetP = loadedProjects?.find((p) => p.id === data.project_id)
-            if (targetP && targetP.workflows.length > 0) {
-              setActiveWorkflowId(targetP.workflows[0].id)
-            }
+        if (error || !data) {
+          console.error("Invite lookup error:", error)
+          const { data: accData } = await supabase.rpc("accept_project_invite", {
+            p_invite_token: inviteToken,
+          })
+          if (!cancelled && accData) {
+            window.history.replaceState({}, "", window.location.pathname)
+            setInviteToken(null)
+            await loadWorkspace()
           }
-          if (data.access === "view") {
-            setShowReport(true)
-          } else {
-            setShowReport(false)
-            setViewMode("editor")
-          }
+        } else {
+          setInviteModalData({
+            token: inviteToken,
+            title: data.title || "Shared Project",
+            role: data.role || "client",
+            access: data.permission || "view",
+          })
         }
       } catch (err) {
-        console.error("Error accepting invite:", err)
+        console.error("Error inspecting invite:", err)
       }
     }
 
-    acceptInvite()
+    inspectInvite()
     return () => {
       cancelled = true
     }
   }, [user, supabase, inviteToken, loadWorkspace])
+
+  const handleAcceptInvite = async () => {
+    if (!inviteModalData || !supabase) return
+    setIsProcessingInvite(true)
+    const token = inviteModalData.token
+    try {
+      const { data, error } = await supabase.rpc("accept_project_invite", {
+        p_invite_token: token,
+      })
+      window.history.replaceState({}, "", window.location.pathname)
+      setInviteToken(null)
+      setInviteModalData(null)
+      if (error) {
+        alert(error.message || "Failed to accept invite.")
+      } else if (data) {
+        const loadedProjects = await loadWorkspace()
+        if (data.project_id) {
+          setActiveProjectId(data.project_id)
+          const targetP = loadedProjects?.find((p) => p.id === data.project_id)
+          if (targetP && targetP.workflows.length > 0) {
+            setActiveWorkflowId(targetP.workflows[0].id)
+          }
+        }
+        if (data.access === "view") {
+          setShowReport(true)
+        } else {
+          setShowReport(false)
+          setViewMode("editor")
+        }
+      }
+    } catch (err) {
+      console.error("Error accepting invite:", err)
+    } finally {
+      setIsProcessingInvite(false)
+    }
+  }
+
+  const handleRejectInvite = async () => {
+    if (!inviteModalData || !supabase) return
+    setIsProcessingInvite(true)
+    const token = inviteModalData.token
+    const projectTitle = inviteModalData.title
+    try {
+      await supabase.rpc("reject_project_invite", {
+        p_invite_token: token,
+      })
+      window.history.replaceState({}, "", window.location.pathname)
+      setInviteToken(null)
+      setInviteModalData(null)
+      await loadWorkspace()
+      alert(`Invitation for "${projectTitle}" was rejected. It will not appear in your dashboard.`)
+    } catch (err) {
+      console.error("Error rejecting invite:", err)
+    } finally {
+      setIsProcessingInvite(false)
+    }
+  }
 
   // Fetch projects on auth change
   useEffect(() => {
@@ -987,7 +1069,7 @@ export default function Page() {
 
       {/* Sidebar */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
           isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -1028,13 +1110,8 @@ export default function Page() {
           onRenameProject={(id: string, title: string) =>
             update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
           }
-          onDeleteProject={async (id: string, e: React.MouseEvent) => {
-            e.stopPropagation()
-            if (!confirm("Are you sure you want to delete this project?")) return
-            update((xs) => xs.filter((p) => p.id !== id))
-            if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
-            await supabase.from("projects").delete().eq("id", id)
-          }}
+          userId={user?.id}
+          onDeleteProject={handleDeleteOrLeaveProject}
           onDeleteWorkflow={async (projectId: string, workflowId: string, e: React.MouseEvent) => {
             e.stopPropagation()
             if (!confirm("Are you sure you want to delete this workflow?")) return
@@ -1222,13 +1299,7 @@ export default function Page() {
                 setActiveProjectId(id)
                 setShowReport(true)
               }}
-              onDeleteProject={async (id: string, e: React.MouseEvent) => {
-                e.stopPropagation()
-                if (!confirm("Are you sure you want to delete this project?")) return
-                update((xs) => xs.filter((p) => p.id !== id))
-                if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
-                await supabase.from("projects").delete().eq("id", id)
-              }}
+              onDeleteProject={handleDeleteOrLeaveProject}
               onRenameProject={(id: string, title: string) =>
                 update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
               }
@@ -1286,6 +1357,61 @@ export default function Page() {
           onUpdateWorkflowField={updateWorkflowField}
           onSubmitRevision={submitFinalRevision}
         />
+      )}
+
+      {/* Project Invitation Confirmation Modal (Accept / Reject) */}
+      {inviteModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl text-slate-100 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600/20 border border-blue-500/30 text-blue-400 flex-shrink-0">
+                <Share2 className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-semibold text-white">Project Invitation</h3>
+                <p className="text-xs text-slate-400">You&apos;ve been invited to collaborate</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 space-y-2">
+              <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Project</div>
+              <div className="text-sm font-bold text-white truncate">{inviteModalData.title}</div>
+              <div className="flex items-center gap-2 pt-1 text-xs text-slate-400">
+                <span className="px-2.5 py-0.5 rounded-full bg-purple-950 text-purple-400 border border-purple-800 text-[10px] font-semibold capitalize">
+                  {inviteModalData.role || "Client"}
+                </span>
+                <span>•</span>
+                <span className="text-emerald-400">
+                  {inviteModalData.access === "edit" ? "Can Edit & Upload" : "View Only Access"}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-1 gap-3">
+              <p className="text-[11px] text-slate-400 max-w-[220px]">
+                Rejecting will decline this invitation and remove it from your dashboard.
+              </p>
+              <div className="flex items-center gap-2 justify-end flex-shrink-0">
+                <button
+                  type="button"
+                  disabled={isProcessingInvite}
+                  onClick={handleRejectInvite}
+                  className="px-3.5 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-xl border border-rose-900/60 transition-colors cursor-pointer"
+                >
+                  {isProcessingInvite ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reject"}
+                </button>
+                <button
+                  type="button"
+                  disabled={isProcessingInvite}
+                  onClick={handleAcceptInvite}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-xl shadow-lg shadow-blue-600/30 transition-colors cursor-pointer"
+                >
+                  {isProcessingInvite ? <Loader2 className="h-4 w-4 animate-spin" /> : "Accept & Open"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

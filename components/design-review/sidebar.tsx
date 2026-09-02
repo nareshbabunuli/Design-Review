@@ -20,6 +20,7 @@ type SidebarProps = {
   activeProjectId: string | null
   activeWorkflowId: string | null
   editingId: EditingId
+  userId?: string | null
   isOwner?: boolean
   onBackToDashboard?: () => void
   setEditingId: (id: EditingId) => void
@@ -84,6 +85,7 @@ export function Sidebar({
   activeProjectId,
   activeWorkflowId,
   editingId,
+  userId,
   isOwner = true,
   onBackToDashboard,
   setEditingId,
@@ -109,7 +111,7 @@ export function Sidebar({
   const [dragOverProjectIndex, setDragOverProjectIndex] = useState<number | null>(null)
 
   return (
-    <aside className="w-80 flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-sm z-10 print:hidden transition-colors select-none">
+    <aside className="w-80 h-full max-h-screen flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col min-h-0 shadow-sm z-10 print:hidden transition-colors select-none overflow-hidden">
       <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900 transition-colors">
         {onBackToDashboard ? (
           <button
@@ -138,7 +140,7 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+      <nav className="flex-1 overflow-y-auto min-h-0 p-3 space-y-1 custom-scrollbar">
         {projects.map((project, pIdx) => (
           <div
             key={project.id}
@@ -275,13 +277,13 @@ export function Sidebar({
                   >
                     <Edit2 className="h-3.5 w-3.5" />
                   </button>
-                  {projects.length > 1 && (
+                  {(projects.length > 1 || (userId && project.userId !== userId)) && (
                     <button
                       type="button"
                       onClick={(e) => onDeleteProject(project.id, e)}
                       className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
-                      title="Delete project"
-                      aria-label="Delete project"
+                      title={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
+                      aria-label={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

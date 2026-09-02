@@ -510,17 +510,31 @@ export function ProjectDashboard({
                             </button>
                           )}
 
-                          {canEditProject && (
+                          {/* Project deletion for owners, or Reject & Remove for invited members */}
+                          {project.userId === userId || !project.userId ? (
                             <button
                               type="button"
                               onClick={(e) => {
                                 onDeleteProject(project.id, e)
                                 setMenuOpenId(null)
                               }}
-                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left"
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left cursor-pointer"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                               <span>Delete project</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                onDeleteProject(project.id, e)
+                                setMenuOpenId(null)
+                              }}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left cursor-pointer font-medium"
+                              title="Reject & remove this shared project from your dashboard"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Reject &amp; Remove</span>
                             </button>
                           )}
                         </div>
@@ -607,17 +621,15 @@ export function ProjectDashboard({
                       <Eye className="h-3.5 w-3.5 text-purple-400" />
                       <span>View</span>
                     </button>
-                    {canEditProject && (
-                      <button
-                        type="button"
-                        onClick={(e) => onDeleteProject(project.id, e)}
-                        className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-                        title="Delete"
-                        aria-label="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => onDeleteProject(project.id, e)}
+                      className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                      title={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
+                      aria-label={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               )
