@@ -348,7 +348,7 @@ export default function Page() {
         if (cancelled) return
 
         if (error) {
-          console.error("Accept invite error:", error)
+          console.error("Accept invite error:", error.message || error)
           alert(error.message || "Failed to accept invite.")
           setAuthMessage(error.message)
         } else if (data) {
@@ -356,7 +356,9 @@ export default function Page() {
           window.history.replaceState({}, "", window.location.pathname)
           setInviteToken(null)
           await loadWorkspace()
-          setActiveProjectId(data.project_id)
+          if (data.project_id) {
+            setActiveProjectId(data.project_id)
+          }
           if (data.access === "view") {
             setShowReport(true)
           } else {
