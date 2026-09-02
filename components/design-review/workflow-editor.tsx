@@ -17,7 +17,7 @@ import {
   Eye,
   Lock,
 } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
 
@@ -149,8 +149,8 @@ function ImageUpload({
       >
         {image ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={image} alt={title} className="h-full w-full object-contain p-2 drop-shadow-sm" />
+            {/* eslint-disable-next-line @next/next/no-img-element */
+            <img src={image} alt={title} className="h-full w-full object-contain p-2 drop-shadow-sm" />}
             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
               <span className="text-white font-medium bg-black/60 px-4 py-2 rounded-lg backdrop-blur-sm">
                 {isUploading ? "Uploading..." : "Click to change"}
@@ -197,14 +197,30 @@ export function WorkflowEditor({
   const [submittedReason, setSubmittedReason] = useState(false)
   const [submittedClientMessage, setSubmittedClientMessage] = useState(false)
 
+  // Local drafts to avoid text being wiped out by realtime sync or race conditions
+  const [notesDraft, setNotesDraft] = useState(workflow.ourNotes || "")
+  const [reasonDraft, setReasonDraft] = useState(workflow.reason || "")
+  const [clientMessageDraft, setClientMessageDraft] = useState(workflow.clientMessage || "")
+
+  const prevWorkflowIdRef = useRef(workflow.id)
+
+  useEffect(() => {
+    if (prevWorkflowIdRef.current !== workflow.id) {
+      prevWorkflowIdRef.current = workflow.id
+      setNotesDraft(workflow.ourNotes || "")
+      setReasonDraft(workflow.reason || "")
+      setClientMessageDraft(workflow.clientMessage || "")
+    }
+  }, [workflow.id, workflow.ourNotes, workflow.reason, workflow.clientMessage])
+
   const handleSubmitNotes = () => {
-    onUpdateField("ourNotes", workflow.ourNotes)
+    onUpdateField("ourNotes", notesDraft)
     setSubmittedNotes(true)
     setTimeout(() => setSubmittedNotes(false), 2500)
   }
 
   const handleSubmitReason = () => {
-    onUpdateField("reason", workflow.reason)
+    onUpdateField("reason", reasonDraft)
     setSubmittedReason(true)
     setTimeout(() => setSubmittedReason(false), 2500)
   }
@@ -214,7 +230,7 @@ export function WorkflowEditor({
       alert(`Comments are locked to ${inviteeEmail}. Only ${inviteeEmail} can comment.`)
       return
     }
-    onUpdateField("clientMessage", workflow.clientMessage)
+    onUpdateField("clientMessage", clientMessageDraft)
     setSubmittedClientMessage(true)
     setTimeout(() => setSubmittedClientMessage(false), 2500)
   }
@@ -357,8 +373,9 @@ export function WorkflowEditor({
           {isOwner ? (
             <>
               <textarea
-                value={workflow.ourNotes}
-                onChange={(e) => onUpdateField("ourNotes", e.target.value)}
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                onBlur={() => onUpdateField("ourNotes", notesDraft)}
                 className="flex-1 min-h-[160px] w-full resize-none rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 placeholder="Developer notes about the design structure, constraints, or UX decisions..."
               />
@@ -444,9 +461,10 @@ export function WorkflowEditor({
                 </div>
               )}
               <textarea
-                value={workflow.clientMessage || ""}
+                value={clientMessageDraft}
                 disabled={!canComment}
-                onChange={(e) => onUpdateField("clientMessage", e.target.value)}
+                onChange={(e) => setClientMessageDraft(e.target.value)}
+                onBlur={() => onUpdateField("clientMessage", clientMessageDraft)}
                 className={`flex-1 min-h-[140px] w-full resize-none rounded-lg border p-4 text-sm transition-colors ${
                   !canComment
                     ? "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 cursor-not-allowed"
@@ -524,8 +542,9 @@ export function WorkflowEditor({
               Developer explains why these specific changes were made in response to client feedback or requirements:
             </p>
             <textarea
-              value={workflow.reason}
-              onChange={(e) => onUpdateField("reason", e.target.value)}
+              value={reasonDraft}
+              onChange={(e) => setReasonDraft(e.target.value)}
+              onBlur={() => onUpdateField("reason", reasonDraft)}
               className="h-28 w-full resize-none rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
               placeholder="e.g., Modified checkout layout, adjusted button contrast, and aligned with client's new design reference..."
             />

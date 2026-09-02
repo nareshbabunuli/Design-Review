@@ -40,6 +40,45 @@ type SidebarProps = {
   onReorderProjects?: (sourceIndex: number, destinationIndex: number) => void
 }
 
+function InlineRenameInput({
+  initialValue,
+  onSave,
+  onCancel,
+}: {
+  initialValue: string
+  onSave: (val: string) => void
+  onCancel: () => void
+}) {
+  const [val, setVal] = useState(initialValue)
+
+  return (
+    <input
+      type="text"
+      value={val}
+      autoFocus
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => {
+        if (val.trim() && val !== initialValue) {
+          onSave(val.trim())
+        }
+        onCancel()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          if (val.trim() && val !== initialValue) {
+            onSave(val.trim())
+          }
+          onCancel()
+        } else if (e.key === "Escape") {
+          onCancel()
+        }
+      }}
+      className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-2 py-0.5 rounded w-full outline-none border border-blue-400 focus:ring-1 focus:ring-blue-400 text-sm"
+    />
+  )
+}
+
 export function Sidebar({
   projects,
   activeProjectId,
@@ -163,15 +202,10 @@ export function Sidebar({
                 </button>
 
                 {editingId === `project-${project.id}` ? (
-                  <input
-                    type="text"
-                    value={project.title}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onRenameProject(project.id, e.target.value)}
-                    onBlur={() => setEditingId(null)}
-                    onKeyDown={(e) => e.key === "Enter" && setEditingId(null)}
-                    className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-2 py-0.5 rounded w-full outline-none border border-blue-400 focus:ring-1 focus:ring-blue-400 text-sm"
+                  <InlineRenameInput
+                    initialValue={project.title}
+                    onSave={(newTitle) => onRenameProject(project.id, newTitle)}
+                    onCancel={() => setEditingId(null)}
                   />
                 ) : (
                   <span className="truncate text-sm font-medium">{project.title}</span>
@@ -340,17 +374,10 @@ export function Sidebar({
                         />
 
                         {editingId === `workflow-${workflow.id}` ? (
-                          <input
-                            type="text"
-                            value={workflow.title}
-                            autoFocus
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) =>
-                              onRenameWorkflow(project.id, workflow.id, e.target.value)
-                            }
-                            onBlur={() => setEditingId(null)}
-                            onKeyDown={(e) => e.key === "Enter" && setEditingId(null)}
-                            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white px-2 py-0.5 rounded w-full outline-none border border-blue-400 focus:ring-1 focus:ring-blue-400 text-sm"
+                          <InlineRenameInput
+                            initialValue={workflow.title}
+                            onSave={(newTitle) => onRenameWorkflow(project.id, workflow.id, newTitle)}
+                            onCancel={() => setEditingId(null)}
                           />
                         ) : (
                           <span

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useRef } from "react"
 import { FolderKanban, Loader2, LogOut, Mail, Share2, Copy, Check, Eye, Pencil, ArrowLeft, Menu, X } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow, WorkflowComment, EditingId } from "@/lib/design-review-types"
@@ -599,6 +599,8 @@ export default function Page() {
     }
   }
 
+  const fieldDebounceTimers = useRef<Record<string, NodeJS.Timeout>>({})
+
   // Update workflow field: Owner can update all fields; Client can ONLY comment (clientMessage) & accept/verify (clientTaskDone)
   const updateWorkflowField = async (
     workflowId: string,
@@ -617,7 +619,7 @@ export default function Page() {
       return
     }
 
-    // Optimistic local state update
+    // Optimistic local state update (instant UI response)
     update((xs) =>
       xs.map((p) =>
         p.id === activeProjectId
@@ -629,41 +631,58 @@ export default function Page() {
       )
     )
 
-    // If reviewing or editing via invite link (Google Drive style share)
-    if (inviteToken) {
-      const currentWf = activeProject?.workflows.find((w) => w.id === workflowId)
-      const newMsg = field === "clientMessage" ? (value as string) : (currentWf?.clientMessage ?? null)
-      const newDone = field === "clientTaskDone" ? (value as boolean) : (currentWf?.clientTaskDone ?? null)
-      const newDesignA = field === "designA" ? ((value as string) || "__CLEAR__") : null
-      const newDesignB = field === "designB" ? ((value as string) || "__CLEAR__") : null
-      const newOurNotes = field === "ourNotes" ? (value as string) : null
-      const newReason = field === "reason" ? (value as string) : null
+    const isTextField = field === "ourNotes" || field === "clientMessage" || field === "reason" || field === "title"
+    const timerKey = `${workflowId}-${field}`
 
-      await supabase.rpc("update_workflow_by_invite", {
-        invite_token: inviteToken,
-        target_workflow_id: workflowId,
-        new_client_message: newMsg,
-        new_client_task_done: newDone,
-        new_design_a: newDesignA,
-        new_design_b: newDesignB,
-        new_our_notes: newOurNotes,
-        new_reason: newReason,
-      })
-      return
+    const executeSave = async () => {
+      // If reviewing or editing via invite link (Google Drive style share)
+      if (inviteToken) {
+        const currentWf = activeProject?.workflows.find((w) => w.id === workflowId)
+        const newMsg = field === "clientMessage" ? (value as string) : (currentWf?.clientMessage ?? null)
+        const newDone = field === "clientTaskDone" ? (value as boolean) : (currentWf?.clientTaskDone ?? null)
+        const newDesignA = field === "designA" ? ((value as string) || "__CLEAR__") : null
+        const newDesignB = field === "designB" ? ((value as string) || "__CLEAR__") : null
+        const newOurNotes = field === "ourNotes" ? (value as string) : null
+        const newReason = field === "reason" ? (value as string) : null
+
+        await supabase.rpc("update_workflow_by_invite", {
+          invite_token: inviteToken,
+          target_workflow_id: workflowId,
+          new_client_message: newMsg,
+          new_client_task_done: newDone,
+          new_design_a: newDesignA,
+          new_design_b: newDesignB,
+          new_our_notes: newOurNotes,
+          new_reason: newReason,
+        })
+        return
+      }
+
+      const dbField =
+        ({
+          designA: "design_a",
+          designB: "design_b",
+          ourNotes: "our_notes",
+          clientMessage: "client_message",
+          clientTaskDone: "client_task_done",
+          reason: "reason",
+          isDone: "is_done",
+        } as Record<string, string>)[field] ?? field
+
+      await supabase.from("workflows").update({ [dbField]: value }).eq("id", workflowId)
     }
 
-    const dbField =
-      ({
-        designA: "design_a",
-        designB: "design_b",
-        ourNotes: "our_notes",
-        clientMessage: "client_message",
-        clientTaskDone: "client_task_done",
-        reason: "reason",
-        isDone: "is_done",
-      } as Record<string, string>)[field] ?? field
-
-    await supabase.from("workflows").update({ [dbField]: value }).eq("id", workflowId)
+    if (isTextField) {
+      if (fieldDebounceTimers.current[timerKey]) {
+        clearTimeout(fieldDebounceTimers.current[timerKey])
+      }
+      fieldDebounceTimers.current[timerKey] = setTimeout(() => {
+        executeSave()
+        delete fieldDebounceTimers.current[timerKey]
+      }, 400)
+    } else {
+      await executeSave()
+    }
   }
 
   const updateField = (field: keyof Workflow, value: string | boolean | null) => {
