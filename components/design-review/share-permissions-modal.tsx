@@ -34,15 +34,18 @@ type SharePermissionsModalProps = {
   project: Project
   isOpen: boolean
   onClose: () => void
+  currentUserEmail?: string
 }
 
 export function SharePermissionsModal({
   project,
   isOpen,
   onClose,
+  currentUserEmail: propUserEmail,
 }: SharePermissionsModalProps) {
   const supabase = createClient()
   const [activeTab, setActiveTab] = useState<"invite" | "people">("invite")
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(propUserEmail || "")
   
   // Invite Form State
   const [email, setEmail] = useState("")
@@ -66,6 +69,13 @@ export function SharePermissionsModal({
     if (!supabase || !project.id) return
     setIsLoadingPeople(true)
     try {
+      if (!currentUserEmail) {
+        const { data: userData } = await supabase.auth.getUser()
+        if (userData?.user?.email) {
+          setCurrentUserEmail(userData.user.email)
+        }
+      }
+
       const { data, error } = await supabase.rpc("get_project_people_and_permissions", {
         p_project_id: project.id,
       })
@@ -73,8 +83,33 @@ export function SharePermissionsModal({
       if (error) {
         console.error("Error loading people & permissions:", error)
       } else if (data) {
-        setMembers(data.members || [])
-        setInvites(data.invites || [])
+        const rawMembers = Array.isArray(data.members) ? data.members : []
+        const mappedMembers: ProjectMember[] = rawMembers.map((m: any) => ({
+          id: m.id,
+          userId: m.user_id || m.userId,
+          userEmail: m.user_email || m.userEmail || "Team Member",
+          role: m.role || "client",
+          access: m.access || "view",
+          canComment: m.can_comment ?? m.canComment ?? false,
+          canApprove: m.can_approve ?? m.canApprove ?? false,
+          createdAt: m.created_at || m.createdAt,
+        }))
+
+        const rawInvites = Array.isArray(data.invites) ? data.invites : []
+        const mappedInvites: ProjectInvite[] = rawInvites.map((i: any) => ({
+          id: i.id,
+          inviteeEmail: i.invitee_email || i.inviteeEmail || "Invited User",
+          token: i.token,
+          role: i.role || "client",
+          access: i.access || "view",
+          canComment: i.can_comment ?? i.canComment ?? false,
+          canApprove: i.can_approve ?? i.canApprove ?? false,
+          status: i.status || "pending",
+          createdAt: i.created_at || i.createdAt,
+        }))
+
+        setMembers(mappedMembers)
+        setInvites(mappedInvites)
       }
     } catch (err) {
       console.error("Failed to load people:", err)
@@ -85,9 +120,10 @@ export function SharePermissionsModal({
 
   useEffect(() => {
     if (isOpen) {
+      if (propUserEmail) setCurrentUserEmail(propUserEmail)
       loadPeople()
     }
-  }, [isOpen, project.id])
+  }, [isOpen, project.id, propUserEmail])
 
   if (!isOpen) return null
 
@@ -495,162 +531,227 @@ export function SharePermissionsModal({
                   <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
                   <span className="text-xs">Loading members &amp; invitations...</span>
                 </div>
-              ) : members.length === 0 && invites.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400 gap-2">
-                  <Users className="h-8 w-8 text-slate-600 stroke-[1.5]" />
-                  <span className="text-sm font-medium text-slate-300">No members invited yet</span>
-                  <span className="text-xs max-w-xs text-slate-500">
-                    Use the &quot;Invite Person&quot; tab to invite clients or freelancers to this project.
-                  </span>
-                </div>
               ) : (
-                <div className="space-y-3">
-                  {/* Active Members */}
-                  {members.map((member) => {
-                    const initials = member.userEmail
-                      ? member.userEmail.slice(0, 2).toUpperCase()
-                      : "ME"
-                    const isLoading = actionLoadingId === member.id
-
-                    return (
-                      <div
-                        key={member.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/90 gap-3 hover:border-slate-700 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold shadow flex-shrink-0">
-                            {initials}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold text-white truncate max-w-[180px] sm:max-w-xs">
-                                {member.userEmail}
-                              </span>
-                              <span
-                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${
-                                  member.role === "freelancer"
-                                    ? "bg-blue-950 text-blue-400 border border-blue-800"
-                                    : "bg-purple-950 text-purple-400 border border-purple-800"
-                                }`}
-                              >
-                                {member.role}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                              <span className="flex items-center gap-1 text-emerald-400">
-                                <CheckCircle2 className="h-3 w-3" /> Accepted
-                              </span>
-                              <span>•</span>
-                              <span>{member.access === "edit" ? "Can Edit" : "View Only"}</span>
-                              <span>•</span>
-                              <span>{member.canComment ? "Can Comment" : "No Comments"}</span>
-                            </div>
-                          </div>
+                <div className="space-y-4">
+                  {/* Project Owner Card */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1">
+                      Project Owner
+                    </span>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/80 border border-amber-900/40 gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white text-xs font-bold shadow flex-shrink-0">
+                          <ShieldCheck className="h-4.5 w-4.5" />
                         </div>
-
-                        {/* Owner Controls */}
-                        <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
-                          <button
-                            type="button"
-                            disabled={isLoading}
-                            onClick={() => handleToggleMemberAccess(member)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
-                              member.access === "edit"
-                                ? "bg-blue-950/80 border-blue-700 text-blue-300 hover:bg-blue-900"
-                                : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                            }`}
-                            title="Toggle between View Only and Can Edit"
-                          >
-                            {member.access === "edit" ? "Edit" : "View"}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isLoading}
-                            onClick={() => handleToggleMemberComment(member)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
-                              member.canComment
-                                ? "bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900"
-                                : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
-                            }`}
-                            title="Toggle Client Commenting Permission"
-                          >
-                            {member.canComment ? "Comments On" : "Comments Off"}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isLoading}
-                            onClick={() => handleRevokeMember(member.id)}
-                            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
-                            title="Revoke Access"
-                            aria-label="Revoke Access"
-                          >
-                            {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                          </button>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-white truncate max-w-[200px] sm:max-w-xs">
+                              {currentUserEmail || "You (Project Owner)"}
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800">
+                              Owner
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                            <span className="text-emerald-400 font-medium">Full Access</span>
+                            <span>•</span>
+                            <span>Project Creator &amp; Administrator</span>
+                          </div>
                         </div>
                       </div>
-                    )
-                  })}
-
-                  {/* Pending Invitations */}
-                  {invites.map((invite) => {
-                    const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${invite.token}`
-                    const isLoading = actionLoadingId === invite.id
-
-                    return (
-                      <div
-                        key={invite.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/40 border border-slate-800/60 gap-3 border-dashed"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0">
-                            <Clock className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold text-slate-300 truncate max-w-[180px] sm:max-w-xs">
-                                {invite.inviteeEmail}
-                              </span>
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800">
-                                Pending
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                              <span className="capitalize">{invite.role}</span>
-                              <span>•</span>
-                              <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
-                              <span>•</span>
-                              <span>{invite.canComment ? "Can Comment" : "No Comments"}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Actions for Pending Invite */}
-                        <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyLink(inviteLink)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
-                            title="Copy invite link again"
-                          >
-                            <Copy className="h-3 w-3" />
-                            <span>Copy Link</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isLoading}
-                            onClick={() => handleRevokeInvite(invite.id)}
-                            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
-                            title="Cancel Invitation"
-                            aria-label="Cancel Invitation"
-                          >
-                            {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                          </button>
-                        </div>
+                      <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                        <span className="text-[11px] font-medium text-slate-400 px-2.5 py-1 bg-slate-900/80 rounded-lg border border-slate-800">
+                          Primary Owner
+                        </span>
                       </div>
-                    )
-                  })}
+                    </div>
+                  </div>
+
+                  {/* Team Members & Collaborators */}
+                  <div className="space-y-2 pt-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                        Invited Members ({members.length + invites.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("invite")}
+                        className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 transition-colors"
+                      >
+                        <UserPlus className="h-3 w-3" />
+                        <span>+ Invite New</span>
+                      </button>
+                    </div>
+
+                    {members.length === 0 && invites.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 px-4 rounded-2xl bg-slate-950/40 border border-slate-800/60 text-center text-slate-400 gap-3 border-dashed">
+                        <Users className="h-7 w-7 text-slate-600 stroke-[1.5]" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-slate-300">No additional members invited yet</p>
+                          <p className="text-[11px] max-w-xs text-slate-500">
+                            Invite clients or freelancers to review designs, leave comments, and collaborate.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab("invite")}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow transition-all cursor-pointer"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          <span>Invite Someone</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {/* Active Members */}
+                        {members.map((member) => {
+                          const initials = member.userEmail
+                            ? member.userEmail.slice(0, 2).toUpperCase()
+                            : "ME"
+                          const isLoading = actionLoadingId === member.id
+
+                          return (
+                            <div
+                              key={member.id}
+                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/90 gap-3 hover:border-slate-700 transition-colors"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold shadow flex-shrink-0">
+                                  {initials}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-white truncate max-w-[180px] sm:max-w-xs">
+                                      {member.userEmail}
+                                    </span>
+                                    <span
+                                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${
+                                        member.role === "freelancer"
+                                          ? "bg-blue-950 text-blue-400 border border-blue-800"
+                                          : "bg-purple-950 text-purple-400 border border-purple-800"
+                                      }`}
+                                    >
+                                      {member.role}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                    <span className="flex items-center gap-1 text-emerald-400">
+                                      <CheckCircle2 className="h-3 w-3" /> Accepted
+                                    </span>
+                                    <span>•</span>
+                                    <span>{member.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                    <span>•</span>
+                                    <span>{member.canComment ? "Can Comment" : "No Comments"}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Owner Controls */}
+                              <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleToggleMemberAccess(member)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                    member.access === "edit"
+                                      ? "bg-blue-950/80 border-blue-700 text-blue-300 hover:bg-blue-900"
+                                      : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                  }`}
+                                  title="Toggle between View Only and Can Edit"
+                                >
+                                  {member.access === "edit" ? "Edit" : "View"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleToggleMemberComment(member)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                    member.canComment
+                                      ? "bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900"
+                                      : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
+                                  }`}
+                                  title="Toggle Client Commenting Permission"
+                                >
+                                  {member.canComment ? "Comments On" : "Comments Off"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleRevokeMember(member.id)}
+                                  className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                  title="Revoke Access"
+                                  aria-label="Revoke Access"
+                                >
+                                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {/* Pending Invitations */}
+                        {invites.map((invite) => {
+                          const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${invite.token}`
+                          const isLoading = actionLoadingId === invite.id
+
+                          return (
+                            <div
+                              key={invite.id}
+                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/40 border border-slate-800/60 gap-3 border-dashed"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0">
+                                  <Clock className="h-4 w-4" />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-slate-300 truncate max-w-[180px] sm:max-w-xs">
+                                      {invite.inviteeEmail}
+                                    </span>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800">
+                                      Pending
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                    <span className="capitalize">{invite.role}</span>
+                                    <span>•</span>
+                                    <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                    <span>•</span>
+                                    <span>{invite.canComment ? "Can Comment" : "No Comments"}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Actions for Pending Invite */}
+                              <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyLink(inviteLink)}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
+                                  title="Copy invite link again"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                  <span>Copy Link</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleRevokeInvite(invite.id)}
+                                  className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                  title="Cancel Invitation"
+                                  aria-label="Cancel Invitation"
+                                >
+                                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

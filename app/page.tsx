@@ -1265,6 +1265,7 @@ export default function Page() {
           project={activeProject}
           isOpen={isShareOpen}
           onClose={() => setIsShareOpen(false)}
+          currentUserEmail={user?.email}
         />
       )}
 
