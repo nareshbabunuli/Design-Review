@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   ChevronUp,
   GripVertical,
+  LogOut,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -278,15 +279,27 @@ export function Sidebar({
                     <Edit2 className="h-3.5 w-3.5" />
                   </button>
                   {(projects.length > 1 || (userId && project.userId !== userId)) && (
-                    <button
-                      type="button"
-                      onClick={(e) => onDeleteProject(project.id, e)}
-                      className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
-                      title={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
-                      aria-label={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    project.userId === userId || !project.userId ? (
+                      <button
+                        type="button"
+                        onClick={(e) => onDeleteProject(project.id, e)}
+                        className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
+                        title="Delete project (Owner only)"
+                        aria-label="Delete project"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => onDeleteProject(project.id, e)}
+                        className="p-1.5 rounded-md hover:bg-rose-100 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-500 cursor-pointer"
+                        title="Reject & Leave shared project"
+                        aria-label="Reject & Leave shared project"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                      </button>
+                    )
                   )}
                 </div>
               )}

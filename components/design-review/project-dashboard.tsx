@@ -510,7 +510,7 @@ export function ProjectDashboard({
                             </button>
                           )}
 
-                          {/* Project deletion for owners, or Reject & Remove for invited members */}
+                          {/* Only owner has permission to delete the project; others just have reject/leave permission */}
                           {project.userId === userId || !project.userId ? (
                             <button
                               type="button"
@@ -519,6 +519,7 @@ export function ProjectDashboard({
                                 setMenuOpenId(null)
                               }}
                               className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left cursor-pointer"
+                              title="Delete project permanently (Owner only)"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                               <span>Delete project</span>
@@ -531,10 +532,10 @@ export function ProjectDashboard({
                                 setMenuOpenId(null)
                               }}
                               className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors text-left cursor-pointer font-medium"
-                              title="Reject & remove this shared project from your dashboard"
+                              title="Reject and leave this shared project (removes from your dashboard)"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              <span>Reject &amp; Remove</span>
+                              <LogOut className="h-3.5 w-3.5" />
+                              <span>Reject &amp; Leave</span>
                             </button>
                           )}
                         </div>
@@ -621,15 +622,28 @@ export function ProjectDashboard({
                       <Eye className="h-3.5 w-3.5 text-purple-400" />
                       <span>View</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={(e) => onDeleteProject(project.id, e)}
-                      className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                      title={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
-                      aria-label={project.userId === userId || !project.userId ? "Delete project" : "Reject & Remove from dashboard"}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {project.userId === userId || !project.userId ? (
+                      <button
+                        type="button"
+                        onClick={(e) => onDeleteProject(project.id, e)}
+                        className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                        title="Delete project (Owner only)"
+                        aria-label="Delete project"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => onDeleteProject(project.id, e)}
+                        className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer border border-rose-500/20"
+                        title="Reject and leave this shared project"
+                        aria-label="Reject & leave shared project"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                        <span>Reject &amp; Leave</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               )

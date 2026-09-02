@@ -27,6 +27,7 @@ export type Workflow = {
   title: string
   designA: string | null
   designB: string | null
+  figmaUrl?: string | null
   ourNotes: string
   clientMessage: string
   clientTaskDone: boolean

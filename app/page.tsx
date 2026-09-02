@@ -40,6 +40,7 @@ type WorkflowRow = {
   title: string
   design_a: string | null
   design_b: string | null
+  figma_url?: string | null
   our_notes: string
   client_message: string
   client_task_done: boolean
@@ -131,6 +132,7 @@ const mapData = (
         title: w.title,
         designA: w.design_a,
         designB: w.design_b,
+        figmaUrl: w.figma_url || null,
         ourNotes: w.our_notes,
         clientMessage: w.client_message,
         clientTaskDone: w.client_task_done,
@@ -310,7 +312,7 @@ export default function Page() {
       const [{ data: ws }, { data: cs }, { data: revs }] = await Promise.all([
         supabase
           .from("workflows")
-          .select("id,project_id,title,design_a,design_b,our_notes,client_message,client_task_done,reason,is_done")
+          .select("id,project_id,title,design_a,design_b,figma_url,our_notes,client_message,client_task_done,reason,is_done")
           .in("project_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]),
         supabase
           .from("workflow_comments")
@@ -347,23 +349,37 @@ export default function Page() {
     }
   }, [user, supabase, activeProjectId])
 
-  // Handle deleting an owned project or rejecting/removing a shared project from dashboard
+  // Handle deleting an owned project (owner only) or rejecting/leaving a shared project (members only)
   const handleDeleteOrLeaveProject = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     const targetP = projects.find((p) => p.id === id)
-    const isProjectOwner = targetP ? Boolean(user?.id && targetP.userId ? targetP.userId === user.id : isOwner) : isOwner
+    // Only the actual project owner has permission to delete the project
+    const isProjectOwner = targetP
+      ? Boolean(user?.id && targetP.userId ? targetP.userId === user.id : !targetP.userId)
+      : false
 
     if (isProjectOwner) {
-      if (!confirm("Are you sure you want to delete this project? All associated workflows, designs, and comments will be permanently deleted.")) return
+      if (!confirm("Are you sure you want to permanently delete this project? All associated workflows, designs, and comments will be permanently deleted.")) return
       update((xs) => xs.filter((p) => p.id !== id))
       if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
-      await supabase.from("projects").delete().eq("id", id)
+      const { error } = await supabase.from("projects").delete().eq("id", id)
+      if (error) {
+        console.error("Error deleting project:", error)
+        alert(`Failed to delete project: ${error.message}`)
+        await loadWorkspace()
+      }
     } else {
+      // Non-owners only have reject and accept permission - cannot delete project
       if (!confirm("Are you sure you want to reject and remove this project from your dashboard? You will no longer see this project unless re-invited.")) return
       update((xs) => xs.filter((p) => p.id !== id))
       if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
       try {
-        await supabase.rpc("leave_project", { p_project_id: id })
+        const { error } = await supabase.rpc("leave_project", { p_project_id: id })
+        if (error) {
+          console.error("Error leaving project:", error)
+          alert(`Failed to reject/leave project: ${error.message}`)
+          await loadWorkspace()
+        }
       } catch (err) {
         console.error("Error leaving project:", err)
       }
