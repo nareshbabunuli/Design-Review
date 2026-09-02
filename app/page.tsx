@@ -326,13 +326,19 @@ export default function Page() {
       setProjects(next)
       if (next.length > 0) {
         setActiveProjectId((prev) => (prev && next.some((p) => p.id === prev) ? prev : next[0].id))
+        const activeP = next.find((p) => p.id === activeProjectId) || next[0]
+        if (activeP && activeP.workflows.length > 0) {
+          setActiveWorkflowId((prevW) => (prevW && activeP.workflows.some((w) => w.id === prevW) ? prevW : activeP.workflows[0].id))
+        }
       }
+      return next
     } catch (err) {
       console.error("Failed to load workspace:", err)
+      return []
     } finally {
       setLoading(false)
     }
-  }, [user, supabase])
+  }, [user, supabase, activeProjectId])
 
   // Accept invite once user is authenticated
   useEffect(() => {
@@ -355,9 +361,13 @@ export default function Page() {
           // Clear query param from browser URL
           window.history.replaceState({}, "", window.location.pathname)
           setInviteToken(null)
-          await loadWorkspace()
+          const loadedProjects = await loadWorkspace()
           if (data.project_id) {
             setActiveProjectId(data.project_id)
+            const targetP = loadedProjects?.find((p) => p.id === data.project_id)
+            if (targetP && targetP.workflows.length > 0) {
+              setActiveWorkflowId(targetP.workflows[0].id)
+            }
           }
           if (data.access === "view") {
             setShowReport(true)
