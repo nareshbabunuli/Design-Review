@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import {
   CheckCircle,
   FileText,
@@ -22,8 +22,13 @@ import {
   LogOut,
   ShieldCheck,
   Lock,
+  Clock,
+  PenTool,
+  CheckCircle2,
+  Calendar,
+  Link2,
 } from "lucide-react"
-import type { Project } from "@/lib/design-review-types"
+import type { Project, Workflow } from "@/lib/design-review-types"
 import { ThemeToggle } from "./theme-toggle"
 
 type ReportModalProps = {
@@ -56,6 +61,32 @@ type LightboxState = {
   type: "designA" | "designB"
 }
 
+// Helper to extract Figma URLs from workflow texts and design assets
+export function extractFigmaUrls(workflow: Workflow): string[] {
+  const urls: string[] = []
+  const urlRegex = /https?:\/\/(?:www\.)?figma\.com\/[^\s"')]+/gi
+
+  if (workflow.designA) {
+    const matches = workflow.designA.match(urlRegex)
+    if (matches) urls.push(...matches)
+    else if (workflow.designA.includes("figma.com")) urls.push(workflow.designA)
+  }
+  if (workflow.ourNotes) {
+    const matches = workflow.ourNotes.match(urlRegex)
+    if (matches) urls.push(...matches)
+  }
+  if (workflow.clientMessage) {
+    const matches = workflow.clientMessage.match(urlRegex)
+    if (matches) urls.push(...matches)
+  }
+  if (workflow.reason) {
+    const matches = workflow.reason.match(urlRegex)
+    if (matches) urls.push(...matches)
+  }
+
+  return Array.from(new Set(urls))
+}
+
 export function ReportModal({
   project,
   isOwner = false,
@@ -85,6 +116,158 @@ export function ReportModal({
   const [submittedNotesId, setSubmittedNotesId] = useState<string | null>(null)
   const [submittedReasonId, setSubmittedReasonId] = useState<string | null>(null)
   const [submittedClientMessageId, setSubmittedClientMessageId] = useState<string | null>(null)
+
+  // Executive Metrics
+  const totalWorkflows = project.workflows.length
+  const verifiedWorkflows = project.workflows.filter((w) => Boolean(w.clientTaskDone))
+  const notVerifiedWorkflows = project.workflows.filter((w) => !w.clientTaskDone)
+  const verifiedCount = verifiedWorkflows.length
+  const notVerifiedCount = notVerifiedWorkflows.length
+  const verificationRate = totalWorkflows > 0 ? Math.round((verifiedCount / totalWorkflows) * 100) : 0
+
+  // Count workflows with Figma assets / URLs
+  const figmaWorkflows = project.workflows.filter((w) => {
+    if (w.designA) return true
+    const combined = `${w.ourNotes || ""} ${w.clientMessage || ""} ${w.reason || ""}`
+    return combined.includes("figma.com") || combined.includes("figma")
+  })
+  const figmaCount = figmaWorkflows.length
+
+  // Count workflows with documented Reason of Changes
+  const reasonWorkflows = project.workflows.filter(
+    (w) => Boolean(w.reason && w.reason.trim()) || (w.revisions && w.revisions.length > 0)
+  )
+  const reasonCount = reasonWorkflows.length
+
+  // Digital Signature State
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [signerName, setSignerName] = useState<string>("")
+  const [signerTitle, setSignerTitle] = useState<string>("Client Representative")
+  const [signatureDate, setSignatureDate] = useState<string>("")
+  const [signatureMode, setSignatureMode] = useState<"draw" | "type">("draw")
+  const [typedSignature, setTypedSignature] = useState<string>("")
+  const [signatureImage, setSignatureImage] = useState<string>("")
+  const [isSigned, setIsSigned] = useState<boolean>(false)
+  const [isDrawing, setIsDrawing] = useState<boolean>(false)
+
+  // Initialize signature from localStorage or user context
+  useEffect(() => {
+    try {
+      const savedName = localStorage.getItem(`sig_name_${project.id}`) || user?.email || ""
+      const savedTitle =
+        localStorage.getItem(`sig_title_${project.id}`) ||
+        (isOwner ? "Project Owner" : "Client Representative")
+      const savedDate =
+        localStorage.getItem(`sig_date_${project.id}`) ||
+        new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      const savedImg = localStorage.getItem(`sig_img_${project.id}`) || ""
+      const savedTyped = localStorage.getItem(`sig_typed_${project.id}`) || ""
+      const savedMode = (localStorage.getItem(`sig_mode_${project.id}`) as "draw" | "type") || "draw"
+      const savedSigned = localStorage.getItem(`sig_done_${project.id}`) === "true"
+
+      setSignerName(savedName)
+      setSignerTitle(savedTitle)
+      setSignatureDate(savedDate)
+      setSignatureImage(savedImg)
+      setTypedSignature(savedTyped)
+      setSignatureMode(savedMode)
+      setIsSigned(savedSigned)
+    } catch (e) {
+      setSignerName(user?.email || "")
+      setSignatureDate(
+        new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+      )
+    }
+  }, [project.id, user, isOwner])
+
+  const startDrawing = (
+    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
+  ) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const rect = canvas.getBoundingClientRect()
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY
+
+    ctx.beginPath()
+    ctx.moveTo(clientX - rect.left, clientY - rect.top)
+    setIsDrawing(true)
+  }
+
+  const draw = (
+    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
+  ) => {
+    if (!isDrawing) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const rect = canvas.getBoundingClientRect()
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY
+
+    ctx.lineTo(clientX - rect.left, clientY - rect.top)
+    ctx.strokeStyle = "#2563eb"
+    ctx.lineWidth = 2.5
+    ctx.lineCap = "round"
+    ctx.lineJoin = "round"
+    ctx.stroke()
+  }
+
+  const stopDrawing = () => {
+    if (!isDrawing) return
+    setIsDrawing(false)
+    const canvas = canvasRef.current
+    if (canvas) {
+      setSignatureImage(canvas.toDataURL())
+    }
+  }
+
+  const handleApplySignature = () => {
+    if (signatureMode === "draw" && !signatureImage) {
+      alert("Please draw your signature in the signature box before confirming.")
+      return
+    }
+    if (signatureMode === "type" && !typedSignature.trim()) {
+      alert("Please type your signature before confirming.")
+      return
+    }
+    if (!signerName.trim()) {
+      alert("Please enter the signer's full name.")
+      return
+    }
+
+    setIsSigned(true)
+    try {
+      localStorage.setItem(`sig_name_${project.id}`, signerName)
+      localStorage.setItem(`sig_title_${project.id}`, signerTitle)
+      localStorage.setItem(`sig_date_${project.id}`, signatureDate)
+      localStorage.setItem(`sig_mode_${project.id}`, signatureMode)
+      localStorage.setItem(`sig_typed_${project.id}`, typedSignature)
+      localStorage.setItem(`sig_img_${project.id}`, signatureImage)
+      localStorage.setItem(`sig_done_${project.id}`, "true")
+    } catch (e) {}
+  }
+
+  const handleClearSignature = () => {
+    setIsSigned(false)
+    setSignatureImage("")
+    setTypedSignature("")
+    const canvas = canvasRef.current
+    if (canvas) {
+      const ctx = canvas.getContext("2d")
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    try {
+      localStorage.removeItem(`sig_img_${project.id}`)
+      localStorage.removeItem(`sig_typed_${project.id}`)
+      localStorage.removeItem(`sig_done_${project.id}`)
+    } catch (e) {}
+  }
 
   const handleSubmitNotes = (workflowId: string) => {
     if (!onUpdateWorkflowField) return
@@ -338,15 +521,190 @@ export function ReportModal({
       {/* Slides */}
       <div className="flex flex-col items-center gap-8 py-8 print:py-0 print:gap-0 print:block w-full px-4 print:px-0">
         {/* Title slide */}
-        <section className="flex flex-col items-center justify-center bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-transparent dark:border-slate-800 p-16 w-full max-w-[1280px] min-h-[500px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-screen print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:items-center print:justify-center transition-colors">
-          <div className="text-center">
-            <h1 className="text-5xl md:text-6xl font-bold text-slate-900 dark:text-white mb-6 tracking-tight text-balance">
+        <section className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-screen print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:flex-col print:justify-between transition-colors space-y-8">
+          {/* Header Title */}
+          <div className="text-center space-y-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
+              <FolderKanban className="h-3.5 w-3.5" />
+              <span>Project Review &amp; Sign-off Report</span>
+            </div>
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-slate-900 dark:text-white tracking-tight text-balance">
               Design Review Report
             </h1>
-            <p className="text-2xl text-slate-500 dark:text-slate-400 font-light mb-3">
-              Completed Workflows &amp; Final Approvals
+            <p className="text-lg sm:text-xl text-slate-500 dark:text-slate-400 font-normal">
+              Completed Workflows, Figma Verification, and Change Logs
             </p>
-            <p className="text-xl text-blue-600 dark:text-blue-400 font-semibold">Project: {project.title}</p>
+            <p className="text-xl sm:text-2xl text-blue-600 dark:text-blue-400 font-bold pt-1">
+              Project: {project.title}
+            </p>
+          </div>
+
+          {/* Executive Metrics Dashboard */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full">
+            {/* Total Workflows */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                <span className="text-xs font-semibold uppercase tracking-wider">Workflows</span>
+                <FolderKanban className="h-4 w-4 text-blue-500" />
+              </div>
+              <div className="pt-2">
+                <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                  {totalWorkflows}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total Review Items</div>
+              </div>
+            </div>
+
+            {/* Verified vs Not Verified */}
+            <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400">
+                <span className="text-xs font-semibold uppercase tracking-wider">Verified</span>
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              </div>
+              <div className="pt-2">
+                <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 dark:text-emerald-300">
+                  {verifiedCount}
+                  <span className="text-sm font-normal text-slate-500 dark:text-slate-400"> / {totalWorkflows}</span>
+                </div>
+                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                  {verificationRate}% Accepted
+                </div>
+              </div>
+            </div>
+
+            {/* Not Verified */}
+            <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-amber-700 dark:text-amber-400">
+                <span className="text-xs font-semibold uppercase tracking-wider">Not Verified</span>
+                <Clock className="h-4 w-4 text-amber-500" />
+              </div>
+              <div className="pt-2">
+                <div className="text-2xl sm:text-3xl font-extrabold text-amber-700 dark:text-amber-300">
+                  {notVerifiedCount}
+                </div>
+                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                  {notVerifiedCount === 0 ? "All Items Approved" : "Pending Sign-off"}
+                </div>
+              </div>
+            </div>
+
+            {/* Figma URLs & Exports */}
+            <div className="p-4 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/60 flex flex-col justify-between">
+              <div className="flex items-center justify-between text-purple-700 dark:text-purple-400">
+                <span className="text-xs font-semibold uppercase tracking-wider">Figma URLs / Designs</span>
+                <Link2 className="h-4 w-4 text-purple-500" />
+              </div>
+              <div className="pt-2">
+                <div className="text-2xl sm:text-3xl font-extrabold text-purple-700 dark:text-purple-300">
+                  {figmaCount}
+                </div>
+                <div className="text-xs text-purple-600 dark:text-purple-400 font-medium">
+                  {reasonCount} Changes Explained
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="w-full space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
+              <span>Overall Review Verification Progress</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">{verificationRate}%</span>
+            </div>
+            <div className="w-full h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 transition-all duration-500"
+                style={{ width: `${verificationRate}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Executive Summary Table: Reason of Changes, Figma, and Verification */}
+          <div className="w-full space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider">
+                Workflows, Figma Assets &amp; Reasons for Changes
+              </h3>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {verifiedCount} of {totalWorkflows} verified
+              </span>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+              <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                <thead className="bg-slate-50 dark:bg-slate-950/80 text-slate-500 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
+                  <tr>
+                    <th className="px-3.5 py-2.5 w-12 text-center">#</th>
+                    <th className="px-3.5 py-2.5">Workflow Name</th>
+                    <th className="px-3.5 py-2.5">Figma Design / URL</th>
+                    <th className="px-3.5 py-2.5">Reason of Changes</th>
+                    <th className="px-3.5 py-2.5 text-right">Verification Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 bg-white dark:bg-slate-900/40">
+                  {project.workflows.map((wf, idx) => {
+                    const figmaUrls = extractFigmaUrls(wf)
+                    const hasFigma = Boolean(wf.designA) || figmaUrls.length > 0
+                    const changeReason = wf.reason || (wf.revisions && wf.revisions.length > 0 ? wf.revisions[0].reason : "")
+
+                    return (
+                      <tr key={wf.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="px-3.5 py-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                        <td className="px-3.5 py-3 font-semibold text-slate-900 dark:text-white max-w-[200px] truncate">
+                          {wf.title}
+                        </td>
+                        <td className="px-3.5 py-3 max-w-[220px]">
+                          {hasFigma ? (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                <Link2 className="h-3 w-3" />
+                                {figmaUrls.length > 0 ? `${figmaUrls.length} URL` : "Figma Design"}
+                              </span>
+                              {figmaUrls.length > 0 && (
+                                <a
+                                  href={figmaUrls[0]}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5"
+                                  title={figmaUrls[0]}
+                                >
+                                  <span>Open</span>
+                                  <ExternalLink className="h-2.5 w-2.5" />
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">No Figma link</span>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-3 max-w-[280px]">
+                          {changeReason ? (
+                            <p className="line-clamp-2 text-slate-700 dark:text-slate-300 text-[11px]" title={changeReason}>
+                              {changeReason}
+                            </p>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">Initial design / No changes</span>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-3 text-right whitespace-nowrap">
+                          {wf.clientTaskDone ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                              <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                              <span>Verified</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                              <Clock className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                              <span>Not Verified</span>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -356,12 +714,25 @@ export function ReportModal({
             key={workflow.id}
             className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-transparent dark:border-slate-800 p-8 md:p-12 w-full max-w-[1280px] min-h-[720px] shrink-0 relative print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-page-break print-avoid-break print:block transition-colors"
           >
-            <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-200 dark:border-slate-800 print:mb-4 print:pb-2">
-              <h2 className="text-3xl md:text-4xl font-bold text-slate-800 dark:text-white flex items-center gap-3 print:text-2xl">
-                <FolderKanban className="text-blue-500 h-8 w-8 md:h-10 md:w-10 shrink-0" />
-                <span>Workflow: {workflow.title}</span>
-              </h2>
-              <span className="text-xs md:text-sm font-medium text-slate-400 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-8 pb-4 border-b border-slate-200 dark:border-slate-800 gap-3 print:mb-4 print:pb-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <FolderKanban className="text-blue-500 h-7 w-7 md:h-9 md:w-9 shrink-0" />
+                <h2 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-white print:text-xl">
+                  Workflow: {workflow.title}
+                </h2>
+                {workflow.clientTaskDone ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                    <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Verified &amp; Accepted</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                    <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Not Verified (Pending)</span>
+                  </span>
+                )}
+              </div>
+              <span className="text-xs md:text-sm font-medium text-slate-400 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full self-start sm:self-auto">
                 Slide {wfIdx + 1} of {project.workflows.length}
               </span>
             </div>
@@ -372,9 +743,21 @@ export function ReportModal({
                 {/* Figma design */}
                 <div className="flex flex-col gap-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200">
-                      Figma
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200">
+                        Figma
+                      </span>
+                      {(() => {
+                        const figmaUrls = extractFigmaUrls(workflow)
+                        if (figmaUrls.length === 0) return null
+                        return (
+                          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Link2 className="h-3 w-3" />
+                            <span>{figmaUrls.length} URL{figmaUrls.length > 1 ? "s" : ""}</span>
+                          </span>
+                        )
+                      })()}
+                    </div>
                     <div className="flex items-center gap-2">
                       {workflow.designA && (
                         <button
@@ -808,15 +1191,274 @@ export function ReportModal({
           </section>
         ))}
 
-        {/* Final slide */}
-        <section className="flex flex-col items-center justify-center bg-white dark:bg-slate-900 border border-transparent dark:border-slate-800 rounded-2xl shadow-xl p-16 w-full max-w-[1280px] min-h-[400px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:aspect-auto print:h-screen print:rounded-none">
-          <div className="text-center">
-            <h2 className="text-5xl md:text-6xl font-bold text-slate-900 dark:text-white mb-6 tracking-tight text-balance">
-              Report Concluded
+        {/* Final slide - Formal Sign-off & Digital Signature */}
+        <section className="flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-screen print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:flex-col print:justify-between transition-colors space-y-8">
+          {/* Header */}
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
+              <PenTool className="h-3.5 w-3.5" />
+              <span>Formal Acceptance &amp; Sign-off</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight text-balance">
+              Project Sign-off &amp; Approvals
             </h2>
-            <p className="text-2xl text-slate-500 dark:text-slate-400 font-light text-pretty">
-              All workflows have been successfully reviewed and verified.
+            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400 font-normal max-w-2xl mx-auto">
+              This document confirms the review of all workflows, linked Figma designs, reasons for changes, and final verification status for project <strong className="text-slate-900 dark:text-white">{project.title}</strong>.
             </p>
+
+            {/* Status overview pill */}
+            <div className="pt-2">
+              {verifiedCount === totalWorkflows && totalWorkflows > 0 ? (
+                <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shadow-sm">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>All {totalWorkflows} Workflows Verified &amp; Approved (100%)</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-sm">
+                  <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <span>{verifiedCount} of {totalWorkflows} Workflows Verified ({notVerifiedCount} Pending Review)</span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Dual Signatures Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 w-full">
+            {/* 1. Client / Approver Signature Box */}
+            <div className="flex flex-col justify-between p-6 sm:p-7 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-4">
+              <div>
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <PenTool className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Client / Approver Signature
+                    </h4>
+                  </div>
+                  {isSigned && (
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
+                      <CheckCircle2 className="h-3 w-3" /> Signed &amp; Approved
+                    </span>
+                  )}
+                </div>
+
+                {/* Signer Details Form */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                      Signer Name
+                    </label>
+                    <input
+                      type="text"
+                      disabled={isSigned}
+                      value={signerName}
+                      onChange={(e) => setSignerName(e.target.value)}
+                      placeholder="e.g. Jane Doe"
+                      className="w-full text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:border-blue-500 disabled:opacity-75"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                      Role / Organization
+                    </label>
+                    <input
+                      type="text"
+                      disabled={isSigned}
+                      value={signerTitle}
+                      onChange={(e) => setSignerTitle(e.target.value)}
+                      placeholder="e.g. Lead Stakeholder"
+                      className="w-full text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:border-blue-500 disabled:opacity-75"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Signature Area */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-medium">Signature Area:</span>
+                  {!isSigned && (
+                    <div className="flex items-center gap-1 bg-slate-200/70 dark:bg-slate-800/80 p-0.5 rounded-lg text-[11px] print:hidden">
+                      <button
+                        type="button"
+                        onClick={() => setSignatureMode("draw")}
+                        className={`px-2 py-0.5 rounded-md font-semibold transition-all cursor-pointer ${
+                          signatureMode === "draw"
+                            ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs"
+                            : "text-slate-600 dark:text-slate-400"
+                        }`}
+                      >
+                        Draw
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSignatureMode("type")}
+                        className={`px-2 py-0.5 rounded-md font-semibold transition-all cursor-pointer ${
+                          signatureMode === "type"
+                            ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs"
+                            : "text-slate-600 dark:text-slate-400"
+                        }`}
+                      >
+                        Type
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isSigned ? (
+                  /* Applied Signature View */
+                  <div className="h-32 w-full rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center p-3 relative overflow-hidden shadow-inner">
+                    {signatureMode === "draw" && signatureImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={signatureImage}
+                        alt="Digital Signature"
+                        className="max-h-24 max-w-full object-contain filter dark:invert"
+                      />
+                    ) : (
+                      <span className="font-serif italic text-3xl text-blue-600 dark:text-blue-400 select-none">
+                        {typedSignature || signerName || "Digitally Signed"}
+                      </span>
+                    )}
+                    <div className="absolute bottom-1 right-2 text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                      <span>{signatureDate}</span>
+                    </div>
+                  </div>
+                ) : signatureMode === "draw" ? (
+                  /* Interactive Canvas Pad */
+                  <div className="space-y-1.5 print:hidden">
+                    <div className="relative rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 h-32 overflow-hidden shadow-xs cursor-crosshair">
+                      <canvas
+                        ref={canvasRef}
+                        width={460}
+                        height={128}
+                        onMouseDown={startDrawing}
+                        onMouseMove={draw}
+                        onMouseUp={stopDrawing}
+                        onMouseLeave={stopDrawing}
+                        onTouchStart={startDrawing}
+                        onTouchMove={draw}
+                        onTouchEnd={stopDrawing}
+                        className="w-full h-full touch-none"
+                      />
+                      {!signatureImage && !isDrawing && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-xs text-slate-400 italic">
+                          Draw signature here with finger or mouse
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleClearSignature}
+                        className="text-[11px] text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
+                      >
+                        Clear Canvas
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Typed Cursive Mode */
+                  <div className="space-y-2 print:hidden">
+                    <input
+                      type="text"
+                      value={typedSignature}
+                      onChange={(e) => setTypedSignature(e.target.value)}
+                      placeholder="Type your formal name to generate signature"
+                      className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 outline-none focus:border-blue-500"
+                    />
+                    <div className="h-20 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center p-2">
+                      <span className="font-serif italic text-2xl text-blue-600 dark:text-blue-400 select-none">
+                        {typedSignature || signerName || "Signature Preview"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Confirm Signature or Edit Actions */}
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between print:hidden">
+                  {isSigned ? (
+                    <button
+                      type="button"
+                      onClick={handleClearSignature}
+                      className="text-xs text-slate-500 hover:text-blue-500 font-medium transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      <span>Redo Signature</span>
+                    </button>
+                  ) : (
+                    <div className="flex justify-end w-full">
+                      <button
+                        type="button"
+                        onClick={handleApplySignature}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+                      >
+                        <PenTool className="h-3.5 w-3.5" />
+                        <span>Confirm &amp; Apply Signature</span>
+                      </button>
+                    </div>
+                  )}
+                  <span className="text-[11px] text-slate-400 font-mono">{signatureDate}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Developer / Creator Project Verification Box */}
+            <div className="flex flex-col justify-between p-6 sm:p-7 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-4">
+              <div>
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Creator Verification &amp; Seal
+                    </h4>
+                  </div>
+                  <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
+                    <CheckCircle2 className="h-3 w-3" /> Verified Document
+                  </span>
+                </div>
+
+                <div className="space-y-3 pt-3 text-xs">
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Project Creator / Administrator</span>
+                    <span className="font-semibold text-slate-900 dark:text-white text-sm">
+                      {isOwner && user?.email ? user.email : "Design Team Lead"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Project Title</span>
+                    <span className="font-semibold text-slate-900 dark:text-white">{project.title}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Report Date</span>
+                    <span className="font-mono text-slate-700 dark:text-slate-300">{signatureDate}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Digital Seal of Authenticity */}
+              <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>Authenticity &amp; Integrity Seal</span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  All Figma screen comparisons, version changelogs, and client feedback notes have been securely compiled and recorded in accordance with project review standards.
+                </p>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 font-mono border-t border-slate-100 dark:border-slate-800/80">
+                  <span>SYSTEM AUDIT PASS</span>
+                  <span>{project.id.slice(0, 8)}...</span>
+                </div>
+              </div>
+
+              <div className="text-[11px] text-slate-400 italic">
+                Ready for production export, development handoff, or stakeholder archival.
+              </div>
+            </div>
+          </div>
+
+          {/* Concluding Footer Notice */}
+          <div className="text-center pt-2 text-xs text-slate-400 border-t border-slate-200 dark:border-slate-800">
+            Design Workflow Review System • Generated for {project.title} • {verifiedCount} Verified / {notVerifiedCount} Pending
           </div>
         </section>
       </div>

@@ -20,6 +20,10 @@ import {
   CheckCircle2,
   Clock,
   Lock,
+  RotateCcw,
+  AlertCircle,
+  XCircle,
+  Timer,
 } from "lucide-react"
 import type {
   Project,
@@ -63,6 +67,15 @@ export function SharePermissionsModal({
   const [invites, setInvites] = useState<ProjectInvite[]>([])
   const [isLoadingPeople, setIsLoadingPeople] = useState(false)
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null)
+  const [peopleFilter, setPeopleFilter] = useState<"all" | "accepted" | "pending" | "rejected" | "expired">("all")
+  const [nowTime, setNowTime] = useState<number>(Date.now())
+
+  // Ticking countdown timer for remaining expiry time
+  useEffect(() => {
+    if (!isOpen) return
+    const interval = setInterval(() => setNowTime(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [isOpen])
 
   // Load People & Permissions when modal opens or tab switches
   const loadPeople = async () => {
@@ -106,6 +119,7 @@ export function SharePermissionsModal({
           canApprove: i.can_approve ?? i.canApprove ?? false,
           status: i.status || "pending",
           createdAt: i.created_at || i.createdAt,
+          expiresAt: i.expires_at || i.expiresAt,
         }))
 
         setMembers(mappedMembers)
@@ -235,6 +249,51 @@ export function SharePermissionsModal({
     } finally {
       setActionLoadingId(null)
     }
+  }
+
+  const handleRenewInvite = async (invite: ProjectInvite) => {
+    setActionLoadingId(invite.id)
+    try {
+      const { data, error } = await supabase.rpc("renew_project_invitation", {
+        p_project_id: project.id,
+        p_invite_id: invite.id,
+      })
+
+      if (error) {
+        console.error("Error renewing invite:", error)
+        alert(error.message || "Failed to renew invitation.")
+      } else if (data) {
+        const link = `${window.location.origin}${window.location.pathname}?invite=${data.token}`
+        handleCopyLink(link)
+        await loadPeople()
+      }
+    } catch (err) {
+      console.error("Failed to renew invite:", err)
+    } finally {
+      setActionLoadingId(null)
+    }
+  }
+
+  const getInviteRemainingTime = (invite: ProjectInvite) => {
+    if (invite.status === "rejected") {
+      return { isExpired: false, isRejected: true, label: "Declined by recipient" }
+    }
+    if (invite.status === "accepted") {
+      return { isExpired: false, isRejected: false, label: "Accepted" }
+    }
+
+    const expiryMs = invite.expiresAt
+      ? new Date(invite.expiresAt).getTime()
+      : new Date(invite.createdAt).getTime() + 15 * 60 * 1000
+
+    const diff = expiryMs - nowTime
+    if (diff <= 0 || invite.status === "expired") {
+      return { isExpired: true, isRejected: false, label: "Expired (15m limit reached)" }
+    }
+
+    const mins = Math.floor(diff / 60000)
+    const secs = Math.floor((diff % 60000) / 1000)
+    return { isExpired: false, isRejected: false, label: `Expires in ${mins}m ${secs < 10 ? "0" : ""}${secs}s` }
   }
 
   return (
@@ -498,10 +557,15 @@ export function SharePermissionsModal({
 
               {/* Generated Link Display */}
               {generatedLink && (
-                <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-500/40 space-y-2 animate-in fade-in">
+                <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-500/40 space-y-2.5 animate-in fade-in">
                   <div className="flex items-center justify-between text-xs font-semibold text-blue-300">
-                    <span>✓ Invitation Link Created</span>
-                    <span className="text-[10px] text-blue-400 font-normal">Send to {email || "invitee"}</span>
+                    <span className="flex items-center gap-1.5 text-emerald-400">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Invitation Link Generated</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[11px] text-amber-400 font-medium">
+                      <Clock className="h-3 w-3" /> Valid for 15 minutes
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800">
                     <input
@@ -520,6 +584,9 @@ export function SharePermissionsModal({
                       <span>{copied ? "Copied!" : "Copy Link"}</span>
                     </button>
                   </div>
+                  <p className="text-[11px] text-slate-400">
+                    Send this link to your recipient. The link will expire automatically in 15 minutes.
+                  </p>
                 </div>
               )}
             </form>
@@ -567,191 +634,410 @@ export function SharePermissionsModal({
                     </div>
                   </div>
 
-                  {/* Team Members & Collaborators */}
-                  <div className="space-y-2 pt-2">
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Invited Members ({members.length + invites.length})
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("invite")}
-                        className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 transition-colors"
-                      >
-                        <UserPlus className="h-3 w-3" />
-                        <span>+ Invite New</span>
-                      </button>
-                    </div>
+                  {/* Status Categorization & Filter Tabs */}
+                  {(() => {
+                    const acceptedMembers = members
+                    const pendingInvites = invites.filter((i) => {
+                      const timing = getInviteRemainingTime(i)
+                      return i.status === "pending" && !timing.isExpired
+                    })
+                    const expiredInvites = invites.filter((i) => {
+                      const timing = getInviteRemainingTime(i)
+                      return i.status === "expired" || (i.status === "pending" && timing.isExpired)
+                    })
+                    const rejectedInvites = invites.filter((i) => i.status === "rejected")
+                    const totalCollaborators = members.length + invites.length
 
-                    {members.length === 0 && invites.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-8 px-4 rounded-2xl bg-slate-950/40 border border-slate-800/60 text-center text-slate-400 gap-3 border-dashed">
-                        <Users className="h-7 w-7 text-slate-600 stroke-[1.5]" />
-                        <div className="space-y-1">
-                          <p className="text-xs font-medium text-slate-300">No additional members invited yet</p>
-                          <p className="text-[11px] max-w-xs text-slate-500">
-                            Invite clients or freelancers to review designs, leave comments, and collaborate.
-                          </p>
+                    const showAccepted = peopleFilter === "all" || peopleFilter === "accepted"
+                    const showPending = peopleFilter === "all" || peopleFilter === "pending"
+                    const showRejected = peopleFilter === "all" || peopleFilter === "rejected"
+                    const showExpired = peopleFilter === "all" || peopleFilter === "expired"
+
+                    return (
+                      <div className="space-y-3 pt-2">
+                        {/* Header & Filter Pills */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                            Collaborators &amp; Invitations ({totalCollaborators})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab("invite")}
+                            className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 transition-colors self-start sm:self-auto"
+                          >
+                            <UserPlus className="h-3 w-3" />
+                            <span>+ Invite New</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab("invite")}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow transition-all cursor-pointer"
-                        >
-                          <UserPlus className="h-3.5 w-3.5" />
-                          <span>Invite Someone</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {/* Active Members */}
-                        {members.map((member) => {
-                          const initials = member.userEmail
-                            ? member.userEmail.slice(0, 2).toUpperCase()
-                            : "ME"
-                          const isLoading = actionLoadingId === member.id
 
-                          return (
-                            <div
-                              key={member.id}
-                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/90 gap-3 hover:border-slate-700 transition-colors"
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold shadow flex-shrink-0">
-                                  {initials}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-white truncate max-w-[180px] sm:max-w-xs">
-                                      {member.userEmail}
-                                    </span>
-                                    <span
-                                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${
-                                        member.role === "freelancer"
-                                          ? "bg-blue-950 text-blue-400 border border-blue-800"
-                                          : "bg-purple-950 text-purple-400 border border-purple-800"
-                                      }`}
-                                    >
-                                      {member.role}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                                    <span className="flex items-center gap-1 text-emerald-400">
-                                      <CheckCircle2 className="h-3 w-3" /> Accepted
-                                    </span>
-                                    <span>•</span>
-                                    <span>{member.access === "edit" ? "Can Edit" : "View Only"}</span>
-                                    <span>•</span>
-                                    <span>{member.canComment ? "Can Comment" : "No Comments"}</span>
-                                  </div>
-                                </div>
-                              </div>
+                        {/* Filter Tabs */}
+                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setPeopleFilter("all")}
+                            className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                              peopleFilter === "all"
+                                ? "bg-blue-600 text-white shadow-sm"
+                                : "bg-slate-950/60 text-slate-400 hover:text-white border border-slate-800"
+                            }`}
+                          >
+                            All ({totalCollaborators})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPeopleFilter("accepted")}
+                            className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                              peopleFilter === "accepted"
+                                ? "bg-emerald-600 text-white shadow-sm"
+                                : "bg-slate-950/60 text-slate-400 hover:text-white border border-slate-800"
+                            }`}
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                            <span>Accepted ({acceptedMembers.length})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPeopleFilter("pending")}
+                            className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                              peopleFilter === "pending"
+                                ? "bg-amber-600 text-white shadow-sm"
+                                : "bg-slate-950/60 text-slate-400 hover:text-white border border-slate-800"
+                            }`}
+                          >
+                            <Clock className="h-3.5 w-3.5 text-amber-400" />
+                            <span>Pending ({pendingInvites.length})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPeopleFilter("rejected")}
+                            className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                              peopleFilter === "rejected"
+                                ? "bg-rose-600 text-white shadow-sm"
+                                : "bg-slate-950/60 text-slate-400 hover:text-white border border-slate-800"
+                            }`}
+                          >
+                            <XCircle className="h-3.5 w-3.5 text-rose-400" />
+                            <span>Rejected ({rejectedInvites.length})</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPeopleFilter("expired")}
+                            className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                              peopleFilter === "expired"
+                                ? "bg-amber-700 text-white shadow-sm"
+                                : "bg-slate-950/60 text-slate-400 hover:text-white border border-slate-800"
+                            }`}
+                          >
+                            <Timer className="h-3.5 w-3.5 text-amber-400" />
+                            <span>Expired ({expiredInvites.length})</span>
+                          </button>
+                        </div>
 
-                              {/* Owner Controls */}
-                              <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={isLoading}
-                                  onClick={() => handleToggleMemberAccess(member)}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
-                                    member.access === "edit"
-                                      ? "bg-blue-950/80 border-blue-700 text-blue-300 hover:bg-blue-900"
-                                      : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                                  }`}
-                                  title="Toggle between View Only and Can Edit"
-                                >
-                                  {member.access === "edit" ? "Edit" : "View"}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={isLoading}
-                                  onClick={() => handleToggleMemberComment(member)}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
-                                    member.canComment
-                                      ? "bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900"
-                                      : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
-                                  }`}
-                                  title="Toggle Client Commenting Permission"
-                                >
-                                  {member.canComment ? "Comments On" : "Comments Off"}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={isLoading}
-                                  onClick={() => handleRevokeMember(member.id)}
-                                  className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
-                                  title="Revoke Access"
-                                  aria-label="Revoke Access"
-                                >
-                                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                                </button>
-                              </div>
+                        {/* List Content */}
+                        {totalCollaborators === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 px-4 rounded-2xl bg-slate-950/40 border border-slate-800/60 text-center text-slate-400 gap-3 border-dashed">
+                            <Users className="h-7 w-7 text-slate-600 stroke-[1.5]" />
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium text-slate-300">No members or invitations yet</p>
+                              <p className="text-[11px] max-w-xs text-slate-500">
+                                Send 15-minute invitation links to clients or freelancers to collaborate on designs.
+                              </p>
                             </div>
-                          )
-                        })}
-
-                        {/* Pending Invitations */}
-                        {invites.map((invite) => {
-                          const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${invite.token}`
-                          const isLoading = actionLoadingId === invite.id
-
-                          return (
-                            <div
-                              key={invite.id}
-                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/40 border border-slate-800/60 gap-3 border-dashed"
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("invite")}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow transition-all cursor-pointer"
                             >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0">
-                                  <Clock className="h-4 w-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-slate-300 truncate max-w-[180px] sm:max-w-xs">
-                                      {invite.inviteeEmail}
-                                    </span>
-                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800">
-                                      Pending
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                                    <span className="capitalize">{invite.role}</span>
-                                    <span>•</span>
-                                    <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
-                                    <span>•</span>
-                                    <span>{invite.canComment ? "Can Comment" : "No Comments"}</span>
-                                  </div>
-                                </div>
-                              </div>
+                              <UserPlus className="h-3.5 w-3.5" />
+                              <span>Invite Someone</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {/* 1. Accepted Members */}
+                            {showAccepted &&
+                              acceptedMembers.map((member) => {
+                                const initials = member.userEmail
+                                  ? member.userEmail.slice(0, 2).toUpperCase()
+                                  : "ME"
+                                const isLoading = actionLoadingId === member.id
 
-                              {/* Actions for Pending Invite */}
-                              <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopyLink(inviteLink)}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
-                                  title="Copy invite link again"
-                                >
-                                  <Copy className="h-3 w-3" />
-                                  <span>Copy Link</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isLoading}
-                                  onClick={() => handleRevokeInvite(invite.id)}
-                                  className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
-                                  title="Cancel Invitation"
-                                  aria-label="Cancel Invitation"
-                                >
-                                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
+                                return (
+                                  <div
+                                    key={member.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/90 gap-3 hover:border-slate-700 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-xs font-bold shadow flex-shrink-0">
+                                        {initials}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-semibold text-white truncate max-w-[180px] sm:max-w-xs">
+                                            {member.userEmail}
+                                          </span>
+                                          <span
+                                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${
+                                              member.role === "freelancer"
+                                                ? "bg-blue-950 text-blue-400 border border-blue-800"
+                                                : "bg-purple-950 text-purple-400 border border-purple-800"
+                                            }`}
+                                          >
+                                            {member.role}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                          <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                                            <CheckCircle2 className="h-3 w-3" /> Accepted Member
+                                          </span>
+                                          <span>•</span>
+                                          <span>{member.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                          <span>•</span>
+                                          <span>{member.canComment ? "Can Comment" : "No Comments"}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Owner Controls */}
+                                    <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleToggleMemberAccess(member)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                          member.access === "edit"
+                                            ? "bg-blue-950/80 border-blue-700 text-blue-300 hover:bg-blue-900"
+                                            : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                        }`}
+                                        title="Toggle between View Only and Can Edit"
+                                      >
+                                        {member.access === "edit" ? "Edit" : "View"}
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleToggleMemberComment(member)}
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                          member.canComment
+                                            ? "bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900"
+                                            : "bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800"
+                                        }`}
+                                        title="Toggle Client Commenting Permission"
+                                      >
+                                        {member.canComment ? "Comments On" : "Comments Off"}
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRevokeMember(member.id)}
+                                        className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                        title="Revoke Access"
+                                        aria-label="Revoke Access"
+                                      >
+                                        {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+
+                            {/* 2. Pending Active Invitations (valid within 15 mins) */}
+                            {showPending &&
+                              pendingInvites.map((invite) => {
+                                const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${invite.token}`
+                                const isLoading = actionLoadingId === invite.id
+                                const timing = getInviteRemainingTime(invite)
+
+                                return (
+                                  <div
+                                    key={invite.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-amber-950/20 border border-amber-600/30 gap-3 hover:border-amber-500/50 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0">
+                                        <Clock className="h-4 w-4" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-semibold text-slate-200 truncate max-w-[180px] sm:max-w-xs">
+                                            {invite.inviteeEmail}
+                                          </span>
+                                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800">
+                                            Pending
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                          <span className="text-amber-300 font-mono font-medium flex items-center gap-1">
+                                            <Timer className="h-3 w-3" /> {timing.label}
+                                          </span>
+                                          <span>•</span>
+                                          <span className="capitalize">{invite.role}</span>
+                                          <span>•</span>
+                                          <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Actions for Pending Invite */}
+                                    <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCopyLink(inviteLink)}
+                                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-950/60 hover:bg-amber-900 text-amber-200 border border-amber-700/60 transition-colors cursor-pointer"
+                                        title="Copy invite link (valid 15 mins)"
+                                      >
+                                        <Copy className="h-3 w-3" />
+                                        <span>Copy Link</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRevokeInvite(invite.id)}
+                                        className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                        title="Cancel Invitation"
+                                        aria-label="Cancel Invitation"
+                                      >
+                                        {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+
+                            {/* 3. Rejected Invitations */}
+                            {showRejected &&
+                              rejectedInvites.map((invite) => {
+                                const isLoading = actionLoadingId === invite.id
+
+                                return (
+                                  <div
+                                    key={invite.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-rose-950/20 border border-rose-800/40 gap-3 hover:border-rose-700/60 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex-shrink-0">
+                                        <XCircle className="h-4 w-4" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-semibold text-slate-300 truncate max-w-[180px] sm:max-w-xs">
+                                            {invite.inviteeEmail}
+                                          </span>
+                                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-950 text-rose-400 border border-rose-800">
+                                            Rejected
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                          <span className="text-rose-400 font-medium">Declined by recipient</span>
+                                          <span>•</span>
+                                          <span className="capitalize">{invite.role}</span>
+                                          <span>•</span>
+                                          <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Actions for Rejected: Re-invite (15m) or Remove */}
+                                    <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRenewInvite(invite)}
+                                        className="flex items-center gap-1 px-3 py-1 rounded-lg text-[11px] font-semibold bg-rose-950/70 hover:bg-rose-900 text-rose-200 border border-rose-700/60 transition-colors cursor-pointer"
+                                        title="Send a fresh 15-minute invitation link"
+                                      >
+                                        {isLoading ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <RotateCcw className="h-3 w-3" />
+                                        )}
+                                        <span>Re-invite (15m)</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRevokeInvite(invite.id)}
+                                        className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                        title="Remove Record"
+                                        aria-label="Remove Record"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+
+                            {/* 4. Expired Invitations (15 mins elapsed) */}
+                            {showExpired &&
+                              expiredInvites.map((invite) => {
+                                const isLoading = actionLoadingId === invite.id
+
+                                return (
+                                  <div
+                                    key={invite.id}
+                                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800/80 gap-3 hover:border-slate-700 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-800/80 text-amber-400 border border-amber-500/20 flex-shrink-0">
+                                        <AlertCircle className="h-4 w-4" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-semibold text-slate-300 truncate max-w-[180px] sm:max-w-xs">
+                                            {invite.inviteeEmail}
+                                          </span>
+                                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-900 text-amber-400 border border-amber-900/60">
+                                            Expired (15m)
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                                          <span className="text-amber-400/80">15-minute window elapsed</span>
+                                          <span>•</span>
+                                          <span className="capitalize">{invite.role}</span>
+                                          <span>•</span>
+                                          <span>{invite.access === "edit" ? "Can Edit" : "View Only"}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Actions for Expired: Renew Link (15m) or Remove */}
+                                    <div className="flex items-center gap-1.5 self-end sm:self-center flex-shrink-0">
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRenewInvite(invite)}
+                                        className="flex items-center gap-1 px-3 py-1 rounded-lg text-[11px] font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow transition-colors cursor-pointer"
+                                        title="Renew this link with a fresh 15-minute token"
+                                      >
+                                        {isLoading ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <RotateCcw className="h-3 w-3" />
+                                        )}
+                                        <span>Renew Link (15m)</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={isLoading}
+                                        onClick={() => handleRevokeInvite(invite.id)}
+                                        className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800 transition-colors cursor-pointer"
+                                        title="Delete Expired Link"
+                                        aria-label="Delete Expired Link"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    )
+                  })()}
                 </div>
               )}
             </div>

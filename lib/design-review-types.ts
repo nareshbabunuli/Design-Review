@@ -68,8 +68,9 @@ export type ProjectInvite = {
   access: AccessPermission
   canComment: boolean
   canApprove: boolean
-  status: "pending" | "accepted" | "revoked"
+  status: "pending" | "accepted" | "rejected" | "revoked" | "expired"
   createdAt: string
+  expiresAt?: string
 }
 
 export type UserPermissions = {
