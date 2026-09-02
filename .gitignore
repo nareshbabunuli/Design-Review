@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnpm-store
+
+# Production build
+.next/
+out/
+build/
+dist/
+
+# Environment variables
+.env*.local
+.env
+
+# Logs and debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# System files
+.DS_Store
+*.pem
+
+# IDE & Vercel
+.vercel
+.idea
+.vscode
