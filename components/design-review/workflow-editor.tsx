@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Send,
   User,
+  Shield,
   ShieldCheck,
   Eye,
   Lock,
@@ -29,10 +30,14 @@ import { createClient } from "@/lib/supabase/client"
 type WorkflowEditorProps = {
   project: Project
   workflow: Workflow
-  isOwner: boolean
+  isOwner?: boolean
+  canEdit?: boolean
   canComment?: boolean
+  canApprove?: boolean
+  userRole?: "client" | "freelancer" | "owner" | null
   inviteeEmail?: string | null
   onUpdateField: (field: keyof Workflow, value: string | boolean | null) => void
+  onSubmitRevision?: (workflowId: string, reason: string) => Promise<void>
   onShowReport: () => void
   onAddComment?: (body: string, reason?: string) => void
 }
@@ -347,19 +352,28 @@ function ImageUpload({
 export function WorkflowEditor({
   project,
   workflow,
-  isOwner,
+  isOwner = true,
+  canEdit = true,
   canComment = true,
+  canApprove = false,
+  userRole = "owner",
   inviteeEmail,
   onUpdateField,
+  onSubmitRevision,
   onShowReport,
   onAddComment,
 }: WorkflowEditorProps) {
   const supabase = createClient()
+  const effectiveCanEdit = canEdit ?? isOwner
+  const effectiveCanComment = canComment ?? true
+  const effectiveCanApprove = canApprove ?? isOwner
+
   const [uploadingA, setUploadingA] = useState(false)
   const [uploadingB, setUploadingB] = useState(false)
   const [submittedNotes, setSubmittedNotes] = useState(false)
   const [submittedReason, setSubmittedReason] = useState(false)
   const [submittedClientMessage, setSubmittedClientMessage] = useState(false)
+  const [isSubmittingRevision, setIsSubmittingRevision] = useState(false)
 
   // Local drafts to avoid text being wiped out by realtime sync or race conditions
   const [notesDraft, setNotesDraft] = useState(workflow.ourNotes || "")
@@ -385,15 +399,26 @@ export function WorkflowEditor({
     setTimeout(() => setSubmittedNotes(false), 2500)
   }
 
-  const handleSubmitReason = () => {
-    onUpdateField("reason", reasonDraft)
-    setSubmittedReason(true)
-    setTimeout(() => setSubmittedReason(false), 2500)
+  const handleSubmitReason = async () => {
+    if (onSubmitRevision) {
+      setIsSubmittingRevision(true)
+      try {
+        await onSubmitRevision(workflow.id, reasonDraft)
+        setSubmittedReason(true)
+        setTimeout(() => setSubmittedReason(false), 2500)
+      } finally {
+        setIsSubmittingRevision(false)
+      }
+    } else {
+      onUpdateField("reason", reasonDraft)
+      setSubmittedReason(true)
+      setTimeout(() => setSubmittedReason(false), 2500)
+    }
   }
 
   const handleSubmitClientMessage = () => {
-    if (!canComment) {
-      alert(`Comments are locked to ${inviteeEmail}. Only ${inviteeEmail} can comment.`)
+    if (!effectiveCanComment) {
+      alert(`Client commenting is disabled for your account.`)
       return
     }
     onUpdateField("clientMessage", clientMessageDraft)
@@ -490,17 +515,21 @@ export function WorkflowEditor({
             <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{workflow.title}</h1>
             {isOwner ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 dark:bg-blue-950/80 px-3 py-1 text-xs font-semibold text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                <ShieldCheck className="h-3.5 w-3.5" /> Team (Our Notes)
+                <ShieldCheck className="h-3.5 w-3.5" /> Project Owner
+              </span>
+            ) : userRole === "freelancer" ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-3 py-1 text-xs font-semibold text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                <Shield className="h-3.5 w-3.5" /> Freelancer (Revisions &amp; Notes)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 dark:bg-purple-950/80 px-3 py-1 text-xs font-semibold text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                <Eye className="h-3.5 w-3.5" /> Client Review (Comment &amp; Verify)
+                <Eye className="h-3.5 w-3.5" /> Client ({effectiveCanEdit ? "Can Edit" : "View Only"} • {effectiveCanComment ? "Can Comment" : "No Comments"})
               </span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {isOwner && (
+          {effectiveCanEdit && (
             <button
               onClick={() => onUpdateField("isDone", !workflow.isDone)}
               className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all shadow-sm cursor-pointer ${
@@ -533,7 +562,7 @@ export function WorkflowEditor({
           id={`upload-a-${workflow.id}`}
           type="design"
           workflowId={workflow.id}
-          isOwner={isOwner}
+          isOwner={effectiveCanEdit}
           isSelected={selectedSlot === "designA"}
           onSelect={() => setSelectedSlot("designA")}
           onPreview={(src, title) => setLightboxImage({ src, title })}
@@ -547,7 +576,7 @@ export function WorkflowEditor({
           id={`upload-b-${workflow.id}`}
           type="reference"
           workflowId={workflow.id}
-          isOwner={isOwner}
+          isOwner={effectiveCanEdit}
           isSelected={selectedSlot === "designB"}
           onSelect={() => setSelectedSlot("designB")}
           onPreview={(src, title) => setLightboxImage({ src, title })}
@@ -559,20 +588,22 @@ export function WorkflowEditor({
 
       {/* Notes & Client Message */}
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* Our Internal Notes (Developer) */}
+        {/* Our Internal Notes (Developer / Freelancer) */}
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm flex flex-col transition-colors">
           <div className="mb-4 flex items-center justify-between text-slate-700 dark:text-slate-300">
             <div className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-blue-500" />
-              <h3 className="font-semibold text-lg text-slate-900 dark:text-white">Our Notes (Developer)</h3>
+              <h3 className="font-semibold text-lg text-slate-900 dark:text-white">
+                {userRole === "freelancer" ? "Freelancer Notes" : "Developer Notes"}
+              </h3>
             </div>
-            {!isOwner && (
+            {!effectiveCanEdit && (
               <span className="text-xs text-slate-500 dark:text-slate-400 font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full">
                 Read-only
               </span>
             )}
           </div>
-          {isOwner ? (
+          {effectiveCanEdit ? (
             <>
               <textarea
                 value={notesDraft}
@@ -630,16 +661,16 @@ export function WorkflowEditor({
               )}
               <button
                 type="button"
-                disabled={!canComment}
+                disabled={!effectiveCanApprove}
                 onClick={() => {
-                  if (!canComment) {
-                    alert(`Approvals are locked to ${inviteeEmail}. Only ${inviteeEmail} can accept or verify.`)
+                  if (!effectiveCanApprove) {
+                    alert(`Approval permissions are restricted. You do not have permission to accept or verify.`)
                     return
                   }
                   onUpdateField("clientTaskDone", !workflow.clientTaskDone)
                 }}
                 className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-all cursor-pointer ${
-                  !canComment
+                  !effectiveCanApprove
                     ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-70"
                     : workflow.clientTaskDone
                       ? "bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
@@ -652,33 +683,33 @@ export function WorkflowEditor({
             </div>
           </div>
 
-          {!isOwner ? (
+          {userRole === "client" ? (
             <>
-              {!canComment && inviteeEmail && (
+              {!effectiveCanComment && (
                 <div className="mb-3 flex items-center gap-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-3 text-xs text-amber-800 dark:text-amber-300">
                   <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                   <span>
-                    Comments &amp; approvals are restricted to <strong>{inviteeEmail}</strong>. Only that client can submit feedback.
+                    Client commenting is disabled for your account. You can view the project in presentation mode.
                   </span>
                 </div>
               )}
               <textarea
                 value={clientMessageDraft}
-                disabled={!canComment}
+                disabled={!effectiveCanComment}
                 onChange={(e) => setClientMessageDraft(e.target.value)}
                 onBlur={() => onUpdateField("clientMessage", clientMessageDraft)}
                 className={`flex-1 min-h-[140px] w-full resize-none rounded-lg border p-4 text-sm transition-colors ${
-                  !canComment
+                  !effectiveCanComment
                     ? "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 cursor-not-allowed"
                     : "border-purple-200 dark:border-purple-800/80 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
                 }`}
                 placeholder={
-                  !canComment
-                    ? `Feedback is locked. Only ${inviteeEmail} can comment.`
+                  !effectiveCanComment
+                    ? "Client commenting is disabled."
                     : "Type your feedback, requested changes, or questions here..."
                 }
               />
-              {canComment && (
+              {effectiveCanComment && (
                 <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
                   <span className="text-xs text-slate-500 dark:text-slate-400">
                     {submittedClientMessage
@@ -727,37 +758,39 @@ export function WorkflowEditor({
         </div>
       </div>
 
-      {/* Reason for Final Changes (Developer gives why this changed) */}
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm transition-colors">
-        <div className="mb-4 flex items-center justify-between">
+      {/* Reason for Final Changes & Revision Submission */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm transition-colors space-y-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
             <AlertCircle className="h-5 w-5 text-amber-500" />
             <h3 className="font-semibold text-lg text-slate-900 dark:text-white">Reason for Final Changes</h3>
           </div>
           <span className="text-xs text-amber-700 dark:text-amber-300 font-medium bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 px-2.5 py-0.5 rounded-full">
-            Developer Explanation
+            {userRole === "freelancer" ? "Freelancer Submission" : "Developer Explanation"}
           </span>
         </div>
-        {isOwner ? (
+
+        {effectiveCanEdit ? (
           <>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-              Developer explains why these specific changes were made in response to client feedback or requirements:
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Provide a mandatory explanation for this revision explaining what was adjusted in response to client feedback:
             </p>
             <textarea
               value={reasonDraft}
               onChange={(e) => setReasonDraft(e.target.value)}
               onBlur={() => onUpdateField("reason", reasonDraft)}
               className="h-28 w-full resize-none rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-              placeholder="e.g., Modified checkout layout, adjusted button contrast, and aligned with client's new design reference..."
+              placeholder="e.g., Updated the spacing, corrected the typography, and fixed the mobile layout..."
             />
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
               <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                {submittedReason ? "✓ Reason submitted!" : "Click submit to save reason"}
+                {submittedReason ? "✓ Revision submitted to client!" : "Click submit to record revision"}
               </span>
               <button
                 type="button"
+                disabled={isSubmittingRevision || !reasonDraft.trim()}
                 onClick={handleSubmitReason}
-                className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold shadow-sm transition-all cursor-pointer disabled:opacity-50 ${
                   submittedReason
                     ? "bg-emerald-600 text-white hover:bg-emerald-700"
                     : "bg-amber-600 text-white hover:bg-amber-700"
@@ -766,12 +799,12 @@ export function WorkflowEditor({
                 {submittedReason ? (
                   <>
                     <CheckCircle className="h-3.5 w-3.5" />
-                    <span>Submitted!</span>
+                    <span>Revision Submitted!</span>
                   </>
                 ) : (
                   <>
                     <Send className="h-3.5 w-3.5" />
-                    <span>Submit Reason</span>
+                    <span>Submit Revision &amp; Reason</span>
                   </>
                 )}
               </button>
@@ -780,6 +813,36 @@ export function WorkflowEditor({
         ) : (
           <div className="w-full rounded-lg border border-amber-100 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 p-4 text-sm text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
             {workflow.reason || <span className="text-slate-400 dark:text-slate-600 italic">No reason provided by developer yet.</span>}
+          </div>
+        )}
+
+        {/* Revision History Log */}
+        {workflow.revisions && workflow.revisions.length > 0 && (
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+            <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300">Revision History Log</h4>
+            <div className="space-y-2">
+              {workflow.revisions.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      Revision {rev.revisionNumber}
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {new Date(rev.createdAt).toLocaleDateString()} at {new Date(rev.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">Reason:</span> {rev.reason}
+                  </p>
+                  <div className="text-[10px] text-slate-400 pt-0.5">
+                    Changes submitted by: <span className="capitalize font-medium text-slate-300">{rev.authorRole}</span> {rev.authorEmail ? `(${rev.authorEmail})` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

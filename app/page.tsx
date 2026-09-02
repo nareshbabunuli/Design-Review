@@ -1,9 +1,29 @@
 "use client"
 
-import { useEffect, useMemo, useState, useRef } from "react"
-import { FolderKanban, Loader2, LogOut, Mail, Share2, Copy, Check, Eye, Pencil, ArrowLeft, Menu, X } from "lucide-react"
+import { useEffect, useMemo, useState, useRef, useCallback } from "react"
+import {
+  FolderKanban,
+  Loader2,
+  LogOut,
+  Share2,
+  Eye,
+  Pencil,
+  ArrowLeft,
+  Menu,
+  X,
+  Shield,
+  ShieldCheck,
+  Users,
+} from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
-import type { Project, Workflow, WorkflowComment, EditingId } from "@/lib/design-review-types"
+import type {
+  Project,
+  Workflow,
+  WorkflowComment,
+  WorkflowRevision,
+  EditingId,
+  UserPermissions,
+} from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/design-review/sidebar"
 import { WorkflowEditor } from "@/components/design-review/workflow-editor"
@@ -11,6 +31,7 @@ import { ReportModal } from "@/components/design-review/report-modal"
 import { ProjectDashboard } from "@/components/design-review/project-dashboard"
 import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { LandingPage } from "@/components/design-review/landing-page"
+import { SharePermissionsModal } from "@/components/design-review/share-permissions-modal"
 
 type ProjectRow = { id: string; title: string; is_expanded: boolean; user_id: string }
 type WorkflowRow = {
@@ -32,6 +53,19 @@ type CommentRow = {
   author_email?: string
   body: string
   reason?: string
+  created_at: string
+}
+type RevisionRow = {
+  id: string
+  project_id: string
+  workflow_id: string
+  revision_number: number
+  author_id?: string
+  author_email?: string
+  author_role: "client" | "freelancer" | "owner"
+  reason: string
+  design_a?: string | null
+  design_b?: string | null
   created_at: string
 }
 
@@ -85,6 +119,7 @@ const mapData = (
   projects: ProjectRow[],
   workflows: WorkflowRow[],
   comments: CommentRow[],
+  revisions: RevisionRow[],
   userId?: string
 ): Project[] => {
   const mapped = projects.map((p) => {
@@ -92,6 +127,7 @@ const mapData = (
       .filter((w) => w.project_id === p.id)
       .map((w) => ({
         id: w.id,
+        projectId: w.project_id,
         title: w.title,
         designA: w.design_a,
         designB: w.design_b,
@@ -110,6 +146,20 @@ const mapData = (
             body: c.body,
             reason: c.reason,
             createdAt: c.created_at,
+          })),
+        revisions: revisions
+          .filter((r) => r.workflow_id === w.id)
+          .map((r) => ({
+            id: r.id,
+            workflowId: r.workflow_id,
+            revisionNumber: r.revision_number,
+            authorId: r.author_id,
+            authorEmail: r.author_email,
+            authorRole: r.author_role,
+            reason: r.reason,
+            designA: r.design_a,
+            designB: r.design_b,
+            createdAt: r.created_at,
           })),
       }))
 
@@ -141,41 +191,35 @@ export default function Page() {
   const [password, setPassword] = useState("")
   const [authMessage, setAuthMessage] = useState("")
   const [showResend, setShowResend] = useState(false)
-  const [isOwner, setIsOwner] = useState(true)
-  const [inviteEmail, setInviteEmail] = useState("")
-  const [inviteLink, setInviteLink] = useState("")
-  const [copied, setCopied] = useState(false)
-  const [inviteToken, setInviteToken] = useState<string | null>(null)
-  const [invitePermission, setInvitePermission] = useState<"view" | "edit">("view")
-  const [activeInvitePermission, setActiveInvitePermission] = useState<"view" | "edit" | null>(null)
   const [viewMode, setViewMode] = useState<"dashboard" | "editor">("dashboard")
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [showLanding, setShowLanding] = useState(true)
   const [isShareOpen, setIsShareOpen] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [inviteeEmail, setInviteeEmail] = useState<string | null>(null)
+  const [inviteToken, setInviteToken] = useState<string | null>(null)
 
-  // Determine if current visitor can submit comments/feedback:
-  // - Project owner can always comment
-  // - If no specific inviteeEmail is attached to invite (general link), anyone can comment
-  // - If inviteeEmail IS attached, ONLY matching user email can comment
-  const canClientComment = useMemo(() => {
-    if (isOwner) return true
-    if (!inviteeEmail) return true
-    return Boolean(user?.email && user.email.toLowerCase() === inviteeEmail.toLowerCase())
-  }, [isOwner, inviteeEmail, user?.email])
+  // Granular project permissions for current user on active project
+  const [userPermissions, setUserPermissions] = useState<UserPermissions>({
+    authenticated: false,
+    isOwner: false,
+    role: null,
+    access: null,
+    canComment: false,
+    canApprove: false,
+  })
 
-  // Extract invite token on initial client mount
+  // Extract invite token on client mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const token = new URLSearchParams(window.location.search).get("invite")
       if (token) {
         setInviteToken(token)
+        setShowLanding(false)
       }
     }
   }, [])
 
-  // Theme initialization from localStorage
+  // Theme initialization
   useEffect(() => {
     const saved = localStorage.getItem("theme") as "light" | "dark" | null
     if (saved) {
@@ -193,7 +237,7 @@ export default function Page() {
     document.documentElement.classList.toggle("dark", next === "dark")
   }
 
-  // Auth check - immediately retrieve existing session from cache/cookies
+  // Auth session check
   useEffect(() => {
     let mounted = true
 
@@ -234,128 +278,29 @@ export default function Page() {
     }
   }, [supabase.auth])
 
-  // Google Drive-Style Invite Loader: Instantly loads presentation & review for anyone with the invite link
-  useEffect(() => {
-    if (!supabase || !inviteToken) return
-
-    let cancelled = false
-    setLoading(true)
-
-    const loadInviteProject = async () => {
-      const { data, error } = await supabase.rpc("get_project_by_invite", {
-        invite_token: inviteToken,
-      })
-
-      if (cancelled) return
-
-      if (error || !data) {
-        console.error("Invite token load error:", error)
-        setAuthMessage("This invite link is invalid or has expired.")
-        setLoading(false)
-        return
-      }
-
-      const pData = data as {
-        id: string
-        title: string
-        is_expanded: boolean
-        user_id: string
-        permission?: "view" | "edit"
-        invitee_email?: string | null
-        workflows: Array<{
-          id: string
-          project_id: string
-          title: string
-          design_a: string | null
-          design_b: string | null
-          our_notes: string | null
-          client_message: string | null
-          client_task_done: boolean
-          reason: string | null
-          is_done: boolean
-        }>
-      }
-
-      if (pData.invitee_email) {
-        setInviteeEmail(pData.invitee_email)
-      } else {
-        setInviteeEmail(null)
-      }
-
-      const mappedWorkflows: Workflow[] = (pData.workflows || []).map((w) => ({
-        id: w.id,
-        projectId: w.project_id,
-        title: w.title,
-        designA: w.design_a,
-        designB: w.design_b,
-        ourNotes: w.our_notes || "",
-        clientMessage: w.client_message || "",
-        clientTaskDone: w.client_task_done,
-        reason: w.reason || "",
-        isDone: w.is_done,
-        comments: [],
-      }))
-
-      const project: Project = {
-        id: pData.id,
-        title: pData.title,
-        isExpanded: pData.is_expanded,
-        userId: pData.user_id,
-        workflows: sortWorkflowsBySavedOrder(pData.id, mappedWorkflows),
-      }
-
-      const perm = pData.permission || "view"
-      setActiveInvitePermission(perm)
-      const canEdit = perm === "edit" || (user ? user.id === pData.user_id : false)
-
-      setProjects([project])
-      setActiveProjectId(project.id)
-      setActiveWorkflowId(project.workflows[0]?.id ?? null)
-      setIsOwner(canEdit)
-      setShowReport(perm === "view") // View: can only see presentations; Edit: open editor directly!
-      setLoading(false)
-
-      if (user) {
-        try {
-          await supabase.rpc("redeem_project_invite", { invite_token: inviteToken })
-        } catch (err) {
-          console.error("Error redeeming project invite:", err)
-        }
-      }
-    }
-
-    loadInviteProject()
-    return () => {
-      cancelled = true
-    }
-  }, [supabase, inviteToken, user])
-
-  // Initial Data Load (when not using an invite link)
-  useEffect(() => {
-    if (inviteToken) return // Skip regular load if loading via invite
+  // Load user's projects and workflows
+  const loadWorkspace = useCallback(async () => {
     if (!user || !supabase) {
       setProjects([])
       setLoading(false)
       return
     }
 
-    let cancelled = false
     setLoading(true)
-
-    const load = async () => {
-      const { data: ps, error } = await supabase
+    try {
+      const { data: ps, error: pError } = await supabase
         .from("projects")
         .select("id,title,is_expanded,user_id")
         .order("created_at", { ascending: true })
 
-      if (error) {
-        setAuthMessage("We could not load your workspace.")
+      if (pError) {
+        console.error("Error loading projects:", pError)
         setLoading(false)
         return
       }
 
       const ids = (ps as ProjectRow[]).map((p) => p.id)
-      const [{ data: ws }, { data: cs }] = await Promise.all([
+      const [{ data: ws }, { data: cs }, { data: revs }] = await Promise.all([
         supabase
           .from("workflows")
           .select("id,project_id,title,design_a,design_b,our_notes,client_message,client_task_done,reason,is_done")
@@ -363,30 +308,119 @@ export default function Page() {
         supabase
           .from("workflow_comments")
           .select("id,workflow_id,author_id,body,reason,created_at"),
+        supabase
+          .from("workflow_revisions")
+          .select("id,project_id,workflow_id,revision_number,author_id,author_email,author_role,reason,design_a,design_b,created_at")
+          .in("project_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
+          .order("revision_number", { ascending: false }),
       ])
 
-      if (!cancelled) {
-        const next = mapData(
-          ps as ProjectRow[],
-          (ws || []) as WorkflowRow[],
-          (cs || []) as CommentRow[],
-          user.id
-        )
-        setProjects(next)
-        setIsOwner((ps as ProjectRow[]).every((p) => p.user_id === user.id))
-        setActiveProjectId(next[0]?.id ?? null)
-        setActiveWorkflowId(next[0]?.workflows[0]?.id ?? null)
-        setLoading(false)
+      const next = mapData(
+        ps as ProjectRow[],
+        (ws || []) as WorkflowRow[],
+        (cs || []) as CommentRow[],
+        (revs || []) as RevisionRow[],
+        user.id
+      )
+
+      setProjects(next)
+      if (next.length > 0) {
+        setActiveProjectId((prev) => (prev && next.some((p) => p.id === prev) ? prev : next[0].id))
+      }
+    } catch (err) {
+      console.error("Failed to load workspace:", err)
+    } finally {
+      setLoading(false)
+    }
+  }, [user, supabase])
+
+  // Accept invite once user is authenticated
+  useEffect(() => {
+    if (!user || !supabase || !inviteToken) return
+
+    let cancelled = false
+    const acceptInvite = async () => {
+      try {
+        const { data, error } = await supabase.rpc("accept_project_invite", {
+          p_invite_token: inviteToken,
+        })
+
+        if (cancelled) return
+
+        if (error) {
+          console.error("Accept invite error:", error)
+          alert(error.message || "Failed to accept invite.")
+          setAuthMessage(error.message)
+        } else if (data) {
+          // Clear query param from browser URL
+          window.history.replaceState({}, "", window.location.pathname)
+          setInviteToken(null)
+          await loadWorkspace()
+          setActiveProjectId(data.project_id)
+          if (data.access === "view") {
+            setShowReport(true)
+          } else {
+            setShowReport(false)
+            setViewMode("editor")
+          }
+        }
+      } catch (err) {
+        console.error("Error accepting invite:", err)
       }
     }
 
-    load()
+    acceptInvite()
     return () => {
       cancelled = true
     }
-  }, [user, supabase, inviteToken])
+  }, [user, supabase, inviteToken, loadWorkspace])
 
-  // Real-time Collaborative Synchronization (Simultaneous commenting & updates)
+  // Fetch projects on auth change
+  useEffect(() => {
+    if (user) {
+      loadWorkspace()
+    } else {
+      setProjects([])
+      setLoading(false)
+    }
+  }, [user, loadWorkspace])
+
+  // Fetch granular permissions whenever active project changes
+  useEffect(() => {
+    if (!user || !supabase || !activeProjectId) {
+      setUserPermissions({
+        authenticated: !!user,
+        isOwner: false,
+        role: null,
+        access: null,
+        canComment: false,
+        canApprove: false,
+      })
+      return
+    }
+
+    let cancelled = false
+    const fetchPermissions = async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_user_project_permissions", {
+          p_project_id: activeProjectId,
+        })
+        if (cancelled) return
+        if (!error && data) {
+          setUserPermissions(data as UserPermissions)
+        }
+      } catch (err) {
+        console.error("Error fetching permissions:", err)
+      }
+    }
+
+    fetchPermissions()
+    return () => {
+      cancelled = true
+    }
+  }, [user, supabase, activeProjectId])
+
+  // Supabase Realtime Subscription
   useEffect(() => {
     if (!supabase) return
 
@@ -403,16 +437,50 @@ export default function Page() {
               workflows: p.workflows.map((w) =>
                 w.id === updated.id
                   ? {
-                    ...w,
-                    title: updated.title,
-                    designA: updated.design_a,
-                    designB: updated.design_b,
-                    ourNotes: updated.our_notes,
-                    clientMessage: updated.client_message,
-                    clientTaskDone: updated.client_task_done,
-                    reason: updated.reason,
-                    isDone: updated.is_done,
-                  }
+                      ...w,
+                      title: updated.title,
+                      designA: updated.design_a,
+                      designB: updated.design_b,
+                      ourNotes: updated.our_notes,
+                      clientMessage: updated.client_message,
+                      clientTaskDone: updated.client_task_done,
+                      reason: updated.reason,
+                      isDone: updated.is_done,
+                    }
+                  : w
+              ),
+            }))
+          )
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "workflow_revisions" },
+        (payload: { new: Record<string, any> }) => {
+          const newRev = payload.new as RevisionRow
+          setProjects((prev) =>
+            prev.map((p) => ({
+              ...p,
+              workflows: p.workflows.map((w) =>
+                w.id === newRev.workflow_id
+                  ? {
+                      ...w,
+                      revisions: [
+                        {
+                          id: newRev.id,
+                          workflowId: newRev.workflow_id,
+                          revisionNumber: newRev.revision_number,
+                          authorId: newRev.author_id,
+                          authorEmail: newRev.author_email,
+                          authorRole: newRev.author_role,
+                          reason: newRev.reason,
+                          designA: newRev.design_a,
+                          designB: newRev.design_b,
+                          createdAt: newRev.created_at,
+                        },
+                        ...(w.revisions || []).filter((r) => r.id !== newRev.id),
+                      ],
+                    }
                   : w
               ),
             }))
@@ -427,25 +495,13 @@ export default function Page() {
   }, [supabase])
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
-  const activeWorkflow = activeProject?.workflows.find((w) => w.id === activeWorkflowId) ?? null
+  const activeWorkflow = activeProject?.workflows.find((w) => w.id === activeWorkflowId) ?? activeProject?.workflows[0] ?? null
 
-  const effectiveIsOwner = useMemo(() => {
-    // 1. If accessed via an invite link
-    if (inviteToken) {
-      if (activeInvitePermission === "edit") return true
-      if (user && activeProject?.userId && activeProject.userId === user.id) return true
-      return false
-    }
-
-    // 2. If user is logged in, they have edit rights to projects in their workspace
-    if (user) {
-      return true
-    }
-
-    return false
-  }, [user, activeProject, inviteToken, activeInvitePermission])
-
-  const isViewerOnly = Boolean(!effectiveIsOwner && (activeInvitePermission === "view" || Boolean(inviteToken)))
+  const isOwner = Boolean(activeProject && user && activeProject.userId === user.id)
+  const canEdit = Boolean(isOwner || userPermissions.access === "edit")
+  const canClientComment = Boolean(isOwner || userPermissions.canComment)
+  const canApprove = Boolean(isOwner || userPermissions.canApprove)
+  const userRole = isOwner ? "owner" : (userPermissions.role || "client")
 
   const update = (fn: (items: Project[]) => Project[]) => setProjects(fn)
 
@@ -460,37 +516,36 @@ export default function Page() {
       authMode === "signin"
         ? await supabase.auth.signInWithPassword({ email, password })
         : await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo:
-              process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ?? `${window.location.origin}/auth/callback`,
-          },
-        })
+            email,
+            password,
+            options: {
+              emailRedirectTo:
+                process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ?? `${window.location.origin}/auth/callback`,
+            },
+          })
 
     setAuthLoading(false)
 
     if (result.error) {
-      const message = result.error.message.toLowerCase()
-      if (message.includes("confirm") || message.includes("verified")) {
-        setAuthMessage("Your email is not confirmed yet. Check your inbox, then try signing in again.")
+      const msg = result.error.message.toLowerCase()
+      if (msg.includes("email not confirmed")) {
+        setAuthMessage("Please confirm your email before signing in.")
         setShowResend(true)
-      } else if (message.includes("invalid login credentials")) {
-        setAuthMessage("Invalid email or password.")
       } else {
-        setAuthMessage("We could not sign you in. Please check your details and try again.")
+        setAuthMessage(result.error.message)
       }
       return
     }
 
-    if (authMode === "signin" && result.data?.user) {
-      setUser({ id: result.data.user.id, email: result.data.user.email })
-      setIsAuthChecking(false)
+    if (authMode === "signup" && !result.data.session) {
+      setAuthMessage("Account created. Please check your email for the confirmation link.")
+      setShowResend(true)
+      return
     }
 
-    if (authMode === "signup" && !result.data.session) {
-      setAuthMessage("Account created. Check your email and click the confirmation link before signing in.")
-      setShowResend(true)
+    if (result.data.user) {
+      setUser({ id: result.data.user.id, email: result.data.user.email })
+      setAuthMessage("")
     }
   }
 
@@ -528,12 +583,10 @@ export default function Page() {
   const createProject = async (e?: React.MouseEvent) => {
     e?.preventDefault()
     e?.stopPropagation()
-    if (!supabase) return
-    if (!user) {
+    if (!supabase || !user) {
       alert("Please sign in or create an account to create your own projects.")
       return
     }
-    setAuthMessage("")
 
     const { data, error } = await supabase
       .from("projects")
@@ -544,7 +597,6 @@ export default function Page() {
     if (error) {
       console.error("Error creating project:", error)
       alert(`Error creating project: ${error.message}`)
-      setAuthMessage(`We could not create the project: ${error.message}`)
       return
     }
 
@@ -552,15 +604,13 @@ export default function Page() {
     update((x) => [...x, p])
     setActiveProjectId(p.id)
     setActiveWorkflowId(null)
-    setIsOwner(true)
     setShowReport(false)
     setViewMode("editor")
   }
 
   const createWorkflow = async (projectId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
-    if (!supabase) return
-    if (!user) {
+    if (!supabase || !user) {
       alert("Please sign in to add workflows.")
       return
     }
@@ -590,6 +640,7 @@ export default function Page() {
         reason: data.reason || "",
         isDone: data.is_done,
         comments: [],
+        revisions: [],
       }
       update((x) =>
         x.map((p) => (p.id === projectId ? { ...p, isExpanded: true, workflows: [...p.workflows, w] } : p))
@@ -601,7 +652,7 @@ export default function Page() {
 
   const fieldDebounceTimers = useRef<Record<string, NodeJS.Timeout>>({})
 
-  // Update workflow field: Owner can update all fields; Client can ONLY comment (clientMessage) & accept/verify (clientTaskDone)
+  // Update workflow field with backend permission validation
   const updateWorkflowField = async (
     workflowId: string,
     field: keyof Workflow,
@@ -609,24 +660,14 @@ export default function Page() {
   ) => {
     if (!supabase || !workflowId || !activeProjectId) return
 
-    const allowedForClient = ["clientMessage", "clientTaskDone"]
-    if (!effectiveIsOwner && !allowedForClient.includes(field)) {
-      return
-    }
-
-    if (!effectiveIsOwner && !canClientComment) {
-      alert(`Comments and approvals are restricted to ${inviteeEmail}. Please log in with ${inviteeEmail} to submit feedback.`)
-      return
-    }
-
-    // Optimistic local state update (instant UI response)
+    // Optimistic local update (instant UI response)
     update((xs) =>
       xs.map((p) =>
         p.id === activeProjectId
           ? {
-            ...p,
-            workflows: p.workflows.map((w) => (w.id === workflowId ? { ...w, [field]: value } : w)),
-          }
+              ...p,
+              workflows: p.workflows.map((w) => (w.id === workflowId ? { ...w, [field]: value } : w)),
+            }
           : p
       )
     )
@@ -635,41 +676,21 @@ export default function Page() {
     const timerKey = `${workflowId}-${field}`
 
     const executeSave = async () => {
-      // If reviewing or editing via invite link (Google Drive style share)
-      if (inviteToken) {
-        const currentWf = activeProject?.workflows.find((w) => w.id === workflowId)
-        const newMsg = field === "clientMessage" ? (value as string) : (currentWf?.clientMessage ?? null)
-        const newDone = field === "clientTaskDone" ? (value as boolean) : (currentWf?.clientTaskDone ?? null)
-        const newDesignA = field === "designA" ? ((value as string) || "__CLEAR__") : null
-        const newDesignB = field === "designB" ? ((value as string) || "__CLEAR__") : null
-        const newOurNotes = field === "ourNotes" ? (value as string) : null
-        const newReason = field === "reason" ? (value as string) : null
+      const valueText = typeof value === "string" ? value : null
+      const valueBool = typeof value === "boolean" ? value : null
 
-        await supabase.rpc("update_workflow_by_invite", {
-          invite_token: inviteToken,
-          target_workflow_id: workflowId,
-          new_client_message: newMsg,
-          new_client_task_done: newDone,
-          new_design_a: newDesignA,
-          new_design_b: newDesignB,
-          new_our_notes: newOurNotes,
-          new_reason: newReason,
-        })
-        return
+      const { error } = await supabase.rpc("update_workflow_field_secure", {
+        p_workflow_id: workflowId,
+        p_field: field,
+        p_value_text: valueText,
+        p_value_bool: valueBool,
+      })
+
+      if (error) {
+        console.error("Permission error updating workflow field:", error)
+        alert(`Permission Error: ${error.message}`)
+        loadWorkspace()
       }
-
-      const dbField =
-        ({
-          designA: "design_a",
-          designB: "design_b",
-          ourNotes: "our_notes",
-          clientMessage: "client_message",
-          clientTaskDone: "client_task_done",
-          reason: "reason",
-          isDone: "is_done",
-        } as Record<string, string>)[field] ?? field
-
-      await supabase.from("workflows").update({ [dbField]: value }).eq("id", workflowId)
     }
 
     if (isTextField) {
@@ -686,14 +707,57 @@ export default function Page() {
   }
 
   const updateField = (field: keyof Workflow, value: string | boolean | null) => {
-    if (activeWorkflowId) {
-      updateWorkflowField(activeWorkflowId, field, value)
+    if (activeWorkflow?.id) {
+      updateWorkflowField(activeWorkflow.id, field, value)
     }
   }
 
-  // Add Comment: Allowed for both Owner and Client, supports Reason
+  // Submit formal revision with mandatory reason
+  const submitFinalRevision = async (workflowId: string, reason: string) => {
+    if (!supabase || !user || !workflowId) return
+    const { data, error } = await supabase.rpc("submit_workflow_revision", {
+      p_workflow_id: workflowId,
+      p_reason: reason,
+    })
+
+    if (error) {
+      console.error("Error submitting revision:", error)
+      alert(`Error submitting revision: ${error.message}`)
+      return
+    }
+
+    if (data) {
+      update((xs) =>
+        xs.map((p) => ({
+          ...p,
+          workflows: p.workflows.map((w) =>
+            w.id === workflowId
+              ? {
+                  ...w,
+                  reason,
+                  revisions: [
+                    {
+                      id: data.id,
+                      workflowId,
+                      revisionNumber: data.revision_number,
+                      authorEmail: data.author_email,
+                      authorRole: data.author_role,
+                      reason: data.reason,
+                      createdAt: data.created_at,
+                    },
+                    ...(w.revisions || []),
+                  ],
+                }
+              : w
+          ),
+        }))
+      )
+    }
+  }
+
+  // Add Comment
   const addComment = async (body: string, reason?: string, targetWorkflowId?: string) => {
-    const wid = targetWorkflowId || activeWorkflowId
+    const wid = targetWorkflowId || activeWorkflow?.id
     if (!supabase || !user || !wid) return
 
     const tempId = `temp-${Date.now()}`
@@ -701,13 +765,12 @@ export default function Page() {
       id: tempId,
       workflowId: wid,
       authorId: user.id,
-      authorEmail: user.email || (isOwner ? "Our Team" : "Client"),
+      authorEmail: user.email || (isOwner ? "Owner" : "Member"),
       reason: reason || undefined,
       body,
       createdAt: new Date().toISOString(),
     }
 
-    // Optimistic local state update
     update((xs) =>
       xs.map((p) => ({
         ...p,
@@ -735,20 +798,20 @@ export default function Page() {
           workflows: p.workflows.map((w) =>
             w.id === wid
               ? {
-                ...w,
-                comments: w.comments.map((c) =>
-                  c.id === tempId
-                    ? {
-                      id: data.id,
-                      workflowId: data.workflow_id,
-                      authorId: data.author_id,
-                      body: data.body,
-                      reason: data.reason,
-                      createdAt: data.created_at,
-                    }
-                    : c
-                ),
-              }
+                  ...w,
+                  comments: w.comments.map((c) =>
+                    c.id === tempId
+                      ? {
+                          id: data.id,
+                          workflowId: data.workflow_id,
+                          authorId: data.author_id,
+                          body: data.body,
+                          reason: data.reason,
+                          createdAt: data.created_at,
+                        }
+                      : c
+                  ),
+                }
               : w
           ),
         }))
@@ -756,124 +819,15 @@ export default function Page() {
     }
   }
 
-  const moveWorkflow = (projectId: string, workflowId: string, direction: "up" | "down", e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    update((prevProjects) => {
-      return prevProjects.map((p) => {
-        if (p.id !== projectId) return p
-        const list = [...p.workflows]
-        const index = list.findIndex((w) => w.id === workflowId)
-        if (index === -1) return p
-        const targetIndex = direction === "up" ? index - 1 : index + 1
-        if (targetIndex < 0 || targetIndex >= list.length) return p
-
-        const temp = list[index]
-        list[index] = list[targetIndex]
-        list[targetIndex] = temp
-
-        try {
-          const orderIds = list.map((w) => w.id)
-          localStorage.setItem(`wf_order_${p.id}`, JSON.stringify(orderIds))
-        } catch (err) {
-          console.error("Failed to save workflow order:", err)
-        }
-
-        return { ...p, workflows: list }
-      })
-    })
-  }
-
-  const reorderWorkflows = (projectId: string, sourceIndex: number, destinationIndex: number) => {
-    if (sourceIndex === destinationIndex) return
-    update((prevProjects) => {
-      return prevProjects.map((p) => {
-        if (p.id !== projectId) return p
-        const list = [...p.workflows]
-        const [removed] = list.splice(sourceIndex, 1)
-        list.splice(destinationIndex, 0, removed)
-
-        try {
-          const orderIds = list.map((w) => w.id)
-          localStorage.setItem(`wf_order_${p.id}`, JSON.stringify(orderIds))
-        } catch (err) {
-          console.error("Failed to save workflow order:", err)
-        }
-
-        return { ...p, workflows: list }
-      })
-    })
-  }
-
-  const moveProject = (projectId: string, direction: "up" | "down", e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    update((prevProjects) => {
-      const list = [...prevProjects]
-      const index = list.findIndex((p) => p.id === projectId)
-      if (index === -1) return prevProjects
-      const targetIndex = direction === "up" ? index - 1 : index + 1
-      if (targetIndex < 0 || targetIndex >= list.length) return prevProjects
-
-      const temp = list[index]
-      list[index] = list[targetIndex]
-      list[targetIndex] = temp
-
-      try {
-        const orderIds = list.map((p) => p.id)
-        localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(orderIds))
-      } catch (err) {
-        console.error("Failed to save project order:", err)
-      }
-
-      return list
-    })
-  }
-
-  const reorderProjects = (sourceIndex: number, destinationIndex: number) => {
-    if (sourceIndex === destinationIndex) return
-    update((prevProjects) => {
-      const list = [...prevProjects]
-      const [removed] = list.splice(sourceIndex, 1)
-      list.splice(destinationIndex, 0, removed)
-
-      try {
-        const orderIds = list.map((p) => p.id)
-        localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(orderIds))
-      } catch (err) {
-        console.error("Failed to save project order:", err)
-      }
-
-      return list
-    })
-  }
-
-  const createInvite = async () => {
-    if (!supabase || !activeProjectId) return
-    const { data } = await supabase
-      .from("project_invites")
-      .insert({
-        project_id: activeProjectId,
-        owner_id: user?.id,
-        invitee_email: inviteEmail || null,
-        permission: invitePermission,
-      })
-      .select("token, permission")
-      .single()
-
-    if (data) {
-      setInviteLink(`${window.location.origin}${window.location.pathname}?invite=${data.token}`)
-      setInviteEmail("")
-    }
-  }
-
-  // Show full-screen loading state while verifying existing session on page load/refresh
+  // Loading state during auth initialization
   if (isAuthChecking) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 dark:bg-zinc-950 p-6">
         <div className="flex flex-col items-center gap-4">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 shadow-xl">
             <FolderKanban className="h-8 w-8 text-white animate-pulse" />
           </div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
             <span>Loading workspace...</span>
           </div>
@@ -882,7 +836,7 @@ export default function Page() {
     )
   }
 
-  // ─── LANDING PAGE ─── shown to unauthenticated visitors with no invite
+  // Landing Page for unauthenticated visitors without an invite
   if (!user && !inviteToken && showLanding) {
     return (
       <LandingPage
@@ -893,45 +847,55 @@ export default function Page() {
     )
   }
 
-  if (!user && !inviteToken) {
+  // Auth Card for unauthenticated users (either visiting or responding to invite)
+  if (!user) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 dark:bg-zinc-950 p-6 transition-colors duration-200">
-        {/* Theme toggle in top-right corner of auth screen */}
         <div className="fixed top-4 right-4 z-50">
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
-        <form onSubmit={authenticate} className="w-full max-w-md rounded-3xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-white p-8 shadow-xl transition-colors duration-200">
-          <button
-            type="button"
-            onClick={() => setShowLanding(true)}
-            className="mb-6 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Back to Home</span>
-          </button>
+        <form
+          onSubmit={authenticate}
+          className="w-full max-w-md rounded-3xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 text-slate-900 dark:text-white p-8 shadow-xl transition-colors duration-200"
+        >
+          {!inviteToken && (
+            <button
+              type="button"
+              onClick={() => setShowLanding(true)}
+              className="mb-6 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>Back to Home</span>
+            </button>
+          )}
 
-          <div className="mb-8">
-            <FolderKanban className="mb-5 h-12 w-12 rounded-2xl bg-slate-900 dark:bg-zinc-800 p-3 text-white" />
-            <h1 className="text-3xl font-semibold text-slate-900 dark:text-white">Design Review</h1>
-            <p className="mt-2 text-slate-500 dark:text-slate-400">
-              {authMode === "signin" ? "Sign in to your workspace." : "Create your review workspace."}
+          <div className="mb-6">
+            <FolderKanban className="mb-4 h-12 w-12 rounded-2xl bg-slate-900 dark:bg-zinc-800 p-3 text-white shadow" />
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Design Review</h1>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              {inviteToken
+                ? "You've been invited to collaborate on this project. Please sign in or create an account with your invited email to access."
+                : authMode === "signin"
+                ? "Sign in to your review workspace."
+                : "Create your account to get started."}
             </p>
           </div>
 
-          <label className="mb-4 block text-sm font-medium text-slate-700 dark:text-slate-300">
-            Email
+          <label className="mb-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+            Email Address
             <input
-              className="mt-2 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@company.com"
               required
             />
           </label>
-          <label className="mb-5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+          <label className="mb-5 block text-xs font-semibold text-slate-700 dark:text-slate-300">
             Password
             <input
-              className="mt-2 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+              className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -939,26 +903,31 @@ export default function Page() {
               required
             />
           </label>
+
           {authMessage && (
-            <div className="mb-4 rounded-xl bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 p-3 text-sm text-slate-700 dark:text-slate-300">
+            <div className="mb-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 p-3 text-xs text-rose-700 dark:text-rose-300">
               <p>{authMessage}</p>
               {showResend && (
                 <button
                   type="button"
                   onClick={resendConfirmation}
-                  className="mt-2 font-medium text-slate-900 dark:text-white underline underline-offset-2"
+                  className="mt-2 font-semibold underline underline-offset-2 cursor-pointer"
                 >
                   Resend confirmation email
                 </button>
               )}
             </div>
           )}
-          <button className="w-full rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 py-3 text-white font-semibold transition-colors" disabled={authLoading}>
-            {authLoading ? "Loading..." : authMode === "signin" ? "Sign in" : "Create account"}
+
+          <button
+            className="w-full rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 py-3 text-white font-semibold transition-colors cursor-pointer text-sm shadow-md"
+            disabled={authLoading}
+          >
+            {authLoading ? "Loading..." : authMode === "signin" ? "Sign In & Access" : "Create Account & Access"}
           </button>
           <button
             type="button"
-            className="mt-4 w-full text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+            className="mt-4 w-full text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
             onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}
           >
             {authMode === "signin" ? "Need an account? Sign up" : "Already have an account? Sign in"}
@@ -968,379 +937,228 @@ export default function Page() {
     )
   }
 
-  // IF NOT OWNER / VIEWER: Never show the editor page for this project!
-  // Only projects with edit option can open the editor workspace!
-  if (activeProject && !effectiveIsOwner) {
+  // Viewer Only (Presentation mode)
+  if (activeProject && !canEdit) {
     if (showReport || viewMode === "editor") {
       return (
         <div className="h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-900 text-white">
           <ReportModal
             project={activeProject}
             isOwner={false}
-            isViewerOnly={true}
+            canEdit={false}
             canComment={canClientComment}
-            inviteeEmail={inviteeEmail}
+            canApprove={canApprove}
+            userRole={userRole}
+            isViewerOnly={true}
             user={user}
             theme={theme}
             onToggleTheme={toggleTheme}
             onLogout={handleSignOut}
-            onClose={() => {
-              setShowReport(false)
-              setViewMode("dashboard")
-            }}
+            onClose={() => setViewMode("dashboard")}
             onUpdateWorkflowField={updateWorkflowField}
+            onSubmitRevision={submitFinalRevision}
           />
         </div>
       )
     }
-
-    // When client closes presentation view, they see the Design Review Dashboard with their project card (which has the View icon on it and opens presentation only!)
-    return (
-      <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-[#18181b] text-slate-100">
-        <ProjectDashboard
-          projects={projects}
-          userEmail={user?.email}
-          userId={user?.id}
-          isOwner={false}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          onCreateProject={createProject}
-          onSelectProject={(id) => {
-            const p = projects.find((x) => x.id === id)
-            setActiveProjectId(id)
-            setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            const canEdit = Boolean(user || (inviteToken && activeInvitePermission === "edit"))
-            if (canEdit) {
-              setShowReport(false)
-              setViewMode("editor")
-            } else {
-              setShowReport(true)
-            }
-          }}
-          onOpenPresentation={(id) => {
-            const p = projects.find((x) => x.id === id)
-            setActiveProjectId(id)
-            setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            setShowReport(true)
-          }}
-          onDeleteProject={() => { }}
-          onRenameProject={() => { }}
-          onLogout={handleSignOut}
-        />
-      </div>
-    )
-  }
-
-  if (viewMode === "dashboard" && !inviteToken) {
-    return (
-      <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-[#18181b] text-slate-100">
-        <ProjectDashboard
-          projects={projects}
-          userEmail={user?.email}
-          userId={user?.id}
-          isOwner={effectiveIsOwner}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          onCreateProject={createProject}
-          onSelectProject={(id) => {
-            const p = projects.find((x) => x.id === id)
-            setActiveProjectId(id)
-            setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            const canEdit = Boolean(user || (inviteToken && activeInvitePermission === "edit"))
-            if (canEdit) {
-              setShowReport(false)
-              setViewMode("editor")
-            } else {
-              setShowReport(true)
-            }
-          }}
-          onOpenPresentation={(id) => {
-            const p = projects.find((x) => x.id === id)
-            setActiveProjectId(id)
-            setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            setShowReport(true)
-          }}
-          onDeleteProject={async (id, e) => {
-            e.stopPropagation()
-            if (supabase) await supabase.from("projects").delete().eq("id", id)
-            update((xs) => xs.filter((x) => x.id !== id))
-          }}
-          onRenameProject={async (id, title) => {
-            if (supabase) await supabase.from("projects").update({ title }).eq("id", id)
-            update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
-          }}
-          onLogout={handleSignOut}
-        />
-      </div>
-    )
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 print:h-auto print:overflow-visible print:block print:bg-white transition-colors duration-200">
-      {/* Mobile sidebar backdrop */}
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-white transition-colors duration-200">
+      {/* Mobile Drawer Backdrop */}
       {isMobileSidebarOpen && (
         <div
+          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm lg:hidden transition-opacity"
           onClick={() => setIsMobileSidebarOpen(false)}
-          className="fixed inset-0 bg-black/60 z-30 md:hidden backdrop-blur-sm transition-opacity"
         />
       )}
 
-      {/* Sidebar container with mobile drawer */}
+      {/* Sidebar */}
       <div
-        className={`fixed inset-y-0 left-0 z-40 md:relative md:z-auto md:flex transition-transform duration-200 ease-in-out shadow-2xl md:shadow-none ${
-          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
+          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <Sidebar
-          projects={activeProject ? [activeProject] : projects}
+          projects={projects}
           activeProjectId={activeProjectId}
           activeWorkflowId={activeWorkflowId}
           editingId={editingId}
-          isOwner={effectiveIsOwner}
-          onBackToDashboard={() => {
+          isOwner={isOwner}
+          setEditingId={(id: EditingId) => setEditingId(id)}
+          onSelectProject={(id: string) => {
+            setActiveProjectId(id)
             setIsMobileSidebarOpen(false)
-            setViewMode("dashboard")
           }}
-          setEditingId={setEditingId}
+          onSelectWorkflow={(projectId: string, workflowId: string) => {
+            setActiveProjectId(projectId)
+            setActiveWorkflowId(workflowId)
+            setViewMode("editor")
+            setIsMobileSidebarOpen(false)
+          }}
           onCreateProject={createProject}
           onCreateWorkflow={createWorkflow}
-          onToggleExpand={async (id, e) => {
-            e?.stopPropagation()
-            if (!supabase) return
-            const p = projects.find((x) => x.id === id)
-            if (p) {
-              await supabase.from("projects").update({ is_expanded: !p.isExpanded }).eq("id", id)
-              update((xs) => xs.map((x) => (x.id === id ? { ...x, isExpanded: !x.isExpanded } : x)))
-            }
-          }}
-          onDeleteProject={async (id, e) => {
-            e.stopPropagation()
-            if (supabase) await supabase.from("projects").delete().eq("id", id)
-            update((xs) => xs.filter((x) => x.id !== id))
-            if (activeProjectId === id) {
-              setActiveProjectId(null)
-              setActiveWorkflowId(null)
-              setViewMode("dashboard")
-            }
-          }}
-          onDeleteWorkflow={async (pid, wid, e) => {
-            e.stopPropagation()
-            if (supabase) await supabase.from("workflows").delete().eq("id", wid)
-            update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.filter((w) => w.id !== wid) } : p)))
-          }}
-          onSelectProject={(id) => {
-            setActiveProjectId(id)
-            setActiveWorkflowId(null)
-          }}
-          onSelectWorkflow={(pid, wid) => {
-            setActiveProjectId(pid)
-            setActiveWorkflowId(wid)
-            setIsMobileSidebarOpen(false)
-          }}
-          onRenameProject={async (id, title) => {
-            if (supabase) await supabase.from("projects").update({ title }).eq("id", id)
+          onToggleExpand={(id: string) =>
+            update((xs) => xs.map((p) => (p.id === id ? { ...p, isExpanded: !p.isExpanded } : p)))
+          }
+          onRenameWorkflow={(projectId: string, workflowId: string, title: string) =>
+            update((xs) =>
+              xs.map((p) =>
+                p.id === projectId
+                  ? {
+                      ...p,
+                      workflows: p.workflows.map((w) => (w.id === workflowId ? { ...w, title } : w)),
+                    }
+                  : p
+              )
+            )
+          }
+          onRenameProject={(id: string, title: string) =>
             update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
+          }
+          onDeleteProject={async (id: string, e: React.MouseEvent) => {
+            e.stopPropagation()
+            if (!confirm("Are you sure you want to delete this project?")) return
+            update((xs) => xs.filter((p) => p.id !== id))
+            if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
+            await supabase.from("projects").delete().eq("id", id)
           }}
-          onRenameWorkflow={async (pid, id, title) => {
-            if (supabase) await supabase.from("workflows").update({ title }).eq("id", id)
-            update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.map((w) => (w.id === id ? { ...w, title } : w)) } : p)))
+          onDeleteWorkflow={async (projectId: string, workflowId: string, e: React.MouseEvent) => {
+            e.stopPropagation()
+            if (!confirm("Are you sure you want to delete this workflow?")) return
+            update((xs) =>
+              xs.map((p) =>
+                p.id === projectId
+                  ? {
+                      ...p,
+                      workflows: p.workflows.filter((w) => w.id !== workflowId),
+                    }
+                  : p
+              )
+            )
+            if (activeWorkflowId === workflowId) setActiveWorkflowId(null)
+            await supabase.from("workflows").delete().eq("id", workflowId)
           }}
-          onMoveWorkflowUp={(pid, wid, e) => moveWorkflow(pid, wid, "up", e)}
-          onMoveWorkflowDown={(pid, wid, e) => moveWorkflow(pid, wid, "down", e)}
-          onReorderWorkflows={reorderWorkflows}
-          onMoveProjectUp={(pid, e) => moveProject(pid, "up", e)}
-          onMoveProjectDown={(pid, e) => moveProject(pid, "down", e)}
-          onReorderProjects={reorderProjects}
+          onReorderWorkflows={(projectId: string, sourceIndex: number, destinationIndex: number) => {
+            update((xs) =>
+              xs.map((p) => {
+                if (p.id !== projectId) return p
+                const updated = [...p.workflows]
+                const [moved] = updated.splice(sourceIndex, 1)
+                updated.splice(destinationIndex, 0, moved)
+                try {
+                  localStorage.setItem(`wf_order_${projectId}`, JSON.stringify(updated.map((w) => w.id)))
+                } catch (e) {
+                  // Ignore
+                }
+                return { ...p, workflows: updated }
+              })
+            )
+          }}
+          onReorderProjects={(sourceIndex: number, destinationIndex: number) => {
+            update((prev) => {
+              const updated = [...prev]
+              const [moved] = updated.splice(sourceIndex, 1)
+              updated.splice(destinationIndex, 0, moved)
+              try {
+                localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(updated.map((p) => p.id)))
+              } catch (e) {
+                // Ignore
+              }
+              return updated
+            })
+          }}
         />
       </div>
 
-      <main className={`relative flex flex-col flex-1 h-screen overflow-hidden ${showReport ? "print:hidden" : ""}`}>
-        {/* Top Pinned Header with User Login & Logout */}
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-2.5 shadow-sm dark:shadow-slate-900/50 flex-shrink-0 print:hidden transition-colors duration-200">
+      {/* Main Workspace Area */}
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
+        {/* Workspace Top Header */}
+        <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-6 flex items-center justify-between gap-3 flex-shrink-0 z-10 transition-colors duration-200">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            {/* Mobile Sidebar Toggle */}
+            {/* Mobile Sidebar Hamburger Toggle */}
             <button
               type="button"
-              onClick={() => setIsMobileSidebarOpen((prev) => !prev)}
-              className="md:hidden flex items-center justify-center p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
-              title="Toggle sidebar"
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="Open navigation sidebar"
             >
-              {isMobileSidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              <Menu className="h-4 w-4" />
             </button>
 
-            {!inviteToken && (
-              <button
-                type="button"
-                onClick={() => setViewMode("dashboard")}
-                className="hidden sm:flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors active:scale-95 flex-shrink-0"
-                title="Return to Projects Hub"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span>All Projects</span>
-              </button>
-            )}
-
+            {/* View Mode Toggle: Dashboard vs Editor */}
             {activeProject && (
-              <div className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-600 dark:text-slate-400 min-w-0">
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[120px] sm:max-w-[200px]">
-                  {activeProject.title}
-                </span>
-                {activeWorkflow && (
-                  <>
-                    <span className="text-slate-300 dark:text-slate-600">/</span>
-                    <span className="font-medium text-blue-600 dark:text-blue-400 truncate max-w-[100px] sm:max-w-[180px]">
-                      {activeWorkflow.title}
-                    </span>
-                  </>
-                )}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("dashboard")}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    viewMode === "dashboard"
+                      ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("editor")}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    viewMode === "editor"
+                      ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  Editor
+                </button>
               </div>
             )}
 
-            <span
-              className={`hidden lg:inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold flex-shrink-0 ${
-                effectiveIsOwner
-                  ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
-                  : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
-              }`}
-            >
-              {effectiveIsOwner ? "Owner" : "Client"}
-            </span>
+            {/* Active Project Title & Role Indicator */}
+            {activeProject && (
+              <div className="hidden sm:flex items-center gap-2 min-w-0">
+                <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[200px]">
+                  {activeProject.title}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${
+                    isOwner
+                      ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                      : userRole === "freelancer"
+                      ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                      : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+                  }`}
+                >
+                  {isOwner ? "Owner" : userRole === "freelancer" ? "Freelancer" : `Client (${canEdit ? "Edit" : "View"})`}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
             {/* View Presentation Button */}
-            <button
-              type="button"
-              onClick={() => setShowReport(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
-              title="Open Presentation View"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Presentation</span>
-            </button>
+            {activeProject && (
+              <button
+                type="button"
+                onClick={() => setShowReport(true)}
+                className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+                title="Open Presentation View"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Presentation</span>
+              </button>
+            )}
 
-            {/* Share Popover Button */}
-            {effectiveIsOwner && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setIsShareOpen((prev) => !prev)}
-                  className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 cursor-pointer ${
-                    isShareOpen
-                      ? "bg-blue-700 text-white"
-                      : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/25"
-                  }`}
-                >
-                  <Share2 className="h-3.5 w-3.5" />
-                  <span>Share</span>
-                </button>
-
-                {/* Share Dropdown Popover */}
-                {isShareOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-2xl z-50 flex flex-col gap-3">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center gap-2">
-                        <Share2 className="h-4 w-4 text-blue-500" />
-                        <span className="text-xs font-bold text-slate-900 dark:text-white">Share Project Invite</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsShareOpen(false)}
-                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
-                        aria-label="Close share menu"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Client Email (Optional)</label>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
-                        When specified, only this client email can comment &amp; verify. Leave blank for anyone with the link.
-                      </p>
-                      <input
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        placeholder="client@example.com"
-                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Permission Level</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInvitePermission("view")
-                            setInviteLink("")
-                          }}
-                          className={`flex items-center justify-center gap-1.5 rounded-xl p-2 text-xs font-medium border transition-all ${
-                            invitePermission === "view"
-                              ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 font-semibold"
-                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                          <span>View Only</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInvitePermission("edit")
-                            setInviteLink("")
-                          }}
-                          className={`flex items-center justify-center gap-1.5 rounded-xl p-2 text-xs font-medium border transition-all ${
-                            invitePermission === "edit"
-                              ? "bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 font-semibold"
-                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                          }`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                          <span>Can Edit</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={createInvite}
-                      className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-semibold text-white shadow-md transition-all active:scale-95 cursor-pointer ${
-                        invitePermission === "edit" ? "bg-blue-600 hover:bg-blue-500" : "bg-purple-600 hover:bg-purple-500"
-                      }`}
-                    >
-                      <Share2 className="h-3.5 w-3.5" />
-                      <span>Generate {invitePermission === "edit" ? "Edit" : "View"} Link</span>
-                    </button>
-
-                    {inviteLink && (
-                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                        <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                          <input
-                            readOnly
-                            value={inviteLink}
-                            className="bg-transparent text-[11px] text-slate-700 dark:text-slate-300 flex-1 outline-none truncate"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(inviteLink)
-                              setCopied(true)
-                              setTimeout(() => setCopied(false), 2000)
-                            }}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-white transition-all cursor-pointer ${
-                              copied ? "bg-emerald-600" : "bg-slate-900 dark:bg-slate-700 hover:bg-slate-800"
-                            }`}
-                          >
-                            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                            <span>{copied ? "Copied" : "Copy"}</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+            {/* Share & Permissions Button (Owner Only) */}
+            {isOwner && activeProject && (
+              <button
+                type="button"
+                onClick={() => setIsShareOpen(true)}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                <span>Share</span>
+              </button>
             )}
 
             {/* Theme Toggle */}
@@ -1365,36 +1183,61 @@ export default function Page() {
                   <LogOut className="h-3.5 w-3.5" />
                 </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  window.history.replaceState({}, "", window.location.pathname)
-                  window.location.reload()
-                }}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                Sign in
-              </button>
-            )}
+            ) : null}
           </div>
         </header>
 
-        {/* Scrollable Content Area */}
+        {/* Workspace Body Area */}
         <div className="flex-1 overflow-y-auto bg-slate-100 dark:bg-slate-950 transition-colors duration-200">
           {loading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-slate-400" />
             </div>
+          ) : viewMode === "dashboard" ? (
+            <ProjectDashboard
+              projects={projects}
+              userEmail={user?.email}
+              userId={user?.id}
+              isOwner={isOwner}
+              theme={theme}
+              onToggleTheme={toggleTheme}
+              onCreateProject={createProject}
+              onSelectProject={(id: string) => {
+                setActiveProjectId(id)
+                setViewMode("editor")
+              }}
+              onOpenPresentation={(id: string) => {
+                setActiveProjectId(id)
+                setShowReport(true)
+              }}
+              onDeleteProject={async (id: string, e: React.MouseEvent) => {
+                e.stopPropagation()
+                if (!confirm("Are you sure you want to delete this project?")) return
+                update((xs) => xs.filter((p) => p.id !== id))
+                if (activeProjectId === id) setActiveProjectId(projects.find((p) => p.id !== id)?.id ?? null)
+                await supabase.from("projects").delete().eq("id", id)
+              }}
+              onRenameProject={(id: string, title: string) =>
+                update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
+              }
+              onShareProject={(id: string) => {
+                setActiveProjectId(id)
+                setIsShareOpen(true)
+              }}
+            />
           ) : activeProject && activeWorkflow ? (
             <WorkflowEditor
               project={activeProject}
               workflow={activeWorkflow}
-              isOwner={effectiveIsOwner}
+              isOwner={isOwner}
+              canEdit={canEdit}
               canComment={canClientComment}
-              inviteeEmail={inviteeEmail}
+              canApprove={canApprove}
+              userRole={userRole}
               onUpdateField={updateField}
+              onSubmitRevision={submitFinalRevision}
               onShowReport={() => setShowReport(true)}
+              onAddComment={addComment}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-slate-400">
@@ -1404,18 +1247,31 @@ export default function Page() {
         </div>
       </main>
 
+      {/* Share & Granular Permissions Modal */}
+      {isOwner && activeProject && (
+        <SharePermissionsModal
+          project={activeProject}
+          isOpen={isShareOpen}
+          onClose={() => setIsShareOpen(false)}
+        />
+      )}
+
+      {/* Presentation / Report Modal */}
       {showReport && activeProject && (
         <ReportModal
           project={activeProject}
-          isOwner={effectiveIsOwner}
+          isOwner={isOwner}
+          canEdit={canEdit}
           canComment={canClientComment}
-          inviteeEmail={inviteeEmail}
+          canApprove={canApprove}
+          userRole={userRole}
           user={user}
           theme={theme}
           onToggleTheme={toggleTheme}
           onLogout={handleSignOut}
           onClose={() => setShowReport(false)}
           onUpdateWorkflowField={updateWorkflowField}
+          onSubmitRevision={submitFinalRevision}
         />
       )}
     </div>

@@ -29,8 +29,11 @@ import { ThemeToggle } from "./theme-toggle"
 type ReportModalProps = {
   project: Project
   isOwner?: boolean
+  canEdit?: boolean
   isViewerOnly?: boolean
   canComment?: boolean
+  canApprove?: boolean
+  userRole?: "client" | "freelancer" | "owner" | null
   inviteeEmail?: string | null
   user?: { id: string; email?: string } | null
   theme?: "light" | "dark"
@@ -42,6 +45,7 @@ type ReportModalProps = {
     field: "ourNotes" | "clientMessage" | "clientTaskDone" | "reason",
     value: string | boolean | null
   ) => void
+  onSubmitRevision?: (workflowId: string, reason: string) => Promise<void>
 }
 
 type LightboxState = {
@@ -55,8 +59,11 @@ type LightboxState = {
 export function ReportModal({
   project,
   isOwner = false,
+  canEdit,
   isViewerOnly = false,
   canComment = true,
+  canApprove,
+  userRole = "client",
   inviteeEmail,
   user = null,
   theme = "dark",
@@ -64,7 +71,12 @@ export function ReportModal({
   onLogout,
   onClose,
   onUpdateWorkflowField,
+  onSubmitRevision,
 }: ReportModalProps) {
+  const effectiveCanEdit = canEdit ?? isOwner
+  const effectiveCanComment = canComment ?? true
+  const effectiveCanApprove = canApprove ?? isOwner
+
   const [lightbox, setLightbox] = useState<LightboxState | null>(null)
   const [zoom, setZoom] = useState<number>(1)
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({})
@@ -87,13 +99,18 @@ export function ReportModal({
     }, 2500)
   }
 
-  const handleSubmitReason = (workflowId: string) => {
-    if (!onUpdateWorkflowField) return
+  const handleSubmitReason = async (workflowId: string) => {
     const currentVal =
       reasonDrafts[workflowId] !== undefined
         ? reasonDrafts[workflowId]
         : project.workflows.find((w) => w.id === workflowId)?.reason || ""
-    onUpdateWorkflowField(workflowId, "reason", currentVal)
+
+    if (onSubmitRevision) {
+      await onSubmitRevision(workflowId, currentVal)
+    } else if (onUpdateWorkflowField) {
+      onUpdateWorkflowField(workflowId, "reason", currentVal)
+    }
+
     setSubmittedReasonId(workflowId)
     setTimeout(() => {
       setSubmittedReasonId((prev) => (prev === workflowId ? null : prev))
@@ -567,17 +584,17 @@ export function ReportModal({
                       </div>
                       <div className="flex items-center gap-2">
                         {isOwner && (
-                          <span className="text-xs font-semibold bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 border border-purple-200 dark:border-purple-700 px-2 py-0.5 rounded-full print:hidden">
+                          <span className="text-xs font-semibold bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 border border-purple-200 dark:border-purple-700 px-2.5 py-0.5 rounded-full print:hidden">
                             From Client
                           </span>
                         )}
                         {onUpdateWorkflowField && (
                           <button
                             type="button"
-                            disabled={!canComment}
+                            disabled={!effectiveCanApprove}
                             onClick={() => {
-                              if (!canComment) {
-                                alert(`Approvals are locked to ${inviteeEmail}. Only ${inviteeEmail} can accept or verify.`)
+                              if (!effectiveCanApprove) {
+                                alert(`Approval permissions are restricted. You do not have permission to accept or verify.`)
                                 return
                               }
                               onUpdateWorkflowField(
@@ -587,7 +604,7 @@ export function ReportModal({
                               )
                             }}
                             className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors print:border ${
-                              !canComment
+                              !effectiveCanApprove
                                 ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-70"
                                 : workflow.clientTaskDone
                                   ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
@@ -609,11 +626,11 @@ export function ReportModal({
                     {!isOwner && onUpdateWorkflowField ? (
                       /* Client editing their own message */
                       <>
-                        {!canComment && inviteeEmail && (
+                        {!effectiveCanComment && (
                           <div className="mb-3 flex items-center gap-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-3 text-xs text-amber-800 dark:text-amber-300 print:hidden">
                             <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
                             <span>
-                              Comments &amp; approvals are restricted to <strong>{inviteeEmail}</strong>.
+                              Client commenting is disabled for your account.
                             </span>
                           </div>
                         )}
@@ -623,7 +640,7 @@ export function ReportModal({
                               ? clientMessageDrafts[workflow.id]
                               : workflow.clientMessage || ""
                           }
-                          disabled={!canComment}
+                          disabled={!effectiveCanComment}
                           onChange={(e) =>
                             setClientMessageDrafts((prev) => ({
                               ...prev,
@@ -631,17 +648,17 @@ export function ReportModal({
                             }))
                           }
                           placeholder={
-                            !canComment
-                              ? `Feedback is locked. Only ${inviteeEmail} can comment.`
+                            !effectiveCanComment
+                              ? "Client commenting is disabled."
                               : "Type your message, requested changes, or feedback..."
                           }
                           className={`w-full flex-1 min-h-[130px] rounded-lg border p-3 text-sm focus:outline-none resize-y print:hidden transition-colors ${
-                            !canComment
+                            !effectiveCanComment
                               ? "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 cursor-not-allowed"
                               : "border-purple-200 dark:border-purple-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20"
                           }`}
                         />
-                        {canComment && (
+                        {effectiveCanComment && (
                           <div className="flex items-center justify-between mt-3 pt-2 border-t border-purple-100 dark:border-purple-800/50 print:hidden">
                             <span className="text-xs text-purple-700 dark:text-purple-400 font-medium">
                               {submittedClientMessageId === workflow.id
@@ -696,19 +713,19 @@ export function ReportModal({
               </div>
 
               {/* Reason for Final Changes (Developer gives why this changed form) */}
-              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 w-full flex flex-col">
+              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 w-full flex flex-col space-y-3">
                 <div className="flex justify-between items-center mb-2 text-amber-900 dark:text-amber-200 font-bold text-base md:text-lg">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                     <span>Reason for Final Changes</span>
                   </div>
-                  {isOwner && onUpdateWorkflowField && (
+                  {effectiveCanEdit && onUpdateWorkflowField && (
                     <span className="text-xs font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-700 px-2.5 py-0.5 rounded-full print:hidden">
-                      Developer Explanation Form
+                      {userRole === "freelancer" ? "Freelancer Submission" : "Developer Explanation"}
                     </span>
                   )}
                 </div>
-                {isOwner && onUpdateWorkflowField ? (
+                {effectiveCanEdit && onUpdateWorkflowField ? (
                   <>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 print:hidden">
                       Developer explains why these specific changes were made in response to client feedback or requirements:
@@ -762,6 +779,29 @@ export function ReportModal({
                   <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base leading-relaxed">
                     {workflow.reason || "No reason provided."}
                   </p>
+                )}
+
+                {/* Revision History List in Presentation View */}
+                {workflow.revisions && workflow.revisions.length > 0 && (
+                  <div className="pt-3 border-t border-amber-200/50 dark:border-amber-900/40 space-y-2">
+                    <h5 className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
+                      Past Revisions &amp; Explanations:
+                    </h5>
+                    <div className="space-y-1.5">
+                      {workflow.revisions.map((r) => (
+                        <div
+                          key={r.id}
+                          className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-amber-200/80 dark:border-amber-900/40 text-xs"
+                        >
+                          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 font-semibold mb-1">
+                            <span className="text-amber-700 dark:text-amber-300">Revision {r.revisionNumber} ({r.authorRole})</span>
+                            <span className="text-[10px]">{new Date(r.createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{r.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
