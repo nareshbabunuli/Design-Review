@@ -16,6 +16,11 @@ import {
   ShieldCheck,
   Eye,
   Lock,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Maximize2,
+  X,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -39,6 +44,9 @@ type ImageUploadProps = {
   type: "design" | "reference"
   workflowId: string
   isOwner: boolean
+  isSelected?: boolean
+  onSelect?: () => void
+  onPreview?: (src: string, title: string) => void
   onUpload: (file: File) => void
   onDelete: () => void
   isUploading?: boolean
@@ -51,24 +59,56 @@ function ImageUpload({
   type,
   workflowId,
   isOwner,
+  isSelected,
+  onSelect,
+  onPreview,
   onUpload,
   onDelete,
   isUploading,
 }: ImageUploadProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const uploadText =
-    type === "design" ? "Click to upload Figma export" : "Click to upload design reference"
+    type === "design" ? "Figma Export" : "App Screenshot"
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLLabelElement>) => {
-    e.preventDefault()
+  const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
 
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith("image/")) {
         const file = items[i].getAsFile()
-        if (file) onUpload(file)
+        if (file) {
+          e.preventDefault()
+          onUpload(file)
+        }
         break
       }
+    }
+  }
+
+  const handleClipboardButtonClick = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onSelect?.()
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        const items = await navigator.clipboard.read()
+        for (const item of items) {
+          for (const itemType of item.types) {
+            if (itemType.startsWith("image/")) {
+              const blob = await item.getType(itemType)
+              const file = new File([blob], `clipboard-${Date.now()}.${itemType.split("/")[1] || "png"}`, {
+                type: itemType,
+              })
+              onUpload(file)
+              return
+            }
+          }
+        }
+      }
+      alert("No image found on your clipboard. Copy an image or screenshot first, then press Ctrl+V to paste.")
+    } catch {
+      alert("Please press Ctrl+V (or Cmd+V on Mac) to paste your copied image.")
     }
   }
 
@@ -83,20 +123,38 @@ function ImageUpload({
             </span>
           </div>
           {image && (
-            <a
-              href={image}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium"
-            >
-              <ExternalLink className="h-3.5 w-3.5" /> View full
-            </a>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => onPreview?.(image, title)}
+                className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium cursor-pointer"
+              >
+                <Maximize2 className="h-3.5 w-3.5" /> Open preview
+              </button>
+              <a
+                href={image}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> Full tab
+              </a>
+            </div>
           )}
         </div>
-        <div className="relative flex h-80 flex-col items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 overflow-hidden p-2">
+        <div
+          onDoubleClick={() => image && onPreview?.(image, title)}
+          className="relative flex h-80 flex-col items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 overflow-hidden p-2 cursor-pointer group"
+          title={image ? "Double-click to open full image preview" : ""}
+        >
           {image ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img src={image} alt={title} className="h-full w-full object-contain drop-shadow-sm" />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt={title} className="h-full w-full object-contain drop-shadow-sm group-hover:scale-[1.01] transition-transform" />
+              <div className="absolute bottom-2.5 right-2.5 bg-black/65 text-white text-[11px] font-medium px-2.5 py-1 rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none flex items-center gap-1">
+                <Maximize2 className="h-3 w-3" /> Double-click to open
+              </div>
+            </>
           ) : (
             <div className="flex flex-col items-center text-slate-400 dark:text-slate-500">
               <span className="text-sm font-medium">No image uploaded yet</span>
@@ -112,24 +170,36 @@ function ImageUpload({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
-          {type === "reference" && (
+          {type === "reference" ? (
             <span className="text-xs font-medium text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2 py-0.5 rounded-full">
               Client Reference
+            </span>
+          ) : (
+            <span className="text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-2 py-0.5 rounded-full">
+              Figma Design
             </span>
           )}
         </div>
         {image && (
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onPreview?.(image, title)}
+              className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium cursor-pointer"
+            >
+              <Maximize2 className="h-3.5 w-3.5" /> Preview
+            </button>
             <a
               href={image}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium"
+              className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
             >
-              <ExternalLink className="h-3.5 w-3.5" /> View full
+              <ExternalLink className="h-3.5 w-3.5" /> Full tab
             </a>
             <button
+              type="button"
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -142,29 +212,122 @@ function ImageUpload({
           </div>
         )}
       </div>
-      <label
-        htmlFor={id}
+
+      <div
+        tabIndex={0}
+        onClick={() => onSelect?.()}
+        onDoubleClick={(e) => {
+          if (image) {
+            e.stopPropagation()
+            onPreview?.(image, title)
+          }
+        }}
         onPaste={handlePaste}
-        className="relative flex h-80 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 transition-colors hover:bg-slate-100 dark:hover:bg-slate-850 overflow-hidden group"
+        title={image ? "Double-click to open full image preview" : ""}
+        className={`relative flex h-80 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all overflow-hidden group outline-none ${
+          isSelected
+            ? "border-blue-500 dark:border-blue-400 ring-4 ring-blue-500/20 bg-blue-50/30 dark:bg-blue-950/30 shadow-md shadow-blue-500/10"
+            : "border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600 bg-slate-50 dark:bg-slate-900/60 hover:bg-slate-100/80 dark:hover:bg-slate-850"
+        }`}
       >
+        {/* Selection Indicator Banner */}
+        {isSelected && (
+          <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-1.5 rounded-full bg-blue-600 text-white px-2.5 py-0.5 text-[11px] font-semibold shadow-md">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+            </span>
+            <span>Selected • Press Ctrl+V to paste</span>
+          </div>
+        )}
+
         {image ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */
-            <img src={image} alt={title} className="h-full w-full object-contain p-2 drop-shadow-sm" />}
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <span className="text-white font-medium bg-black/60 px-4 py-2 rounded-lg backdrop-blur-sm">
-                {isUploading ? "Uploading..." : "Click to change"}
+            <img src={image} alt={title} className="h-full w-full object-contain p-2 drop-shadow-sm group-hover:scale-[1.01] transition-transform" />}
+            
+            {/* Double click quick hint */}
+            <div className="absolute top-2.5 right-2.5 z-20 bg-black/60 text-white text-[10px] font-medium px-2 py-0.5 rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none flex items-center gap-1">
+              <Maximize2 className="h-3 w-3" /> Double-click to expand
+            </div>
+
+            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-4">
+              <span className="text-white text-xs font-semibold bg-blue-600/90 px-3 py-1 rounded-full backdrop-blur-sm shadow">
+                {isUploading ? "Uploading image..." : "Double-click to open full image preview"}
               </span>
+              <div className="flex items-center gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPreview?.(image, title)
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-500 shadow transition-all active:scale-95 flex items-center gap-1"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  <span>Open Preview</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClipboardButtonClick}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-white text-slate-900 hover:bg-slate-100 shadow transition-all active:scale-95"
+                >
+                  Paste (Ctrl+V)
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    fileInputRef.current?.click()
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 text-white hover:bg-slate-700 border border-white/20 shadow transition-all active:scale-95"
+                >
+                  Choose file
+                </button>
+              </div>
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center text-slate-400 dark:text-slate-500">
-            <Upload className="mb-2 h-8 w-8 text-slate-400 dark:text-slate-500" />
-            <span className="text-sm font-medium text-slate-600 dark:text-slate-400">{isUploading ? "Uploading..." : uploadText}</span>
-            <span className="text-xs mt-2 text-slate-400 dark:text-slate-600">or paste an image</span>
+          <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-transform ${
+              isSelected ? "bg-blue-600 text-white scale-110 shadow-lg shadow-blue-500/25" : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover:scale-105"
+            }`}>
+              <Upload className="h-6 w-6 stroke-[2.2]" />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                {isUploading ? "Uploading image..." : isSelected ? "Ready to paste!" : `Select ${uploadText}`}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[220px]">
+                {isSelected
+                  ? "Press Ctrl+V (or Cmd+V) to paste from clipboard"
+                  : "Click to select, then press Ctrl+V to paste"}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={handleClipboardButtonClick}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 transition-all active:scale-95 cursor-pointer"
+              >
+                <span>Paste</span>
+                <span className="text-[10px] opacity-75 font-mono">(Ctrl+V)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition-all active:scale-95 cursor-pointer"
+              >
+                <span>Browse file</span>
+              </button>
+            </div>
           </div>
         )}
+
         <input
+          ref={fileInputRef}
           type="file"
           id={id}
           accept="image/*"
@@ -173,9 +336,10 @@ function ImageUpload({
           onChange={(e) => {
             const file = e.target.files?.[0]
             if (file) onUpload(file)
+            e.target.value = ""
           }}
         />
-      </label>
+      </div>
     </div>
   )
 }
@@ -201,6 +365,8 @@ export function WorkflowEditor({
   const [notesDraft, setNotesDraft] = useState(workflow.ourNotes || "")
   const [reasonDraft, setReasonDraft] = useState(workflow.reason || "")
   const [clientMessageDraft, setClientMessageDraft] = useState(workflow.clientMessage || "")
+  const [selectedSlot, setSelectedSlot] = useState<"designA" | "designB">("designA")
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; title: string } | null>(null)
 
   const prevWorkflowIdRef = useRef(workflow.id)
 
@@ -279,6 +445,36 @@ export function WorkflowEditor({
     }
   }
 
+  // Global paste handler when dropzone is selected or active
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) {
+        return
+      }
+
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const file = items[i].getAsFile()
+          if (file) {
+            e.preventDefault()
+            const targetSlot = selectedSlot || (workflow.designA ? "designB" : "designA")
+            handleImageUpload(targetSlot, file)
+            break
+          }
+        }
+      }
+    }
+
+    window.addEventListener("paste", handleGlobalPaste)
+    return () => {
+      window.removeEventListener("paste", handleGlobalPaste)
+    }
+  }, [selectedSlot, workflow.designA, workflow.designB, workflow.id])
+
   return (
     <div className="p-8 mx-auto max-w-6xl pb-20 flex flex-col gap-8 text-slate-900 dark:text-slate-100 transition-colors">
       {/* Header */}
@@ -338,6 +534,9 @@ export function WorkflowEditor({
           type="design"
           workflowId={workflow.id}
           isOwner={isOwner}
+          isSelected={selectedSlot === "designA"}
+          onSelect={() => setSelectedSlot("designA")}
+          onPreview={(src, title) => setLightboxImage({ src, title })}
           isUploading={uploadingA}
           onUpload={(file) => handleImageUpload("designA", file)}
           onDelete={() => onUpdateField("designA", null)}
@@ -349,6 +548,9 @@ export function WorkflowEditor({
           type="reference"
           workflowId={workflow.id}
           isOwner={isOwner}
+          isSelected={selectedSlot === "designB"}
+          onSelect={() => setSelectedSlot("designB")}
+          onPreview={(src, title) => setLightboxImage({ src, title })}
           isUploading={uploadingB}
           onUpload={(file) => handleImageUpload("designB", file)}
           onDelete={() => onUpdateField("designB", null)}
@@ -580,6 +782,124 @@ export function WorkflowEditor({
             {workflow.reason || <span className="text-slate-400 dark:text-slate-600 italic">No reason provided by developer yet.</span>}
           </div>
         )}
+      </div>
+
+      {/* Double Click Image Lightbox Modal */}
+      {lightboxImage && (
+        <ImageLightboxModal
+          src={lightboxImage.src}
+          title={lightboxImage.title}
+          onClose={() => setLightboxImage(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function ImageLightboxModal({
+  src,
+  title,
+  onClose,
+}: {
+  src: string
+  title: string
+  onClose: () => void
+}) {
+  const [zoom, setZoom] = useState(1)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [onClose])
+
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3))
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5))
+  const handleResetZoom = () => setZoom(1)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6 select-none animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      {/* Top Bar */}
+      <div
+        className="absolute top-4 left-4 right-4 z-50 flex items-center justify-between text-white"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-base sm:text-lg tracking-wide drop-shadow">{title}</span>
+          <span className="text-xs text-white/60 bg-white/10 px-2.5 py-1 rounded-full border border-white/10">
+            {Math.round(zoom * 100)}%
+          </span>
+        </div>
+
+        {/* Floating Controls */}
+        <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-2xl shadow-xl">
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            className="p-1.5 hover:bg-white/20 rounded-lg transition text-white cursor-pointer"
+            title="Zoom In (+)"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            className="p-1.5 hover:bg-white/20 rounded-lg transition text-white cursor-pointer"
+            title="Zoom Out (-)"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleResetZoom}
+            className="p-1.5 hover:bg-white/20 rounded-lg transition text-white cursor-pointer"
+            title="Reset Zoom"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-1.5 hover:bg-white/20 rounded-lg transition text-white cursor-pointer flex items-center gap-1 text-xs"
+            title="Open Full Image in New Tab"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </a>
+          <div className="h-4 w-[1px] bg-white/20 mx-0.5" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-red-500/80 rounded-lg transition text-white cursor-pointer"
+            title="Close Preview (ESC)"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Image Preview Container */}
+      <div
+        className="relative flex-1 w-full flex items-center justify-center overflow-auto p-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={title}
+          style={{ transform: `scale(${zoom})`, transition: "transform 0.15s ease-out" }}
+          className="max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl origin-center select-none cursor-grab active:cursor-grabbing"
+          onDoubleClick={handleResetZoom}
+        />
+      </div>
+
+      <div className="absolute bottom-4 text-xs text-white/50 text-center pointer-events-none">
+        Double click inside image to reset zoom • Press ESC or click outside to close
       </div>
     </div>
   )
