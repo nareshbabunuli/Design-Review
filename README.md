@@ -1,118 +1,135 @@
-# 🎨 Design Review — Design Workflow Tracker
+# 🎨 Design Review
 
-> **Free & Open-Source Design Review Workflow Tracker for Freelancers & Teams.**
+**Free & Open-Source Design Feedback Tool for Freelancers**
 
-![Design Review Banner](https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&h=400&q=80)
+Stop endless UI revision loops.  
+Compare Figma designs with live screenshots, collect clear client feedback, and get proper sign-offs — all in one place.
 
 [![License: MIT + Commons Clause](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-blue.svg)](LICENSE)
-[![Next.js](https://img.shields.io/badge/Next.js-15%2B-black?logo=next.js)](https://nextjs.org/)
-[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-v4-38bdf8?logo=tailwindcss)](https://tailwindcss.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Database-3ecf8e?logo=supabase)](https://supabase.com/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
-## 💡 About The Project
+### The Problem
 
-Freelance designers often face repetitive hurdles when sharing work with clients:
-- Endless email attachments and lost feedback
-- Unclear version comparisons between Figma mockups and real app builds
-- Chasing approvals across chat apps and threads
-- Awkward client onboarding processes
+As a freelancer, you've probably experienced this:
 
-**Design Review** solves this by providing a dedicated, elegant comparison and workflow tracker designed specifically for freelancers. Upload your Figma designs and live app screenshots side-by-side, add designer notes and change justifications, generate instant view-only or edit invite links for clients without login hurdles, collect real-time verification, and export clean presentation reports.
+- Clients keep requesting small UI changes
+- Feedback is scattered across email, WhatsApp, Figma comments, and Slack
+- No clear record of what was actually approved
+- Hard to prove scope when clients say “this isn’t what we agreed”
 
----
-
-## ✨ Key Features
-
-- 📁 **Multi-Project Workspace**: Manage all client projects in one unified dashboard with grid or list view and quick search.
-- 🔄 **Side-by-Side Comparison**: Compare Figma designs against live app screenshots with high-res zoom lightbox.
-- 🔗 **Google Drive-Style Client Sharing**: Generate instant view-only or edit invite links. Clients don't need an account to review and comment.
-- 💬 **Collaborative Review & Feedback**: Clients leave structured feedback per workflow stage with real-time sync.
-- 📝 **Developer / Designer Reasoning Form**: Document the "why" behind changes directly alongside feedback.
-- ✅ **Acceptance & Verification Tracking**: Built-in status tracking to ensure client sign-off on individual workflows.
-- 📊 **Presentation & PDF Report Mode**: Full-screen slide-based presentation view, ready for client meetings and clean A4 print exports.
-- 🌓 **Dual Light & Dark Themes**: Fully tailored dark and light modes with instant switching and persistence across all screens.
+**Design Review** was built to fix exactly this.
 
 ---
 
-## 📜 License & Open Source Terms
+### Key Features
 
-This project is licensed under the **MIT License with Commons Clause** ([LICENSE](LICENSE)).
-
-### 🟢 What You CAN Do:
-- **Free for Client Work**: Use this software freely for your own freelance or agency projects.
-- **Self-Host**: Deploy your own instance for yourself or your design team.
-- **Fork & Modify**: Customize the code, add new features, and tailor it to your workflow.
-- **Contribute**: Submit pull requests, report issues, and improve the project for everyone.
-
-### 🔴 What You CANNOT Do:
-- **No Reselling**: You cannot package, white-label, or sell this software as a commercial SaaS product or service.
-- **Attribution Required**: You must retain the original copyright notice and license in all forks and deployments.
+- **Side-by-Side Comparison** — Put Figma designs next to live app screenshots with zoom
+- **No-Login Client Sharing** — Generate view or edit links (Google Drive style). Clients don’t need an account
+- **Structured Feedback** — Clients leave clear, organized comments
+- **Designer Reasoning** — Document *why* a change was made (reduces future arguments)
+- **Approval Tracking** — Know exactly what is approved and what is still pending
+- **Presentation + PDF Reports** — Clean slides and printable reports for client meetings
+- **Multi-Project Workspace** — Manage all your clients in one place
+- **Light & Dark Mode**
 
 ---
 
-## 🚀 Getting Started
+### Why This Project Exists
 
-### Prerequisites
-
-- Node.js 18+ or 20+
-- npm, pnpm, or yarn
-- Supabase account (free tier works great)
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/your-username/design-workflow-tracker.git
-   cd design-workflow-tracker
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Set up Environment Variables**:
-   Create a `.env.local` file in the root directory:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-   ```
-
-4. **Run the Database Migrations**:
-   Execute the SQL schema in your Supabase SQL editor (located in `supabase/` folder).
-
-5. **Start the Development Server**:
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
+This tool is built **by a freelancer, for freelancers**.  
+The goal is simple: make design feedback cleaner, faster, and less painful — without forcing clients to create yet another account.
 
 ---
 
-## 🛠️ Tech Stack
+### Tech Stack
 
-- **Framework**: [Next.js](https://nextjs.org/) (App Router & React Server Components)
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
-- **Icons**: [Lucide React](https://lucide.dev/)
-- **Database & Auth**: [Supabase](https://supabase.com/) (PostgreSQL + Real-time Channels)
-- **Language**: [TypeScript](https://www.typescriptlang.org/)
-
----
-
-## 🤝 Contributing
-
-Contributions from the freelance and design community are welcomed!
-1. Fork the repo
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Next.js 15** (App Router)
+- **TypeScript**
+- **Tailwind CSS v4**
+- **Supabase** (Auth + Database + Realtime)
+- **Lucide Icons**
 
 ---
 
-## 💖 Community & Support
+### Getting Started
 
-Built with love to empower freelance designers worldwide. If you find this project helpful, give it a ⭐️ on GitHub!
+#### Prerequisites
+- Node.js 18+
+- A free [Supabase](https://supabase.com) account
+
+#### Installation
+
+```bash
+git clone https://github.com/nareshbabunuli/Design-Review.git
+cd Design-Review
+npm install
+```
+
+Create a `.env.local` file:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+Run the SQL migrations from the `supabase/` folder in your Supabase SQL editor, then:
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000)
+
+---
+
+### Contributing
+
+**Contributors are very welcome.**
+
+Whether you want to:
+- Fix a small bug
+- Improve the UI
+- Add a new feature
+- Improve documentation
+- Suggest ideas
+
+…you are invited.
+
+👉 Read the [Contributing Guide](CONTRIBUTING.md)  
+👉 Check [Good First Issues](https://github.com/nareshbabunuli/Design-Review/labels/good%20first%20issue)
+
+We especially welcome people who have experienced the pain of messy client feedback.
+
+---
+
+### License
+
+MIT License **with Commons Clause**.
+
+**You can:**
+- Use it freely for your freelance/client work
+- Self-host it
+- Fork and modify it
+- Contribute
+
+**You cannot:**
+- Sell it as a commercial SaaS / white-label product
+
+Full details in the [LICENSE](LICENSE) file.
+
+---
+
+### Support the Project
+
+If this tool helps you, please:
+
+- ⭐ Star the repository
+- Share it with other freelancers
+- Open issues or feature requests
+- Contribute code or ideas
+
+Built with ❤️ for the freelance design community.
