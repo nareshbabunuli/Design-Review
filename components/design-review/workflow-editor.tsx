@@ -15,6 +15,7 @@ import {
   User,
   ShieldCheck,
   Eye,
+  Lock,
 } from "lucide-react"
 import { useState } from "react"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -24,6 +25,8 @@ type WorkflowEditorProps = {
   project: Project
   workflow: Workflow
   isOwner: boolean
+  canComment?: boolean
+  inviteeEmail?: string | null
   onUpdateField: (field: keyof Workflow, value: string | boolean | null) => void
   onShowReport: () => void
   onAddComment?: (body: string, reason?: string) => void
@@ -181,6 +184,8 @@ export function WorkflowEditor({
   project,
   workflow,
   isOwner,
+  canComment = true,
+  inviteeEmail,
   onUpdateField,
   onShowReport,
   onAddComment,
@@ -205,6 +210,10 @@ export function WorkflowEditor({
   }
 
   const handleSubmitClientMessage = () => {
+    if (!canComment) {
+      alert(`Comments are locked to ${inviteeEmail}. Only ${inviteeEmail} can comment.`)
+      return
+    }
     onUpdateField("clientMessage", workflow.clientMessage)
     setSubmittedClientMessage(true)
     setTimeout(() => setSubmittedClientMessage(false), 2500)
@@ -402,11 +411,20 @@ export function WorkflowEditor({
               )}
               <button
                 type="button"
-                onClick={() => onUpdateField("clientTaskDone", !workflow.clientTaskDone)}
+                disabled={!canComment}
+                onClick={() => {
+                  if (!canComment) {
+                    alert(`Approvals are locked to ${inviteeEmail}. Only ${inviteeEmail} can accept or verify.`)
+                    return
+                  }
+                  onUpdateField("clientTaskDone", !workflow.clientTaskDone)
+                }}
                 className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-all cursor-pointer ${
-                  workflow.clientTaskDone
-                    ? "bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
-                    : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-300 dark:border-purple-800"
+                  !canComment
+                    ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-70"
+                    : workflow.clientTaskDone
+                      ? "bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+                      : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-300 dark:border-purple-800"
                 }`}
               >
                 {workflow.clientTaskDone ? <CheckCircle className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
@@ -417,40 +435,59 @@ export function WorkflowEditor({
 
           {!isOwner ? (
             <>
+              {!canComment && inviteeEmail && (
+                <div className="mb-3 flex items-center gap-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-3 text-xs text-amber-800 dark:text-amber-300">
+                  <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>
+                    Comments &amp; approvals are restricted to <strong>{inviteeEmail}</strong>. Only that client can submit feedback.
+                  </span>
+                </div>
+              )}
               <textarea
                 value={workflow.clientMessage || ""}
+                disabled={!canComment}
                 onChange={(e) => onUpdateField("clientMessage", e.target.value)}
-                className="flex-1 min-h-[140px] w-full resize-none rounded-lg border border-purple-200 dark:border-purple-800/80 bg-white dark:bg-slate-950 p-4 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                placeholder="Type your feedback, requested changes, or questions here..."
+                className={`flex-1 min-h-[140px] w-full resize-none rounded-lg border p-4 text-sm transition-colors ${
+                  !canComment
+                    ? "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 cursor-not-allowed"
+                    : "border-purple-200 dark:border-purple-800/80 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                }`}
+                placeholder={
+                  !canComment
+                    ? `Feedback is locked. Only ${inviteeEmail} can comment.`
+                    : "Type your feedback, requested changes, or questions here..."
+                }
               />
-              <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  {submittedClientMessage
-                    ? "✓ Feedback submitted to developer!"
-                    : "Submit your comments to the team"}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSubmitClientMessage}
-                  className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all cursor-pointer ${
-                    submittedClientMessage
-                      ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                      : "bg-purple-600 text-white hover:bg-purple-700"
-                  }`}
-                >
-                  {submittedClientMessage ? (
-                    <>
-                      <CheckCircle className="h-3.5 w-3.5" />
-                      <span>Submitted!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-3.5 w-3.5" />
-                      <span>Submit Feedback</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              {canComment && (
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    {submittedClientMessage
+                      ? "✓ Feedback submitted to developer!"
+                      : "Submit your comments to the team"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSubmitClientMessage}
+                    className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+                      submittedClientMessage
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                        : "bg-purple-600 text-white hover:bg-purple-700"
+                    }`}
+                  >
+                    {submittedClientMessage ? (
+                      <>
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        <span>Submitted!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5" />
+                        <span>Submit Feedback</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <div className="flex-1 min-h-[160px] w-full rounded-xl border border-purple-200/80 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 p-4 text-sm text-slate-800 dark:text-slate-200 leading-relaxed flex flex-col justify-between">

@@ -14,10 +14,11 @@ AS $$
 DECLARE
   v_project_id uuid;
   v_permission text;
+  v_invitee_email text;
   v_result json;
 BEGIN
   -- Find project and permission from invite token
-  SELECT project_id, COALESCE(permission, 'view') INTO v_project_id, v_permission
+  SELECT project_id, COALESCE(permission, 'view'), invitee_email INTO v_project_id, v_permission, v_invitee_email
   FROM public.project_invites
   WHERE token = invite_token;
 
@@ -25,13 +26,14 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  -- Build JSON of project with workflows and permission
+  -- Build JSON of project with workflows, permission, and target invitee email
   SELECT json_build_object(
     'id', p.id,
     'title', p.title,
     'is_expanded', p.is_expanded,
     'user_id', p.user_id,
     'permission', v_permission,
+    'invitee_email', v_invitee_email,
     'workflows', COALESCE((
       SELECT json_agg(
         json_build_object(

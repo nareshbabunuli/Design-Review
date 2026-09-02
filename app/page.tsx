@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { FolderKanban, Loader2, LogOut, Mail, Share2, Copy, Check, Eye, Pencil, ArrowLeft } from "lucide-react"
+import { FolderKanban, Loader2, LogOut, Mail, Share2, Copy, Check, Eye, Pencil, ArrowLeft, Menu, X } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow, WorkflowComment, EditingId } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
@@ -35,13 +35,60 @@ type CommentRow = {
   created_at: string
 }
 
-const mapData = (projects: ProjectRow[], workflows: WorkflowRow[], comments: CommentRow[]): Project[] =>
-  projects.map((p) => ({
-    id: p.id,
-    title: p.title,
-    isExpanded: p.is_expanded,
-    userId: p.user_id,
-    workflows: workflows
+const sortWorkflowsBySavedOrder = (projectId: string, workflows: Workflow[]): Workflow[] => {
+  if (typeof window === "undefined") return workflows
+  try {
+    const saved = localStorage.getItem(`wf_order_${projectId}`)
+    if (saved) {
+      const orderIds: string[] = JSON.parse(saved)
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        return [...workflows].sort((a, b) => {
+          const idxA = orderIds.indexOf(a.id)
+          const idxB = orderIds.indexOf(b.id)
+          if (idxA === -1 && idxB === -1) return 0
+          if (idxA === -1) return 1
+          if (idxB === -1) return -1
+          return idxA - idxB
+        })
+      }
+    }
+  } catch (e) {
+    // Ignore JSON errors
+  }
+  return workflows
+}
+
+const sortProjectsBySavedOrder = (userId: string | undefined, list: Project[]): Project[] => {
+  if (typeof window === "undefined") return list
+  try {
+    const saved = localStorage.getItem(`project_order_${userId || "default"}`)
+    if (saved) {
+      const orderIds: string[] = JSON.parse(saved)
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        return [...list].sort((a, b) => {
+          const idxA = orderIds.indexOf(a.id)
+          const idxB = orderIds.indexOf(b.id)
+          if (idxA === -1 && idxB === -1) return 0
+          if (idxA === -1) return 1
+          if (idxB === -1) return -1
+          return idxA - idxB
+        })
+      }
+    }
+  } catch (e) {
+    // Ignore JSON errors
+  }
+  return list
+}
+
+const mapData = (
+  projects: ProjectRow[],
+  workflows: WorkflowRow[],
+  comments: CommentRow[],
+  userId?: string
+): Project[] => {
+  const mapped = projects.map((p) => {
+    const pWorkflows: Workflow[] = workflows
       .filter((w) => w.project_id === p.id)
       .map((w) => ({
         id: w.id,
@@ -64,8 +111,19 @@ const mapData = (projects: ProjectRow[], workflows: WorkflowRow[], comments: Com
             reason: c.reason,
             createdAt: c.created_at,
           })),
-      })),
-  }))
+      }))
+
+    return {
+      id: p.id,
+      title: p.title,
+      isExpanded: p.is_expanded,
+      userId: p.user_id,
+      workflows: sortWorkflowsBySavedOrder(p.id, pWorkflows),
+    }
+  })
+
+  return sortProjectsBySavedOrder(userId, mapped)
+}
 
 export default function Page() {
   const supabase = createClient()
@@ -93,6 +151,19 @@ export default function Page() {
   const [viewMode, setViewMode] = useState<"dashboard" | "editor">("dashboard")
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [showLanding, setShowLanding] = useState(true)
+  const [isShareOpen, setIsShareOpen] = useState(false)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  const [inviteeEmail, setInviteeEmail] = useState<string | null>(null)
+
+  // Determine if current visitor can submit comments/feedback:
+  // - Project owner can always comment
+  // - If no specific inviteeEmail is attached to invite (general link), anyone can comment
+  // - If inviteeEmail IS attached, ONLY matching user email can comment
+  const canClientComment = useMemo(() => {
+    if (isOwner) return true
+    if (!inviteeEmail) return true
+    return Boolean(user?.email && user.email.toLowerCase() === inviteeEmail.toLowerCase())
+  }, [isOwner, inviteeEmail, user?.email])
 
   // Extract invite token on initial client mount
   useEffect(() => {
@@ -190,6 +261,7 @@ export default function Page() {
         is_expanded: boolean
         user_id: string
         permission?: "view" | "edit"
+        invitee_email?: string | null
         workflows: Array<{
           id: string
           project_id: string
@@ -202,6 +274,12 @@ export default function Page() {
           reason: string | null
           is_done: boolean
         }>
+      }
+
+      if (pData.invitee_email) {
+        setInviteeEmail(pData.invitee_email)
+      } else {
+        setInviteeEmail(null)
       }
 
       const mappedWorkflows: Workflow[] = (pData.workflows || []).map((w) => ({
@@ -223,7 +301,7 @@ export default function Page() {
         title: pData.title,
         isExpanded: pData.is_expanded,
         userId: pData.user_id,
-        workflows: mappedWorkflows,
+        workflows: sortWorkflowsBySavedOrder(pData.id, mappedWorkflows),
       }
 
       const perm = pData.permission || "view"
@@ -288,7 +366,12 @@ export default function Page() {
       ])
 
       if (!cancelled) {
-        const next = mapData(ps as ProjectRow[], (ws || []) as WorkflowRow[], (cs || []) as CommentRow[])
+        const next = mapData(
+          ps as ProjectRow[],
+          (ws || []) as WorkflowRow[],
+          (cs || []) as CommentRow[],
+          user.id
+        )
         setProjects(next)
         setIsOwner((ps as ProjectRow[]).every((p) => p.user_id === user.id))
         setActiveProjectId(next[0]?.id ?? null)
@@ -347,20 +430,18 @@ export default function Page() {
   const activeWorkflow = activeProject?.workflows.find((w) => w.id === activeWorkflowId) ?? null
 
   const effectiveIsOwner = useMemo(() => {
-    // 1. The user who created the project is ALWAYS the Owner / Sender
-    if (user && activeProject?.userId && activeProject.userId === user.id) {
+    // 1. If accessed via an invite link
+    if (inviteToken) {
+      if (activeInvitePermission === "edit") return true
+      if (user && activeProject?.userId && activeProject.userId === user.id) return true
+      return false
+    }
+
+    // 2. If user is logged in, they have edit rights to projects in their workspace
+    if (user) {
       return true
     }
 
-    // 2. An invited guest with edit permission
-    if (inviteToken && activeInvitePermission) {
-      return activeInvitePermission === "edit"
-    }
-
-    // 3. User with direct edit access to project
-    if (user && activeProject?.userId && activeProject.userId === user.id) {
-      return true
-    }
     return false
   }, [user, activeProject, inviteToken, activeInvitePermission])
 
@@ -531,6 +612,11 @@ export default function Page() {
       return
     }
 
+    if (!effectiveIsOwner && !canClientComment) {
+      alert(`Comments and approvals are restricted to ${inviteeEmail}. Please log in with ${inviteeEmail} to submit feedback.`)
+      return
+    }
+
     // Optimistic local state update
     update((xs) =>
       xs.map((p) =>
@@ -649,6 +735,96 @@ export default function Page() {
         }))
       )
     }
+  }
+
+  const moveWorkflow = (projectId: string, workflowId: string, direction: "up" | "down", e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    update((prevProjects) => {
+      return prevProjects.map((p) => {
+        if (p.id !== projectId) return p
+        const list = [...p.workflows]
+        const index = list.findIndex((w) => w.id === workflowId)
+        if (index === -1) return p
+        const targetIndex = direction === "up" ? index - 1 : index + 1
+        if (targetIndex < 0 || targetIndex >= list.length) return p
+
+        const temp = list[index]
+        list[index] = list[targetIndex]
+        list[targetIndex] = temp
+
+        try {
+          const orderIds = list.map((w) => w.id)
+          localStorage.setItem(`wf_order_${p.id}`, JSON.stringify(orderIds))
+        } catch (err) {
+          console.error("Failed to save workflow order:", err)
+        }
+
+        return { ...p, workflows: list }
+      })
+    })
+  }
+
+  const reorderWorkflows = (projectId: string, sourceIndex: number, destinationIndex: number) => {
+    if (sourceIndex === destinationIndex) return
+    update((prevProjects) => {
+      return prevProjects.map((p) => {
+        if (p.id !== projectId) return p
+        const list = [...p.workflows]
+        const [removed] = list.splice(sourceIndex, 1)
+        list.splice(destinationIndex, 0, removed)
+
+        try {
+          const orderIds = list.map((w) => w.id)
+          localStorage.setItem(`wf_order_${p.id}`, JSON.stringify(orderIds))
+        } catch (err) {
+          console.error("Failed to save workflow order:", err)
+        }
+
+        return { ...p, workflows: list }
+      })
+    })
+  }
+
+  const moveProject = (projectId: string, direction: "up" | "down", e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    update((prevProjects) => {
+      const list = [...prevProjects]
+      const index = list.findIndex((p) => p.id === projectId)
+      if (index === -1) return prevProjects
+      const targetIndex = direction === "up" ? index - 1 : index + 1
+      if (targetIndex < 0 || targetIndex >= list.length) return prevProjects
+
+      const temp = list[index]
+      list[index] = list[targetIndex]
+      list[targetIndex] = temp
+
+      try {
+        const orderIds = list.map((p) => p.id)
+        localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(orderIds))
+      } catch (err) {
+        console.error("Failed to save project order:", err)
+      }
+
+      return list
+    })
+  }
+
+  const reorderProjects = (sourceIndex: number, destinationIndex: number) => {
+    if (sourceIndex === destinationIndex) return
+    update((prevProjects) => {
+      const list = [...prevProjects]
+      const [removed] = list.splice(sourceIndex, 1)
+      list.splice(destinationIndex, 0, removed)
+
+      try {
+        const orderIds = list.map((p) => p.id)
+        localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(orderIds))
+      } catch (err) {
+        console.error("Failed to save project order:", err)
+      }
+
+      return list
+    })
   }
 
   const createInvite = async () => {
@@ -783,6 +959,8 @@ export default function Page() {
             project={activeProject}
             isOwner={false}
             isViewerOnly={true}
+            canComment={canClientComment}
+            inviteeEmail={inviteeEmail}
             user={user}
             theme={theme}
             onToggleTheme={toggleTheme}
@@ -812,7 +990,7 @@ export default function Page() {
             const p = projects.find((x) => x.id === id)
             setActiveProjectId(id)
             setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            const canEdit = Boolean(user && p?.userId === user.id)
+            const canEdit = Boolean(user || (inviteToken && activeInvitePermission === "edit"))
             if (canEdit) {
               setShowReport(false)
               setViewMode("editor")
@@ -849,7 +1027,7 @@ export default function Page() {
             const p = projects.find((x) => x.id === id)
             setActiveProjectId(id)
             setActiveWorkflowId(p?.workflows[0]?.id ?? null)
-            const canEdit = Boolean(user && p?.userId === user.id)
+            const canEdit = Boolean(user || (inviteToken && activeInvitePermission === "edit"))
             if (canEdit) {
               setShowReport(false)
               setViewMode("editor")
@@ -880,67 +1058,102 @@ export default function Page() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 print:h-auto print:overflow-visible print:block print:bg-white transition-colors duration-200">
-      <Sidebar
-        projects={activeProject ? [activeProject] : projects}
-        activeProjectId={activeProjectId}
-        activeWorkflowId={activeWorkflowId}
-        editingId={editingId}
-        isOwner={effectiveIsOwner}
-        onBackToDashboard={() => setViewMode("dashboard")}
-        setEditingId={setEditingId}
-        onCreateProject={createProject}
-        onCreateWorkflow={createWorkflow}
-        onToggleExpand={async (id, e) => {
-          e?.stopPropagation()
-          if (!supabase) return
-          const p = projects.find((x) => x.id === id)
-          if (p) {
-            await supabase.from("projects").update({ is_expanded: !p.isExpanded }).eq("id", id)
-            update((xs) => xs.map((x) => (x.id === id ? { ...x, isExpanded: !x.isExpanded } : x)))
-          }
-        }}
-        onDeleteProject={async (id, e) => {
-          e.stopPropagation()
-          if (supabase) await supabase.from("projects").delete().eq("id", id)
-          update((xs) => xs.filter((x) => x.id !== id))
-          if (activeProjectId === id) {
-            setActiveProjectId(null)
-            setActiveWorkflowId(null)
+      {/* Mobile sidebar backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          onClick={() => setIsMobileSidebarOpen(false)}
+          className="fixed inset-0 bg-black/60 z-30 md:hidden backdrop-blur-sm transition-opacity"
+        />
+      )}
+
+      {/* Sidebar container with mobile drawer */}
+      <div
+        className={`fixed inset-y-0 left-0 z-40 md:relative md:z-auto md:flex transition-transform duration-200 ease-in-out shadow-2xl md:shadow-none ${
+          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
+      >
+        <Sidebar
+          projects={activeProject ? [activeProject] : projects}
+          activeProjectId={activeProjectId}
+          activeWorkflowId={activeWorkflowId}
+          editingId={editingId}
+          isOwner={effectiveIsOwner}
+          onBackToDashboard={() => {
+            setIsMobileSidebarOpen(false)
             setViewMode("dashboard")
-          }
-        }}
-        onDeleteWorkflow={async (pid, wid, e) => {
-          e.stopPropagation()
-          if (supabase) await supabase.from("workflows").delete().eq("id", wid)
-          update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.filter((w) => w.id !== wid) } : p)))
-        }}
-        onSelectProject={(id) => {
-          setActiveProjectId(id)
-          setActiveWorkflowId(null)
-        }}
-        onSelectWorkflow={(pid, wid) => {
-          setActiveProjectId(pid)
-          setActiveWorkflowId(wid)
-        }}
-        onRenameProject={async (id, title) => {
-          if (supabase) await supabase.from("projects").update({ title }).eq("id", id)
-          update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
-        }}
-        onRenameWorkflow={async (pid, id, title) => {
-          if (supabase) await supabase.from("workflows").update({ title }).eq("id", id)
-          update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.map((w) => (w.id === id ? { ...w, title } : w)) } : p)))
-        }}
-      />
+          }}
+          setEditingId={setEditingId}
+          onCreateProject={createProject}
+          onCreateWorkflow={createWorkflow}
+          onToggleExpand={async (id, e) => {
+            e?.stopPropagation()
+            if (!supabase) return
+            const p = projects.find((x) => x.id === id)
+            if (p) {
+              await supabase.from("projects").update({ is_expanded: !p.isExpanded }).eq("id", id)
+              update((xs) => xs.map((x) => (x.id === id ? { ...x, isExpanded: !x.isExpanded } : x)))
+            }
+          }}
+          onDeleteProject={async (id, e) => {
+            e.stopPropagation()
+            if (supabase) await supabase.from("projects").delete().eq("id", id)
+            update((xs) => xs.filter((x) => x.id !== id))
+            if (activeProjectId === id) {
+              setActiveProjectId(null)
+              setActiveWorkflowId(null)
+              setViewMode("dashboard")
+            }
+          }}
+          onDeleteWorkflow={async (pid, wid, e) => {
+            e.stopPropagation()
+            if (supabase) await supabase.from("workflows").delete().eq("id", wid)
+            update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.filter((w) => w.id !== wid) } : p)))
+          }}
+          onSelectProject={(id) => {
+            setActiveProjectId(id)
+            setActiveWorkflowId(null)
+          }}
+          onSelectWorkflow={(pid, wid) => {
+            setActiveProjectId(pid)
+            setActiveWorkflowId(wid)
+            setIsMobileSidebarOpen(false)
+          }}
+          onRenameProject={async (id, title) => {
+            if (supabase) await supabase.from("projects").update({ title }).eq("id", id)
+            update((xs) => xs.map((p) => (p.id === id ? { ...p, title } : p)))
+          }}
+          onRenameWorkflow={async (pid, id, title) => {
+            if (supabase) await supabase.from("workflows").update({ title }).eq("id", id)
+            update((xs) => xs.map((p) => (p.id === pid ? { ...p, workflows: p.workflows.map((w) => (w.id === id ? { ...w, title } : w)) } : p)))
+          }}
+          onMoveWorkflowUp={(pid, wid, e) => moveWorkflow(pid, wid, "up", e)}
+          onMoveWorkflowDown={(pid, wid, e) => moveWorkflow(pid, wid, "down", e)}
+          onReorderWorkflows={reorderWorkflows}
+          onMoveProjectUp={(pid, e) => moveProject(pid, "up", e)}
+          onMoveProjectDown={(pid, e) => moveProject(pid, "down", e)}
+          onReorderProjects={reorderProjects}
+        />
+      </div>
 
       <main className={`relative flex flex-col flex-1 h-screen overflow-hidden ${showReport ? "print:hidden" : ""}`}>
         {/* Top Pinned Header with User Login & Logout */}
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-6 py-3 shadow-sm dark:shadow-slate-900/50 flex-shrink-0 print:hidden transition-colors duration-200">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur px-4 sm:px-6 py-2.5 shadow-sm dark:shadow-slate-900/50 flex-shrink-0 print:hidden transition-colors duration-200">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            {/* Mobile Sidebar Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsMobileSidebarOpen((prev) => !prev)}
+              className="md:hidden flex items-center justify-center p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
+              title="Toggle sidebar"
+            >
+              {isMobileSidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </button>
+
             {!inviteToken && (
               <button
                 type="button"
                 onClick={() => setViewMode("dashboard")}
-                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors active:scale-95"
+                className="hidden sm:flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors active:scale-95 flex-shrink-0"
                 title="Return to Projects Hub"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
@@ -948,164 +1161,191 @@ export default function Page() {
               </button>
             )}
 
-            {isViewerOnly && (
-              <button
-                type="button"
-                onClick={() => setShowReport(true)}
-                className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors active:scale-95"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                <span>View Presentation</span>
-              </button>
-            )}
-
             {activeProject && (
-              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">{activeProject.title}</span>
+              <div className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-600 dark:text-slate-400 min-w-0">
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[120px] sm:max-w-[200px]">
+                  {activeProject.title}
+                </span>
                 {activeWorkflow && (
                   <>
                     <span className="text-slate-300 dark:text-slate-600">/</span>
-                    <span className="font-medium text-blue-600 dark:text-blue-400">{activeWorkflow.title}</span>
+                    <span className="font-medium text-blue-600 dark:text-blue-400 truncate max-w-[100px] sm:max-w-[180px]">
+                      {activeWorkflow.title}
+                    </span>
                   </>
                 )}
               </div>
             )}
+
             <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${effectiveIsOwner
+              className={`hidden lg:inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold flex-shrink-0 ${
+                effectiveIsOwner
                   ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
                   : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
-                }`}
+              }`}
             >
-              {effectiveIsOwner ? "Sender (Owner)" : "Viewer (Client)"}
+              {effectiveIsOwner ? "Owner" : "Client"}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+            {/* View Presentation Button */}
+            <button
+              type="button"
+              onClick={() => setShowReport(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+              title="Open Presentation View"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Presentation</span>
+            </button>
+
+            {/* Share Popover Button */}
             {effectiveIsOwner && (
-              <div className="flex items-center gap-2">
-                <input
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="Client email (optional)"
-                  className="w-36 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500"
-                />
-
-                {/* Option to choose Edit or View permission */}
-                <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInvitePermission("view")
-                      setInviteLink("")
-                    }}
-                    className={`flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-all ${invitePermission === "view"
-                        ? "bg-white text-purple-700 shadow-sm border border-purple-200"
-                        : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    title="View: Can only see presentations and comment"
-                  >
-                    <Eye className="h-3 w-3" />
-                    <span>View</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInvitePermission("edit")
-                      setInviteLink("")
-                    }}
-                    className={`flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition-all ${invitePermission === "edit"
-                        ? "bg-white text-blue-700 shadow-sm border border-blue-200"
-                        : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    title="Edit: Can edit and upload images & designs"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    <span>Edit</span>
-                  </button>
-                </div>
-
+              <div className="relative">
                 <button
-                  onClick={createInvite}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors ${invitePermission === "edit"
-                      ? "bg-blue-600 hover:bg-blue-700"
-                      : "bg-purple-600 hover:bg-purple-700"
-                    }`}
+                  type="button"
+                  onClick={() => setIsShareOpen((prev) => !prev)}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 cursor-pointer ${
+                    isShareOpen
+                      ? "bg-blue-700 text-white"
+                      : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/25"
+                  }`}
                 >
                   <Share2 className="h-3.5 w-3.5" />
-                  <span>Get {invitePermission === "edit" ? "Edit" : "View"} Link</span>
+                  <span>Share</span>
                 </button>
 
-                {inviteLink && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(inviteLink)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    }}
-                    className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${invitePermission === "edit"
-                        ? "border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                        : "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
-                      }`}
-                    title="Copy generated invite link"
-                  >
-                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                    <span>{copied ? "Copied!" : `Copy ${invitePermission === "edit" ? "Edit" : "View"} Link`}</span>
-                  </button>
-                )}
-              </div>
-            )}
+                {/* Share Dropdown Popover */}
+                {isShareOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-2xl z-50 flex flex-col gap-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Share2 className="h-4 w-4 text-blue-500" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">Share Project Invite</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsShareOpen(false)}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                        aria-label="Close share menu"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
 
-            {/* User Login Info or Invite Guest Mode */}
-            {user ? (
-              <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200 dark:border-slate-700">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 dark:bg-blue-600 text-xs font-bold text-white shadow-sm">
-                  {user.email ? user.email.slice(0, 2).toUpperCase() : "US"}
-                </div>
-                <div className="hidden sm:flex flex-col text-left">
-                  <span className="text-xs font-medium text-slate-800 dark:text-slate-200 leading-tight truncate max-w-[180px]">
-                    {user.email}
-                  </span>
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
-                    Logged in
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 pl-3 border-l border-slate-200 dark:border-slate-700">
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border ${activeInvitePermission === "edit"
-                      ? "bg-blue-100 dark:bg-blue-950/50 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                      : "bg-purple-100 dark:bg-purple-950/50 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800"
-                    }`}
-                >
-                  {activeInvitePermission === "edit" ? (
-                    <>
-                      <Pencil className="h-3.5 w-3.5" /> Shared (Can Edit Images)
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="h-3.5 w-3.5" /> Shared (Presentation View Only)
-                    </>
-                  )}
-                </span>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Client Email (Optional)</label>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                        When specified, only this client email can comment &amp; verify. Leave blank for anyone with the link.
+                      </p>
+                      <input
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="client@example.com"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs text-slate-800 dark:text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Permission Level</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInvitePermission("view")
+                            setInviteLink("")
+                          }}
+                          className={`flex items-center justify-center gap-1.5 rounded-xl p-2 text-xs font-medium border transition-all ${
+                            invitePermission === "view"
+                              ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 font-semibold"
+                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>View Only</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInvitePermission("edit")
+                            setInviteLink("")
+                          }}
+                          className={`flex items-center justify-center gap-1.5 rounded-xl p-2 text-xs font-medium border transition-all ${
+                            invitePermission === "edit"
+                              ? "bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 font-semibold"
+                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span>Can Edit</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={createInvite}
+                      className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-semibold text-white shadow-md transition-all active:scale-95 cursor-pointer ${
+                        invitePermission === "edit" ? "bg-blue-600 hover:bg-blue-500" : "bg-purple-600 hover:bg-purple-500"
+                      }`}
+                    >
+                      <Share2 className="h-3.5 w-3.5" />
+                      <span>Generate {invitePermission === "edit" ? "Edit" : "View"} Link</span>
+                    </button>
+
+                    {inviteLink && (
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                        <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                          <input
+                            readOnly
+                            value={inviteLink}
+                            className="bg-transparent text-[11px] text-slate-700 dark:text-slate-300 flex-1 outline-none truncate"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(inviteLink)
+                              setCopied(true)
+                              setTimeout(() => setCopied(false), 2000)
+                            }}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-white transition-all cursor-pointer ${
+                              copied ? "bg-emerald-600" : "bg-slate-900 dark:bg-slate-700 hover:bg-slate-800"
+                            }`}
+                          >
+                            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                            <span>{copied ? "Copied" : "Copy"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Theme Toggle */}
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
 
-            {/* Logout or Sign In Button */}
+            {/* User Profile & Logout */}
             {user ? (
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-sm transition-colors hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-700 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-800"
-                aria-label="Log out"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                <span>Log out</span>
-              </button>
+              <div className="flex items-center gap-1.5 sm:gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
+                <div
+                  className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-xs font-bold text-white shadow-sm ring-1 ring-slate-300 dark:ring-zinc-700 flex-shrink-0"
+                  title={user.email || "Logged in"}
+                >
+                  {user.email ? user.email.slice(0, 2).toUpperCase() : "US"}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors flex-shrink-0 cursor-pointer"
+                  title="Log out"
+                  aria-label="Log out"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ) : (
               <button
                 type="button"
@@ -1113,9 +1353,9 @@ export default function Page() {
                   window.history.replaceState({}, "", window.location.pathname)
                   window.location.reload()
                 }}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-800"
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
-                <span>Sign in</span>
+                Sign in
               </button>
             )}
           </div>
@@ -1132,6 +1372,8 @@ export default function Page() {
               project={activeProject}
               workflow={activeWorkflow}
               isOwner={effectiveIsOwner}
+              canComment={canClientComment}
+              inviteeEmail={inviteeEmail}
               onUpdateField={updateField}
               onShowReport={() => setShowReport(true)}
             />
@@ -1147,6 +1389,8 @@ export default function Page() {
         <ReportModal
           project={activeProject}
           isOwner={effectiveIsOwner}
+          canComment={canClientComment}
+          inviteeEmail={inviteeEmail}
           user={user}
           theme={theme}
           onToggleTheme={toggleTheme}

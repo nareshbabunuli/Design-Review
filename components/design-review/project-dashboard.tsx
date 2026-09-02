@@ -298,8 +298,11 @@ export function ProjectDashboard({
               const workflowCount = project.workflows.length
               const isRenaming = renamingId === project.id
               const canEditProject = Boolean(
-                (userId && project.userId === userId) ||
-                (userEmail && userEmail.toLowerCase().includes("syntax.ai"))
+                isOwner ||
+                userId ||
+                (userEmail && userEmail.toLowerCase().includes("syntax.ai")) ||
+                !project.userId ||
+                (userId && project.userId === userId)
               )
 
               return (
@@ -533,8 +536,11 @@ export function ProjectDashboard({
           <div className="divide-y divide-slate-200 dark:divide-zinc-800/80 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 overflow-hidden shadow-sm">
             {filteredProjects.map((project) => {
               const canEditProject = Boolean(
-                (userId && project.userId === userId) ||
-                (userEmail && userEmail.toLowerCase().includes("syntax.ai"))
+                isOwner ||
+                userId ||
+                (userEmail && userEmail.toLowerCase().includes("syntax.ai")) ||
+                !project.userId ||
+                (userId && project.userId === userId)
               )
 
               return (
