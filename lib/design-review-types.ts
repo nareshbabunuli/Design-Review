@@ -42,6 +42,7 @@ export type Project = {
   title: string
   isExpanded: boolean
   userId?: string
+  figmaUrl?: string | null
   workflows: Workflow[]
 }
 

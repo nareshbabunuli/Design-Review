@@ -33,7 +33,7 @@ import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { LandingPage } from "@/components/design-review/landing-page"
 import { SharePermissionsModal } from "@/components/design-review/share-permissions-modal"
 
-type ProjectRow = { id: string; title: string; is_expanded: boolean; user_id: string }
+type ProjectRow = { id: string; title: string; is_expanded: boolean; user_id: string; figma_url?: string | null }
 type WorkflowRow = {
   id: string
   project_id: string
@@ -170,6 +170,7 @@ const mapData = (
       title: p.title,
       isExpanded: p.is_expanded,
       userId: p.user_id,
+      figmaUrl: p.figma_url || null,
       workflows: sortWorkflowsBySavedOrder(p.id, pWorkflows),
     }
   })
@@ -299,7 +300,7 @@ export default function Page() {
     try {
       const { data: ps, error: pError } = await supabase
         .from("projects")
-        .select("id,title,is_expanded,user_id")
+        .select("id,title,is_expanded,user_id,figma_url")
         .order("created_at", { ascending: true })
 
       if (pError) {
@@ -822,6 +823,20 @@ export default function Page() {
     }
   }
 
+  const handleUpdateProjectFigmaUrl = async (projectId: string, figmaUrl: string | null) => {
+    if (!supabase || !projectId) return
+    update((xs) => xs.map((p) => (p.id === projectId ? { ...p, figmaUrl } : p)))
+    try {
+      localStorage.setItem(`project_figma_url_${projectId}`, figmaUrl || "")
+      await supabase.rpc("update_project_figma_url", {
+        p_project_id: projectId,
+        p_figma_url: figmaUrl,
+      })
+    } catch (err) {
+      console.error("Error updating project Figma URL:", err)
+    }
+  }
+
   // Submit formal revision with mandatory reason
   const submitFinalRevision = async (workflowId: string, reason: string) => {
     if (!supabase || !user || !workflowId) return
@@ -1051,7 +1066,7 @@ export default function Page() {
   if (activeProject && !canEdit) {
     if (showReport || viewMode === "editor") {
       return (
-        <div className="h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-900 text-white">
+        <div className="h-screen w-screen overflow-hidden bg-slate-50 dark:bg-slate-900 text-white print:h-auto print:w-auto print:overflow-visible print:bg-white print:text-black">
           <ReportModal
             project={activeProject}
             isOwner={false}
@@ -1066,6 +1081,7 @@ export default function Page() {
             onLogout={handleSignOut}
             onClose={() => setViewMode("dashboard")}
             onUpdateWorkflowField={updateWorkflowField}
+            onUpdateProjectFigmaUrl={handleUpdateProjectFigmaUrl}
             onSubmitRevision={submitFinalRevision}
           />
         </div>
@@ -1074,7 +1090,7 @@ export default function Page() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-white transition-colors duration-200">
+    <div className="flex h-screen w-screen overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-white transition-colors duration-200 print:h-auto print:w-auto print:overflow-visible print:block print:bg-white">
       {/* Mobile Drawer Backdrop */}
       {isMobileSidebarOpen && (
         <div
@@ -1371,6 +1387,7 @@ export default function Page() {
           onLogout={handleSignOut}
           onClose={() => setShowReport(false)}
           onUpdateWorkflowField={updateWorkflowField}
+          onUpdateProjectFigmaUrl={handleUpdateProjectFigmaUrl}
           onSubmitRevision={submitFinalRevision}
         />
       )}

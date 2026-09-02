@@ -52,6 +52,7 @@ type ReportModalProps = {
     field: "ourNotes" | "clientMessage" | "clientTaskDone" | "reason" | "figmaUrl" | "designA",
     value: string | boolean | null
   ) => void
+  onUpdateProjectFigmaUrl?: (projectId: string, url: string | null) => void
   onSubmitRevision?: (workflowId: string, reason: string) => Promise<void>
 }
 
@@ -107,6 +108,7 @@ export function ReportModal({
   onLogout,
   onClose,
   onUpdateWorkflowField,
+  onUpdateProjectFigmaUrl,
   onSubmitRevision,
 }: ReportModalProps) {
   const effectiveCanEdit = canEdit ?? isOwner
@@ -130,13 +132,49 @@ export function ReportModal({
   const notVerifiedCount = notVerifiedWorkflows.length
   const verificationRate = totalWorkflows > 0 ? Math.round((verifiedCount / totalWorkflows) * 100) : 0
 
-  // Count workflows with Figma assets / URLs
-  const figmaWorkflows = project.workflows.filter((w) => {
-    if (w.figmaUrl && w.figmaUrl.trim()) return true
-    if (w.designA) return true
-    const combined = `${w.ourNotes || ""} ${w.clientMessage || ""} ${w.reason || ""}`
-    return combined.includes("figma.com") || combined.includes("figma")
-  })
+  // Central Single Project Figma URL at the Top
+  const [projectFigmaUrl, setProjectFigmaUrl] = useState<string>("")
+  const [isEditingProjectFigmaUrl, setIsEditingProjectFigmaUrl] = useState<boolean>(false)
+  const [projectFigmaUrlDraft, setProjectFigmaUrlDraft] = useState<string>("")
+  const [isCopiedProjectFigmaUrl, setIsCopiedProjectFigmaUrl] = useState<boolean>(false)
+  const [savedProjectFigmaUrl, setSavedProjectFigmaUrl] = useState<boolean>(false)
+
+  useEffect(() => {
+    try {
+      const saved =
+        project.figmaUrl ||
+        localStorage.getItem(`project_figma_url_${project.id}`) ||
+        ""
+      setProjectFigmaUrl(saved)
+      setProjectFigmaUrlDraft(saved)
+    } catch (e) {
+      setProjectFigmaUrl(project.figmaUrl || "")
+      setProjectFigmaUrlDraft(project.figmaUrl || "")
+    }
+  }, [project.id, project.figmaUrl])
+
+  const handleSaveProjectFigmaUrl = () => {
+    const cleanUrl = projectFigmaUrlDraft.trim() || null
+    setProjectFigmaUrl(cleanUrl || "")
+    setIsEditingProjectFigmaUrl(false)
+    setSavedProjectFigmaUrl(true)
+    try {
+      localStorage.setItem(`project_figma_url_${project.id}`, cleanUrl || "")
+    } catch (e) {}
+    onUpdateProjectFigmaUrl?.(project.id, cleanUrl)
+    setTimeout(() => setSavedProjectFigmaUrl(false), 2500)
+  }
+
+  const handleCopyProjectFigmaUrl = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard && projectFigmaUrl) {
+      navigator.clipboard.writeText(projectFigmaUrl)
+      setIsCopiedProjectFigmaUrl(true)
+      setTimeout(() => setIsCopiedProjectFigmaUrl(false), 2000)
+    }
+  }
+
+  // Count workflows with Figma assets / exports
+  const figmaWorkflows = project.workflows.filter((w) => Boolean(w.designA))
   const figmaCount = figmaWorkflows.length
 
   // Count workflows with documented Reason of Changes
@@ -144,43 +182,6 @@ export function ReportModal({
     (w) => Boolean(w.reason && w.reason.trim()) || (w.revisions && w.revisions.length > 0)
   )
   const reasonCount = reasonWorkflows.length
-
-  // Figma URL Update in Presentation Mode
-  const [editingFigmaUrlWfId, setEditingFigmaUrlWfId] = useState<string | null>(null)
-  const [figmaUrlDraft, setFigmaUrlDraft] = useState<string>("")
-  const [savedFigmaUrlWfId, setSavedFigmaUrlWfId] = useState<string | null>(null)
-  const [copiedFigmaUrlWfId, setCopiedFigmaUrlWfId] = useState<string | null>(null)
-
-  const handleStartEditFigmaUrl = (workflow: Workflow) => {
-    setEditingFigmaUrlWfId(workflow.id)
-    setFigmaUrlDraft(workflow.figmaUrl || extractFigmaUrls(workflow)[0] || "")
-  }
-
-  const handleSaveFigmaUrl = (workflowId: string) => {
-    if (!onUpdateWorkflowField) return
-    const cleanUrl = figmaUrlDraft.trim() || null
-    onUpdateWorkflowField(workflowId, "figmaUrl", cleanUrl)
-    setEditingFigmaUrlWfId(null)
-    setSavedFigmaUrlWfId(workflowId)
-    setTimeout(() => {
-      setSavedFigmaUrlWfId((prev) => (prev === workflowId ? null : prev))
-    }, 2500)
-  }
-
-  const handleCancelEditFigmaUrl = () => {
-    setEditingFigmaUrlWfId(null)
-    setFigmaUrlDraft("")
-  }
-
-  const handleCopyFigmaUrl = (workflowId: string, url: string) => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(url)
-      setCopiedFigmaUrlWfId(workflowId)
-      setTimeout(() => {
-        setCopiedFigmaUrlWfId((prev) => (prev === workflowId ? null : prev))
-      }, 2000)
-    }
-  }
 
   // Digital Signature State
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -564,7 +565,7 @@ export function ReportModal({
       {/* Slides */}
       <div className="flex flex-col items-center gap-8 py-8 print:py-0 print:gap-0 print:block w-full px-4 print:px-0">
         {/* Title slide */}
-        <section className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-screen print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:flex-col print:justify-between transition-colors space-y-8">
+        <section className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-avoid-break print:block transition-colors space-y-8">
           {/* Header Title */}
           <div className="text-center space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
@@ -580,6 +581,135 @@ export function ReportModal({
             <p className="text-xl sm:text-2xl text-blue-600 dark:text-blue-400 font-bold pt-1">
               Project: {project.title}
             </p>
+          </div>
+
+          {/* Central Project Figma URL at the Top */}
+          <div className="w-full rounded-2xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/80 p-4 sm:p-5 flex flex-col gap-3 transition-colors shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-600 text-white shrink-0 shadow-sm">
+                  <Link2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold uppercase tracking-wider text-purple-900 dark:text-purple-200">
+                      Project Figma Board / Prototype URL
+                    </span>
+                    {savedProjectFigmaUrl && (
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
+                        <Check className="h-2.5 w-2.5" />
+                        <span>Saved!</span>
+                      </span>
+                    )}
+                  </div>
+                  {projectFigmaUrl ? (
+                    <div className="flex items-center gap-2 pt-1">
+                      <a
+                        href={projectFigmaUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs sm:text-sm font-mono text-blue-600 dark:text-blue-400 hover:underline truncate max-w-[320px] sm:max-w-[580px] flex items-center gap-1.5 font-medium"
+                        title={projectFigmaUrl}
+                      >
+                        <span className="truncate">{projectFigmaUrl}</span>
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                      </a>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 pt-0.5">
+                      No Figma board or prototype URL linked yet for this project.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0 print:hidden self-end sm:self-auto">
+                {projectFigmaUrl && (
+                  <>
+                    <a
+                      href={projectFigmaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 text-xs font-medium rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-purple-600 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      title="Open Figma File in New Tab"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      <span>Open Figma</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleCopyProjectFigmaUrl}
+                      className="px-3 py-1.5 text-xs font-medium rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-purple-600 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      title="Copy Figma Link"
+                    >
+                      {isCopiedProjectFigmaUrl ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          <span className="text-emerald-600 font-semibold">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy Link</span>
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
+                {effectiveCanEdit && !isEditingProjectFigmaUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingProjectFigmaUrl(true)
+                      setProjectFigmaUrlDraft(projectFigmaUrl)
+                    }}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    <span>{projectFigmaUrl ? "Update Figma URL" : "+ Add Figma URL"}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Inline Editor Box if editing */}
+            {isEditingProjectFigmaUrl && (
+              <div className="pt-2.5 border-t border-purple-200 dark:border-purple-800/80 flex flex-col sm:flex-row items-center gap-2 print:hidden">
+                <input
+                  type="url"
+                  autoFocus
+                  value={projectFigmaUrlDraft}
+                  onChange={(e) => setProjectFigmaUrlDraft(e.target.value)}
+                  placeholder="Paste Figma file, frame, or prototype link (https://figma.com/...)"
+                  className="flex-1 w-full text-xs font-mono rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      handleSaveProjectFigmaUrl()
+                    } else if (e.key === "Escape") {
+                      setIsEditingProjectFigmaUrl(false)
+                    }
+                  }}
+                />
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleSaveProjectFigmaUrl}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 shadow-sm transition-colors cursor-pointer"
+                  >
+                    Save URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingProjectFigmaUrl(false)}
+                    className="px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Executive Metrics Dashboard */}
@@ -697,83 +827,25 @@ export function ReportModal({
                           {wf.title}
                         </td>
                         <td className="px-3.5 py-3 max-w-[240px]">
-                          {editingFigmaUrlWfId === wf.id ? (
-                            <div className="flex items-center gap-1.5 print:hidden">
-                              <input
-                                type="url"
-                                autoFocus
-                                value={figmaUrlDraft}
-                                onChange={(e) => setFigmaUrlDraft(e.target.value)}
-                                placeholder="Paste Figma URL..."
-                                className="w-40 text-[11px] font-mono px-2 py-1 rounded border border-purple-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault()
-                                    handleSaveFigmaUrl(wf.id)
-                                  } else if (e.key === "Escape") {
-                                    handleCancelEditFigmaUrl()
-                                  }
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveFigmaUrl(wf.id)}
-                                className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-bold cursor-pointer transition-colors"
-                              >
-                                Save
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleCancelEditFigmaUrl}
-                                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          ) : hasFigma ? (
+                          {wf.designA ? (
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                                 <Link2 className="h-3 w-3" />
-                                {figmaUrls.length > 0 ? `${figmaUrls.length} URL` : "Figma Design"}
+                                <span>Design Uploaded</span>
                               </span>
-                              {figmaUrls.length > 0 && (
-                                <a
-                                  href={figmaUrls[0]}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5"
-                                  title={figmaUrls[0]}
-                                >
-                                  <span>Open</span>
-                                  <ExternalLink className="h-2.5 w-2.5" />
-                                </a>
-                              )}
-                              {effectiveCanEdit && onUpdateWorkflowField && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditFigmaUrl(wf)}
-                                  className="text-[11px] text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 flex items-center gap-0.5 ml-1 transition-colors cursor-pointer print:hidden"
-                                  title="Edit Figma URL"
-                                >
-                                  <Pencil className="h-2.5 w-2.5" />
-                                  <span>Edit</span>
-                                </button>
-                              )}
                             </div>
+                          ) : projectFigmaUrl ? (
+                            <a
+                              href={projectFigmaUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium"
+                            >
+                              <span>Project Board</span>
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
                           ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-400 italic text-[11px]">No Figma link</span>
-                              {effectiveCanEdit && onUpdateWorkflowField && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditFigmaUrl(wf)}
-                                  className="text-[10px] text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-0.5 transition-colors cursor-pointer print:hidden"
-                                >
-                                  <Pencil className="h-2.5 w-2.5" />
-                                  <span>+ Add</span>
-                                </button>
-                              )}
-                            </div>
+                            <span className="text-slate-400 italic text-[11px]">No asset</span>
                           )}
                         </td>
                         <td className="px-3.5 py-3 max-w-[280px]">
@@ -846,35 +918,21 @@ export function ReportModal({
                       <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200">
                         Figma
                       </span>
-                      {(() => {
-                        const figmaUrls = extractFigmaUrls(workflow)
-                        if (figmaUrls.length === 0) return null
-                        return (
-                          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <Link2 className="h-3 w-3" />
-                            <span>{figmaUrls.length} URL{figmaUrls.length > 1 ? "s" : ""}</span>
-                          </span>
-                        )
-                      })()}
-                      {savedFigmaUrlWfId === workflow.id && (
-                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                          <Check className="h-3 w-3" />
-                          <span>Figma URL Updated!</span>
-                        </span>
+                      {projectFigmaUrl && (
+                        <a
+                          href={projectFigmaUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2.5 py-0.5 rounded-full flex items-center gap-1 hover:underline print:hidden shadow-xs"
+                          title="Open Project Figma Board"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          <span>Figma Board</span>
+                          <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
                       )}
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
-                      {effectiveCanEdit && onUpdateWorkflowField && editingFigmaUrlWfId !== workflow.id && (
-                        <button
-                          type="button"
-                          onClick={() => handleStartEditFigmaUrl(workflow)}
-                          className="flex items-center gap-1.5 text-purple-700 dark:text-purple-300 hover:text-purple-800 text-xs font-semibold bg-purple-100/80 dark:bg-purple-950/70 hover:bg-purple-200 dark:hover:bg-purple-900 border border-purple-300 dark:border-purple-700 px-2.5 py-1 rounded-full transition-colors cursor-pointer print:hidden shadow-xs"
-                          title="Add or update Figma URL for this workflow"
-                        >
-                          <Pencil className="h-3 w-3" />
-                          <span>{workflow.figmaUrl || extractFigmaUrls(workflow).length > 0 ? "Update Figma URL" : "+ Add Figma URL"}</span>
-                        </button>
-                      )}
                       {workflow.designA && (
                         <button
                           onClick={() =>
@@ -897,100 +955,6 @@ export function ReportModal({
                       </span>
                     </div>
                   </div>
-
-                  {/* Inline Figma URL Editor in Presentation View */}
-                  {editingFigmaUrlWfId === workflow.id && (
-                    <div className="p-3.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 space-y-2.5 print:hidden shadow-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
-                          <Link2 className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
-                          <span>Update Figma Link (Board / Frame / Prototype)</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleCancelEditFigmaUrl}
-                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs p-1 cursor-pointer"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="url"
-                          autoFocus
-                          value={figmaUrlDraft}
-                          onChange={(e) => setFigmaUrlDraft(e.target.value)}
-                          placeholder="https://www.figma.com/design/... or https://www.figma.com/file/..."
-                          className="flex-1 text-xs font-mono rounded-lg border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault()
-                              handleSaveFigmaUrl(workflow.id)
-                            } else if (e.key === "Escape") {
-                              handleCancelEditFigmaUrl()
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleSaveFigmaUrl(workflow.id)}
-                          className="px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 shadow-sm transition-colors cursor-pointer whitespace-nowrap"
-                        >
-                          Save URL
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleCancelEditFigmaUrl}
-                          className="px-3 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200/80 dark:bg-slate-800 hover:bg-slate-300 transition-colors cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-purple-700/80 dark:text-purple-300/70">
-                        Paste the direct URL from your Figma tab or &quot;Copy link&quot; in Figma.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Active Figma URL Banner with Copy & Open Actions */}
-                  {editingFigmaUrlWfId !== workflow.id && extractFigmaUrls(workflow).length > 0 && (
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200/60 dark:border-purple-800/40 text-xs">
-                      <div className="flex items-center gap-2 max-w-[80%] min-w-0">
-                        <Link2 className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                        <span className="text-[11px] font-semibold text-purple-900 dark:text-purple-200 shrink-0">Figma URL:</span>
-                        <a
-                          href={extractFigmaUrls(workflow)[0]}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline truncate font-mono flex items-center gap-1"
-                          title={extractFigmaUrls(workflow)[0]}
-                        >
-                          <span className="truncate">{extractFigmaUrls(workflow)[0]}</span>
-                          <ExternalLink className="h-3 w-3 shrink-0" />
-                        </a>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0 print:hidden">
-                        <button
-                          type="button"
-                          onClick={() => handleCopyFigmaUrl(workflow.id, extractFigmaUrls(workflow)[0])}
-                          className="px-2 py-1 text-[10px] font-medium rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:text-purple-600 transition-colors cursor-pointer flex items-center gap-1"
-                          title="Copy Figma Link"
-                        >
-                          {copiedFigmaUrlWfId === workflow.id ? (
-                            <>
-                              <Check className="h-3 w-3 text-emerald-500" />
-                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Copied!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3 w-3" />
-                              <span>Copy</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )}
 
                   {/* Image Display Frame */}
                   <div
@@ -1402,7 +1366,7 @@ export function ReportModal({
         ))}
 
         {/* Final slide - Formal Sign-off & Digital Signature */}
-        <section className="flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-screen print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:flex-col print:justify-between transition-colors space-y-8">
+        <section className="flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-page-break print-avoid-break print:block transition-colors space-y-8">
           {/* Header */}
           <div className="text-center space-y-2">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
