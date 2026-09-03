@@ -15,6 +15,7 @@ import {
   LogOut,
   Lock,
   Unlock,
+  Copy,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -36,6 +37,7 @@ type SidebarProps = {
   onSelectWorkflow: (projectId: string, workflowId: string) => void
   onRenameProject: (projectId: string, title: string) => void
   onRenameWorkflow: (projectId: string, workflowId: string, title: string) => void
+  onDuplicateProject?: (projectId: string, e: React.MouseEvent) => void
   onMoveWorkflowUp?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onMoveWorkflowDown?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onReorderWorkflows?: (projectId: string, sourceIndex: number, destinationIndex: number) => void
@@ -102,6 +104,7 @@ export function Sidebar({
   onSelectWorkflow,
   onRenameProject,
   onRenameWorkflow,
+  onDuplicateProject,
   onMoveWorkflowUp,
   onMoveWorkflowDown,
   onReorderWorkflows,
@@ -146,7 +149,11 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto min-h-0 p-3 space-y-1 custom-scrollbar">
-        {projects.map((project, pIdx) => (
+        {(activeProjectId ? projects.filter((p) => p.id === activeProjectId) : projects.slice(0, 1)).map((project, pIdx) => {
+          const isProjectOwner = Boolean(userId ? project.userId === userId || !project.userId : isOwner)
+          const isProjectActive = activeProjectId === project.id
+
+          return (
           <div
             key={project.id}
             className={`mb-2 rounded-lg transition-all ${
@@ -176,9 +183,9 @@ export function Sidebar({
           >
             {/* Project header (folder) */}
             <div
-              draggable={isOwner && projects.length > 1}
+              draggable={isProjectOwner && projects.length > 1}
               onDragStart={(e) => {
-                if (isOwner && projects.length > 1) {
+                if (isProjectOwner && projects.length > 1) {
                   setDraggedProjectIndex(pIdx)
                   e.dataTransfer.effectAllowed = "move"
                 }
@@ -188,7 +195,7 @@ export function Sidebar({
                 setDragOverProjectIndex(null)
               }}
               className={`group flex items-center justify-between w-full p-2 rounded-lg cursor-pointer transition-all ${
-                activeProjectId === project.id && !activeWorkflowId
+                isProjectActive
                   ? "bg-slate-100 dark:bg-slate-800/80 text-slate-900 dark:text-white font-semibold"
                   : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
               }`}
@@ -219,7 +226,7 @@ export function Sidebar({
                 )}
               </div>
 
-              {isOwner && (
+              {isProjectOwner && (
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                   {/* Project Move Up/Down when multiple projects exist */}
                   {projects.length > 1 && (
@@ -282,7 +289,21 @@ export function Sidebar({
                   >
                     <Edit2 className="h-3.5 w-3.5" />
                   </button>
-                  {isOwner && onToggleOrderLock && project.workflows.length > 1 && (
+                  {onDuplicateProject && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDuplicateProject(project.id, e)
+                      }}
+                      className="p-1.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-emerald-500 cursor-pointer"
+                      title="Duplicate project"
+                      aria-label="Duplicate project"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {isProjectOwner && onToggleOrderLock && project.workflows.length > 1 && (
                     <button
                       type="button"
                       onClick={(e) => onToggleOrderLock(project.id, e)}
@@ -336,7 +357,7 @@ export function Sidebar({
                     <span className="uppercase tracking-wider font-semibold text-[9px] text-slate-400 dark:text-slate-500">
                       Screens ({project.workflows.length})
                     </span>
-                    {isOwner && onToggleOrderLock && (
+                    {isProjectOwner && onToggleOrderLock && (
                       <button
                         type="button"
                         onClick={(e) => onToggleOrderLock(project.id, e)}
@@ -373,13 +394,14 @@ export function Sidebar({
                     dragOverWorkflow?.projectId === project.id &&
                     dragOverWorkflow?.index === wIdx &&
                     draggedWorkflow?.index !== wIdx
+                  const isWorkflowActive = isProjectActive && activeWorkflowId === workflow.id
 
                   return (
                     <div
                       key={workflow.id}
-                      draggable={!project.isOrderLocked && isOwner && project.workflows.length > 1}
+                      draggable={!project.isOrderLocked && isProjectOwner && project.workflows.length > 1}
                       onDragStart={(e) => {
-                        if (!project.isOrderLocked && isOwner && project.workflows.length > 1) {
+                        if (!project.isOrderLocked && isProjectOwner && project.workflows.length > 1) {
                           setDraggedWorkflow({ projectId: project.id, index: wIdx })
                           e.dataTransfer.effectAllowed = "move"
                         }
@@ -423,13 +445,13 @@ export function Sidebar({
                       } ${
                         isDragOverThis
                           ? "ring-2 ring-blue-500 bg-blue-100/60 dark:bg-blue-950/80"
-                          : activeWorkflowId === workflow.id
+                          : isWorkflowActive
                           ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold shadow-xs"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900/60 hover:text-slate-900 dark:hover:text-slate-200"
                       }`}
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
-                        {isOwner && project.workflows.length > 1 && !project.isOrderLocked && (
+                        {isProjectOwner && project.workflows.length > 1 && !project.isOrderLocked && (
                           <span
                             className="text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors"
                             title="Drag to reorder screen"
@@ -441,7 +463,7 @@ export function Sidebar({
 
                         <File
                           className={`h-3.5 w-3.5 flex-shrink-0 ${
-                            activeWorkflowId === workflow.id
+                            isWorkflowActive
                               ? "text-blue-500"
                               : "text-slate-400 dark:text-slate-500"
                           }`}
@@ -464,7 +486,7 @@ export function Sidebar({
                         )}
                       </div>
 
-                      {isOwner && (
+                      {isProjectOwner && (
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                           {/* Move Up/Down Buttons (Only available when unlocked) */}
                           {!project.isOrderLocked && (
@@ -545,7 +567,7 @@ export function Sidebar({
               </div>
             )}
           </div>
-        ))}
+        )})}
       </nav>
     </aside>
   )

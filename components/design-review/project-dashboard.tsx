@@ -21,6 +21,7 @@ import {
   Eye,
   Pencil,
   LogOut,
+  Copy,
 } from "lucide-react"
 import { ThemeToggle } from "./theme-toggle"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -39,6 +40,7 @@ interface ProjectDashboardProps {
   onOpenPresentation?: (projectId: string) => void
   onDeleteProject: (projectId: string, e: React.MouseEvent) => void
   onRenameProject: (projectId: string, title: string) => void
+  onDuplicateProject?: (projectId: string, e: React.MouseEvent) => void
   onShareProject?: (projectId: string) => void
   onLogout?: () => void
 }
@@ -57,6 +59,7 @@ export function ProjectDashboard({
   onOpenPresentation,
   onDeleteProject,
   onRenameProject,
+  onDuplicateProject,
   onShareProject,
   onLogout,
 }: ProjectDashboardProps) {
@@ -201,17 +204,6 @@ export function ProjectDashboard({
                 className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900/90 pl-8 pr-2 py-1 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 outline-none transition-all focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-900"
               />
             </div>
-
-            {(isOwner || userEmail || userId) && (
-              <button
-                type="button"
-                onClick={onCreateProject}
-                className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
-                <span className="hidden sm:inline">New Project</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -441,6 +433,20 @@ export function ProjectDashboard({
                             </button>
                           )}
 
+                          {onDuplicateProject && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                onDuplicateProject(project.id, e)
+                                setMenuOpenId(null)
+                              }}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-zinc-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors text-left cursor-pointer"
+                            >
+                              <Copy className="h-3.5 w-3.5 text-emerald-500" />
+                              <span>Make a Copy</span>
+                            </button>
+                          )}
+
                           {onShareProject && (
                             <button
                               type="button"
@@ -562,11 +568,25 @@ export function ProjectDashboard({
                         if (onOpenPresentation) onOpenPresentation(project.id)
                         else onSelectProject(project.id)
                       }}
-                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-zinc-800 hover:bg-purple-600 text-slate-700 dark:text-zinc-200 hover:text-white px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95"
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-zinc-800 hover:bg-purple-600 text-slate-700 dark:text-zinc-200 hover:text-white px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 cursor-pointer"
                     >
                       <Eye className="h-3.5 w-3.5 text-purple-400" />
                       <span>View</span>
                     </button>
+                    {onDuplicateProject && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDuplicateProject(project.id, e)
+                        }}
+                        className="p-1.5 text-zinc-500 hover:text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors cursor-pointer"
+                        title="Make a copy"
+                        aria-label="Make a copy"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    )}
                     {project.userId === userId || !project.userId ? (
                       <button
                         type="button"

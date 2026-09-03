@@ -311,7 +311,7 @@ export default function Page() {
   }, [supabase.auth])
 
   // Load user's projects and workflows
-  const loadWorkspace = useCallback(async () => {
+  const loadWorkspace = useCallback(async (retryCount = 0) => {
     if (!user || !supabase) {
       setProjects([])
       setLoading(false)
@@ -326,6 +326,12 @@ export default function Page() {
         .order("created_at", { ascending: true })
 
       if (pError) {
+        // If transient network error, retry once after 1s delay
+        if (retryCount < 2 && (pError.message?.includes("Failed to fetch") || pError.message?.includes("network"))) {
+          console.warn(`Transient fetch error, retrying (${retryCount + 1}/2)...`, pError.message)
+          setTimeout(() => loadWorkspace(retryCount + 1), 1000)
+          return
+        }
         console.error("Error loading projects:", pError)
         setLoading(false)
         return
@@ -358,20 +364,31 @@ export default function Page() {
 
       setProjects(next)
       if (next.length > 0) {
-        setActiveProjectId((prev) => (prev && next.some((p) => p.id === prev) ? prev : next[0].id))
-        const activeP = next.find((p) => p.id === activeProjectId) || next[0]
-        if (activeP && activeP.workflows.length > 0) {
-          setActiveWorkflowId((prevW) => (prevW && activeP.workflows.some((w) => w.id === prevW) ? prevW : activeP.workflows[0].id))
-        }
+        setActiveProjectId((prevId) => {
+          const chosenId = prevId && next.some((p) => p.id === prevId) ? prevId : next[0].id
+          const activeP = next.find((p) => p.id === chosenId) || next[0]
+          setActiveWorkflowId((prevW) => {
+            if (prevW && activeP.workflows.some((w) => w.id === prevW)) {
+              return prevW
+            }
+            return activeP.workflows.length > 0 ? activeP.workflows[0].id : null
+          })
+          return chosenId
+        })
       }
       return next
-    } catch (err) {
+    } catch (err: any) {
+      if (retryCount < 2 && (err?.message?.includes("Failed to fetch") || err?.name === "TypeError")) {
+        console.warn(`Transient fetch error in workspace load, retrying (${retryCount + 1}/2)...`)
+        setTimeout(() => loadWorkspace(retryCount + 1), 1000)
+        return []
+      }
       console.error("Failed to load workspace:", err)
       return []
     } finally {
       setLoading(false)
     }
-  }, [user, supabase, activeProjectId])
+  }, [user, supabase])
 
   // Handle deleting an owned project (owner only) or rejecting/leaving a shared project (members only)
   const handleDeleteOrLeaveProject = async (id: string, e: React.MouseEvent) => {
@@ -714,6 +731,25 @@ export default function Page() {
     setIsAuthChecking(false)
   }
 
+  const handleSelectProject = useCallback((projectId: string) => {
+    setActiveProjectId(projectId)
+    const targetProject = projects.find((p) => p.id === projectId)
+    if (targetProject && targetProject.workflows.length > 0) {
+      setActiveWorkflowId(targetProject.workflows[0].id)
+    } else {
+      setActiveWorkflowId(null)
+    }
+    // Expand the selected project and collapse others in sidebar
+    update((xs) =>
+      xs.map((p) => ({
+        ...p,
+        isExpanded: p.id === projectId,
+      }))
+    )
+    setViewMode("editor")
+    setIsMobileSidebarOpen(false)
+  }, [projects])
+
   const createProject = async (e?: React.MouseEvent) => {
     e?.preventDefault()
     e?.stopPropagation()
@@ -722,24 +758,199 @@ export default function Page() {
       return
     }
 
-    const { data, error } = await supabase
+    const { data: projectData, error: projectError } = await supabase
       .from("projects")
       .insert({ user_id: user.id, title: `New Project ${projects.length + 1}`, is_expanded: true })
       .select("id,title,is_expanded,user_id")
       .single()
 
-    if (error) {
-      console.error("Error creating project:", error)
-      alert(`Error creating project: ${error.message}`)
+    if (projectError || !projectData) {
+      console.error("Error creating project:", projectError)
+      alert(`Error creating project: ${projectError?.message}`)
       return
     }
 
-    const p: Project = { id: data.id, title: data.title, isExpanded: true, userId: data.user_id, workflows: [] }
-    update((x) => [...x, p])
+    // Automatically create the first screen / workflow for the new project
+    const { data: wfData } = await supabase
+      .from("workflows")
+      .insert({ project_id: projectData.id, title: "Screen 1" })
+      .select("*")
+      .single()
+
+    const newWorkflow: Workflow | null = wfData
+      ? {
+          id: wfData.id,
+          projectId: wfData.project_id,
+          title: wfData.title,
+          designA: wfData.design_a,
+          designB: wfData.design_b,
+          figmaUrl: wfData.figma_url || null,
+          ourNotes: wfData.our_notes || "",
+          clientMessage: wfData.client_message || "",
+          clientTaskDone: wfData.client_task_done,
+          reason: wfData.reason || "",
+          isDone: wfData.is_done,
+          comments: [],
+          revisions: [],
+        }
+      : null
+
+    const newWorkflows = newWorkflow ? [newWorkflow] : []
+
+    const p: Project = {
+      id: projectData.id,
+      title: projectData.title,
+      isExpanded: true,
+      userId: projectData.user_id,
+      figmaUrl: null,
+      workflowOrder: null,
+      isOrderLocked: false,
+      workflows: newWorkflows,
+    }
+
+    // Collapse other projects and expand the new project in sidebar
+    update((xs) => [
+      ...xs.map((proj) => ({ ...proj, isExpanded: false })),
+      p,
+    ])
+
     setActiveProjectId(p.id)
-    setActiveWorkflowId(null)
+    setActiveWorkflowId(newWorkflow ? newWorkflow.id : null)
     setShowReport(false)
     setViewMode("editor")
+    setIsMobileSidebarOpen(false)
+  }
+
+  const duplicateProject = async (projectId: string, e?: React.MouseEvent) => {
+    e?.preventDefault()
+    e?.stopPropagation()
+    if (!supabase || !user) {
+      alert("Please sign in or create an account to duplicate projects.")
+      return
+    }
+
+    const sourceProject = projects.find((p) => p.id === projectId)
+    if (!sourceProject) return
+
+    try {
+      setLoading(true)
+      // 1. Create duplicate project record
+      const { data: projectData, error: projectError } = await supabase
+        .from("projects")
+        .insert({
+          user_id: user.id,
+          title: `${sourceProject.title} (Copy)`,
+          is_expanded: true,
+          figma_url: sourceProject.figmaUrl || null,
+          is_order_locked: sourceProject.isOrderLocked || false,
+        })
+        .select("id,title,is_expanded,user_id,figma_url,is_order_locked")
+        .single()
+
+      if (projectError || !projectData) {
+        console.error("Error duplicating project:", projectError)
+        alert(`Error duplicating project: ${projectError?.message}`)
+        setLoading(false)
+        return
+      }
+
+      // 2. Clone all workflows belonging to the source project
+      let newWorkflows: Workflow[] = []
+      if (sourceProject.workflows.length > 0) {
+        const workflowsToInsert = sourceProject.workflows.map((w) => ({
+          project_id: projectData.id,
+          title: w.title,
+          design_a: w.designA,
+          design_b: w.designB,
+          figma_url: w.figmaUrl || null,
+          our_notes: w.ourNotes || "",
+          client_message: w.clientMessage || "",
+          client_task_done: w.clientTaskDone || false,
+          reason: w.reason || "",
+          is_done: w.isDone || false,
+        }))
+
+        const { data: insertedWorkflows, error: wfError } = await supabase
+          .from("workflows")
+          .insert(workflowsToInsert)
+          .select("*")
+
+        if (wfError) {
+          console.error("Error copying workflows:", wfError)
+        } else if (insertedWorkflows) {
+          newWorkflows = insertedWorkflows.map((w: WorkflowRow) => ({
+            id: w.id,
+            projectId: w.project_id,
+            title: w.title,
+            designA: w.design_a,
+            designB: w.design_b,
+            figmaUrl: w.figma_url || null,
+            ourNotes: w.our_notes || "",
+            clientMessage: w.client_message || "",
+            clientTaskDone: w.client_task_done,
+            reason: w.reason || "",
+            isDone: w.is_done,
+            comments: [],
+            revisions: [],
+          }))
+        }
+      } else {
+        // Automatically create a default screen if the source project was empty
+        const { data: wfData } = await supabase
+          .from("workflows")
+          .insert({ project_id: projectData.id, title: "Screen 1" })
+          .select("*")
+          .single()
+
+        if (wfData) {
+          newWorkflows = [
+            {
+              id: wfData.id,
+              projectId: wfData.project_id,
+              title: wfData.title,
+              designA: wfData.design_a,
+              designB: wfData.design_b,
+              figmaUrl: wfData.figma_url || null,
+              ourNotes: wfData.our_notes || "",
+              clientMessage: wfData.client_message || "",
+              clientTaskDone: wfData.client_task_done,
+              reason: wfData.reason || "",
+              isDone: wfData.is_done,
+              comments: [],
+              revisions: [],
+            },
+          ]
+        }
+      }
+
+      const p: Project = {
+        id: projectData.id,
+        title: projectData.title,
+        isExpanded: true,
+        userId: projectData.user_id,
+        figmaUrl: projectData.figma_url || null,
+        workflowOrder: null,
+        isOrderLocked: projectData.is_order_locked || false,
+        workflows: newWorkflows,
+      }
+
+      // Collapse other projects and expand the copied project in sidebar
+      update((xs) => [
+        ...xs.map((proj) => ({ ...proj, isExpanded: false })),
+        p,
+      ])
+
+      setActiveProjectId(p.id)
+      setActiveWorkflowId(newWorkflows.length > 0 ? newWorkflows[0].id : null)
+      setShowReport(false)
+      setViewMode("editor")
+      setIsMobileSidebarOpen(false)
+    } catch (err: any) {
+      console.error("Failed to duplicate project:", err)
+      alert(`Failed to duplicate project: ${err?.message || "Unknown error"}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const createWorkflow = async (projectId: string, e?: React.MouseEvent) => {
@@ -1266,77 +1477,79 @@ export default function Page() {
         />
       )}
 
-      {/* Sidebar */}
-      <div
-        className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
-          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } ${showReport ? "print:hidden" : ""}`}
-      >
-        <Sidebar
-          projects={projects}
-          activeProjectId={activeProjectId}
-          activeWorkflowId={activeWorkflowId}
-          editingId={editingId}
-          isOwner={isOwner}
-          setEditingId={(id: EditingId) => setEditingId(id)}
-          onSelectProject={(id: string) => {
-            setActiveProjectId(id)
-            setIsMobileSidebarOpen(false)
-          }}
-          onSelectWorkflow={(projectId: string, workflowId: string) => {
-            setActiveProjectId(projectId)
-            setActiveWorkflowId(workflowId)
-            setViewMode("editor")
-            setIsMobileSidebarOpen(false)
-          }}
-          onCreateProject={createProject}
-          onCreateWorkflow={createWorkflow}
-          onToggleExpand={(id: string) =>
-            update((xs) => xs.map((p) => (p.id === id ? { ...p, isExpanded: !p.isExpanded } : p)))
-          }
-          onRenameWorkflow={handleRenameWorkflow}
-          onRenameProject={handleRenameProject}
-          userId={user?.id}
-          onDeleteProject={handleDeleteOrLeaveProject}
-          onDeleteWorkflow={async (projectId: string, workflowId: string, e: React.MouseEvent) => {
-            e.stopPropagation()
-            if (!confirm("Are you sure you want to delete this workflow?")) return
-            update((xs) =>
-              xs.map((p) =>
-                p.id === projectId
-                  ? {
-                      ...p,
-                      workflows: p.workflows.filter((w) => w.id !== workflowId),
-                    }
-                  : p
+      {/* Sidebar - Only shown in editor mode for the active project */}
+      {viewMode === "editor" && (
+        <div
+          className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
+            isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
+          } ${showReport ? "print:hidden" : ""}`}
+        >
+          <Sidebar
+            projects={projects}
+            activeProjectId={activeProjectId}
+            activeWorkflowId={activeWorkflowId}
+            editingId={editingId}
+            isOwner={isOwner}
+            onBackToDashboard={() => setViewMode("dashboard")}
+            setEditingId={(id: EditingId) => setEditingId(id)}
+            onSelectProject={handleSelectProject}
+            onSelectWorkflow={(projectId: string, workflowId: string) => {
+              setActiveProjectId(projectId)
+              setActiveWorkflowId(workflowId)
+              update((xs) => xs.map((p) => ({ ...p, isExpanded: p.id === projectId ? true : p.isExpanded })))
+              setViewMode("editor")
+              setIsMobileSidebarOpen(false)
+            }}
+            onCreateProject={createProject}
+            onCreateWorkflow={createWorkflow}
+            onToggleExpand={(id: string) =>
+              update((xs) => xs.map((p) => (p.id === id ? { ...p, isExpanded: !p.isExpanded } : p)))
+            }
+            onRenameWorkflow={handleRenameWorkflow}
+            onRenameProject={handleRenameProject}
+            onDuplicateProject={duplicateProject}
+            userId={user?.id}
+            onDeleteProject={handleDeleteOrLeaveProject}
+            onDeleteWorkflow={async (projectId: string, workflowId: string, e: React.MouseEvent) => {
+              e.stopPropagation()
+              if (!confirm("Are you sure you want to delete this workflow?")) return
+              update((xs) =>
+                xs.map((p) =>
+                  p.id === projectId
+                    ? {
+                        ...p,
+                        workflows: p.workflows.filter((w) => w.id !== workflowId),
+                      }
+                    : p
+                )
               )
-            )
-            if (activeWorkflowId === workflowId) setActiveWorkflowId(null)
-            await supabase.from("workflows").delete().eq("id", workflowId)
-          }}
-          onMoveWorkflowUp={(projectId: string, workflowId: string, e: React.MouseEvent) =>
-            handleMoveWorkflow(projectId, workflowId, "up", e)
-          }
-          onMoveWorkflowDown={(projectId: string, workflowId: string, e: React.MouseEvent) =>
-            handleMoveWorkflow(projectId, workflowId, "down", e)
-          }
-          onReorderWorkflows={handleReorderWorkflows}
-          onToggleOrderLock={handleToggleOrderLock}
-          onReorderProjects={(sourceIndex: number, destinationIndex: number) => {
-            update((prev) => {
-              const updated = [...prev]
-              const [moved] = updated.splice(sourceIndex, 1)
-              updated.splice(destinationIndex, 0, moved)
-              try {
-                localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(updated.map((p) => p.id)))
-              } catch (e) {
-                // Ignore
-              }
-              return updated
-            })
-          }}
-        />
-      </div>
+              if (activeWorkflowId === workflowId) setActiveWorkflowId(null)
+              await supabase.from("workflows").delete().eq("id", workflowId)
+            }}
+            onMoveWorkflowUp={(projectId: string, workflowId: string, e: React.MouseEvent) =>
+              handleMoveWorkflow(projectId, workflowId, "up", e)
+            }
+            onMoveWorkflowDown={(projectId: string, workflowId: string, e: React.MouseEvent) =>
+              handleMoveWorkflow(projectId, workflowId, "down", e)
+            }
+            onReorderWorkflows={handleReorderWorkflows}
+            onToggleOrderLock={handleToggleOrderLock}
+            onReorderProjects={(sourceIndex: number, destinationIndex: number) => {
+              update((prev) => {
+                const updated = [...prev]
+                const [moved] = updated.splice(sourceIndex, 1)
+                updated.splice(destinationIndex, 0, moved)
+                try {
+                  localStorage.setItem(`project_order_${user?.id || "default"}`, JSON.stringify(updated.map((p) => p.id)))
+                } catch (e) {
+                  // Ignore
+                }
+                return updated
+              })
+            }}
+          />
+        </div>
+      )}
 
       {/* Main Workspace Area */}
       <main className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200 ${showReport ? "print:hidden" : ""}`}>
@@ -1344,14 +1557,16 @@ export default function Page() {
         <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-6 flex items-center justify-between gap-3 flex-shrink-0 z-10 transition-colors duration-200">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             {/* Mobile Sidebar Hamburger Toggle */}
-            <button
-              type="button"
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              aria-label="Open navigation sidebar"
-            >
-              <Menu className="h-4 w-4" />
-            </button>
+            {viewMode === "editor" && (
+              <button
+                type="button"
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Open navigation sidebar"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+            )}
 
             {/* View Mode Toggle: Dashboard vs Editor */}
             {activeProject && (
@@ -1497,16 +1712,14 @@ export default function Page() {
               theme={theme}
               onToggleTheme={toggleTheme}
               onCreateProject={createProject}
-              onSelectProject={(id: string) => {
-                setActiveProjectId(id)
-                setViewMode("editor")
-              }}
+              onSelectProject={handleSelectProject}
               onOpenPresentation={(id: string) => {
                 setActiveProjectId(id)
                 setShowReport(true)
               }}
               onDeleteProject={handleDeleteOrLeaveProject}
               onRenameProject={handleRenameProject}
+              onDuplicateProject={duplicateProject}
               onShareProject={(id: string) => {
                 setActiveProjectId(id)
                 setIsShareOpen(true)
@@ -1527,8 +1740,18 @@ export default function Page() {
               onAddComment={addComment}
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-slate-400">
-              Select or create a workflow to begin
+            <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">
+              <p className="text-sm">Select or create a workflow to begin</p>
+              {canEdit && activeProject && (
+                <button
+                  type="button"
+                  onClick={() => createWorkflow(activeProject.id)}
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  <Plus className="h-4 w-4 stroke-[2.5]" />
+                  <span>Create First Screen</span>
+                </button>
+              )}
             </div>
           )}
         </div>

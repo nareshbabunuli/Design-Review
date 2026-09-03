@@ -136,16 +136,8 @@ function ImageUpload({
                 onClick={() => onPreview?.(image, title)}
                 className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 font-medium cursor-pointer"
               >
-                <Maximize2 className="h-3.5 w-3.5" /> Open preview
+                <Maximize2 className="h-3.5 w-3.5" /> Preview
               </button>
-              <a
-                href={image}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
-              >
-                <ExternalLink className="h-3.5 w-3.5" /> Full tab
-              </a>
             </div>
           )}
         </div>
@@ -196,15 +188,6 @@ function ImageUpload({
             >
               <Maximize2 className="h-3.5 w-3.5" /> Preview
             </button>
-            <a
-              href={image}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium"
-            >
-              <ExternalLink className="h-3.5 w-3.5" /> Full tab
-            </a>
             <button
               type="button"
               onClick={(e) => {
@@ -252,46 +235,19 @@ function ImageUpload({
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */
             <img src={image} alt={title} className="h-full w-full object-contain p-2 drop-shadow-sm group-hover:scale-[1.01] transition-transform" />}
-            
-            {/* Double click quick hint */}
-            <div className="absolute top-2.5 right-2.5 z-20 bg-black/60 text-white text-[10px] font-medium px-2 py-0.5 rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none flex items-center gap-1">
-              <Maximize2 className="h-3 w-3" /> Double-click to expand
-            </div>
 
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-4">
-              <span className="text-white text-xs font-semibold bg-blue-600/90 px-3 py-1 rounded-full backdrop-blur-sm shadow">
-                {isUploading ? "Uploading image..." : "Double-click to open full image preview"}
-              </span>
-              <div className="flex items-center gap-2 mt-1">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onPreview?.(image, title)
-                  }}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-500 shadow transition-all active:scale-95 flex items-center gap-1"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" />
-                  <span>Open Preview</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClipboardButtonClick}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-white text-slate-900 hover:bg-slate-100 shadow transition-all active:scale-95"
-                >
-                  Paste (Ctrl+V)
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    fileInputRef.current?.click()
-                  }}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 text-white hover:bg-slate-700 border border-white/20 shadow transition-all active:scale-95"
-                >
-                  Choose file
-                </button>
-              </div>
+            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-4">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  fileInputRef.current?.click()
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/95 hover:bg-white text-slate-900 shadow-lg backdrop-blur-sm transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Upload className="h-3.5 w-3.5 text-blue-600" />
+                <span>Choose file</span>
+              </button>
             </div>
           </>
         ) : (
@@ -615,15 +571,6 @@ export function WorkflowEditor({
               {workflow.isDone ? "Reopen Workflow" : "Complete Workflow"}
             </button>
           )}
-
-          {/* Presentation Button - Always accessible to both Team and Client */}
-          <button
-            onClick={onShowReport}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 hover:shadow transition-all cursor-pointer"
-          >
-            <FileText className="h-4 w-4" />
-            View Presentation
-          </button>
         </div>
       </div>
 
