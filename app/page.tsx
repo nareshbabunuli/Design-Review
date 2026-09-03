@@ -35,7 +35,15 @@ import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { LandingPage } from "@/components/design-review/landing-page"
 import { SharePermissionsModal } from "@/components/design-review/share-permissions-modal"
 
-type ProjectRow = { id: string; title: string; is_expanded: boolean; user_id: string; figma_url?: string | null }
+type ProjectRow = {
+  id: string
+  title: string
+  is_expanded: boolean
+  user_id: string
+  figma_url?: string | null
+  workflow_order?: string[] | null
+  is_order_locked?: boolean | null
+}
 type WorkflowRow = {
   id: string
   project_id: string
@@ -48,6 +56,7 @@ type WorkflowRow = {
   client_task_done: boolean
   reason: string
   is_done: boolean
+  created_at?: string
 }
 type CommentRow = {
   id: string
@@ -72,25 +81,33 @@ type RevisionRow = {
   created_at: string
 }
 
-const sortWorkflowsBySavedOrder = (projectId: string, workflows: Workflow[]): Workflow[] => {
-  if (typeof window === "undefined") return workflows
-  try {
-    const saved = localStorage.getItem(`wf_order_${projectId}`)
-    if (saved) {
-      const orderIds: string[] = JSON.parse(saved)
-      if (Array.isArray(orderIds) && orderIds.length > 0) {
-        return [...workflows].sort((a, b) => {
-          const idxA = orderIds.indexOf(a.id)
-          const idxB = orderIds.indexOf(b.id)
-          if (idxA === -1 && idxB === -1) return 0
-          if (idxA === -1) return 1
-          if (idxB === -1) return -1
-          return idxA - idxB
-        })
+const sortWorkflowsByOrder = (
+  projectId: string,
+  workflows: Workflow[],
+  dbOrder?: string[] | null
+): Workflow[] => {
+  let orderIds: string[] | null = null
+  if (Array.isArray(dbOrder) && dbOrder.length > 0) {
+    orderIds = dbOrder
+  } else if (typeof window !== "undefined") {
+    try {
+      const saved = localStorage.getItem(`wf_order_${projectId}`)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) orderIds = parsed
       }
-    }
-  } catch (e) {
-    // Ignore JSON errors
+    } catch (e) {}
+  }
+
+  if (orderIds && orderIds.length > 0) {
+    return [...workflows].sort((a, b) => {
+      const idxA = orderIds!.indexOf(a.id)
+      const idxB = orderIds!.indexOf(b.id)
+      if (idxA === -1 && idxB === -1) return 0
+      if (idxA === -1) return 1
+      if (idxB === -1) return -1
+      return idxA - idxB
+    })
   }
   return workflows
 }
@@ -173,7 +190,9 @@ const mapData = (
       isExpanded: p.is_expanded,
       userId: p.user_id,
       figmaUrl: p.figma_url || null,
-      workflows: sortWorkflowsBySavedOrder(p.id, pWorkflows),
+      workflowOrder: p.workflow_order || null,
+      isOrderLocked: Boolean(p.is_order_locked),
+      workflows: sortWorkflowsByOrder(p.id, pWorkflows, p.workflow_order),
     }
   })
 
@@ -303,7 +322,7 @@ export default function Page() {
     try {
       const { data: ps, error: pError } = await supabase
         .from("projects")
-        .select("id,title,is_expanded,user_id,figma_url")
+        .select("id,title,is_expanded,user_id,figma_url,workflow_order,is_order_locked")
         .order("created_at", { ascending: true })
 
       if (pError) {
@@ -316,8 +335,9 @@ export default function Page() {
       const [{ data: ws }, { data: cs }, { data: revs }] = await Promise.all([
         supabase
           .from("workflows")
-          .select("id,project_id,title,design_a,design_b,figma_url,our_notes,client_message,client_task_done,reason,is_done")
-          .in("project_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]),
+          .select("id,project_id,title,design_a,design_b,figma_url,our_notes,client_message,client_task_done,reason,is_done,created_at")
+          .in("project_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
+          .order("created_at", { ascending: true }),
         supabase
           .from("workflow_comments")
           .select("id,workflow_id,author_id,body,reason,created_at"),
@@ -892,6 +912,78 @@ export default function Page() {
     }
   }
 
+  // Handle workflow screen reordering with database persistence
+  const handleReorderWorkflows = async (projectId: string, sourceIndex: number, destinationIndex: number) => {
+    const targetP = projects.find((p) => p.id === projectId)
+    if (targetP?.isOrderLocked) {
+      alert("Screen ordering is locked for this project. Please unlock order first to rearrange.")
+      return
+    }
+
+    let newOrderIds: string[] = []
+    update((xs) =>
+      xs.map((p) => {
+        if (p.id !== projectId) return p
+        const updated = [...p.workflows]
+        const [moved] = updated.splice(sourceIndex, 1)
+        updated.splice(destinationIndex, 0, moved)
+        newOrderIds = updated.map((w) => w.id)
+        try {
+          localStorage.setItem(`wf_order_${projectId}`, JSON.stringify(newOrderIds))
+        } catch (e) {}
+        return { ...p, workflowOrder: newOrderIds, workflows: updated }
+      })
+    )
+
+    if (supabase && newOrderIds.length > 0) {
+      try {
+        await supabase.rpc("update_project_workflow_order", {
+          p_project_id: projectId,
+          p_workflow_order: newOrderIds,
+        })
+      } catch (err) {
+        console.error("Error saving workflow order to database:", err)
+      }
+    }
+  }
+
+  const handleMoveWorkflow = (projectId: string, workflowId: string, direction: "up" | "down", e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const targetP = projects.find((p) => p.id === projectId)
+    if (!targetP) return
+    if (targetP.isOrderLocked) {
+      alert("Screen ordering is locked for this project. Please unlock order first to rearrange.")
+      return
+    }
+    const idx = targetP.workflows.findIndex((w) => w.id === workflowId)
+    if (idx === -1) return
+    const destIdx = direction === "up" ? idx - 1 : idx + 1
+    if (destIdx < 0 || destIdx >= targetP.workflows.length) return
+    handleReorderWorkflows(projectId, idx, destIdx)
+  }
+
+  const handleToggleOrderLock = async (projectId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const targetP = projects.find((p) => p.id === projectId)
+    if (!targetP) return
+    const nextLocked = !targetP.isOrderLocked
+
+    update((xs) =>
+      xs.map((p) => (p.id === projectId ? { ...p, isOrderLocked: nextLocked } : p))
+    )
+
+    if (supabase) {
+      try {
+        await supabase.rpc("set_project_order_lock", {
+          p_project_id: projectId,
+          p_is_locked: nextLocked,
+        })
+      } catch (err) {
+        console.error("Error toggling order lock in database:", err)
+      }
+    }
+  }
+
   const updateField = (field: keyof Workflow, value: string | boolean | null) => {
     if (activeWorkflow?.id) {
       updateWorkflowField(activeWorkflow.id, field, value)
@@ -1222,22 +1314,14 @@ export default function Page() {
             if (activeWorkflowId === workflowId) setActiveWorkflowId(null)
             await supabase.from("workflows").delete().eq("id", workflowId)
           }}
-          onReorderWorkflows={(projectId: string, sourceIndex: number, destinationIndex: number) => {
-            update((xs) =>
-              xs.map((p) => {
-                if (p.id !== projectId) return p
-                const updated = [...p.workflows]
-                const [moved] = updated.splice(sourceIndex, 1)
-                updated.splice(destinationIndex, 0, moved)
-                try {
-                  localStorage.setItem(`wf_order_${projectId}`, JSON.stringify(updated.map((w) => w.id)))
-                } catch (e) {
-                  // Ignore
-                }
-                return { ...p, workflows: updated }
-              })
-            )
-          }}
+          onMoveWorkflowUp={(projectId: string, workflowId: string, e: React.MouseEvent) =>
+            handleMoveWorkflow(projectId, workflowId, "up", e)
+          }
+          onMoveWorkflowDown={(projectId: string, workflowId: string, e: React.MouseEvent) =>
+            handleMoveWorkflow(projectId, workflowId, "down", e)
+          }
+          onReorderWorkflows={handleReorderWorkflows}
+          onToggleOrderLock={handleToggleOrderLock}
           onReorderProjects={(sourceIndex: number, destinationIndex: number) => {
             update((prev) => {
               const updated = [...prev]

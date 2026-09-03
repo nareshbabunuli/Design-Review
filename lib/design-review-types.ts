@@ -43,6 +43,8 @@ export type Project = {
   isExpanded: boolean
   userId?: string
   figmaUrl?: string | null
+  workflowOrder?: string[] | null
+  isOrderLocked?: boolean
   workflows: Workflow[]
 }
 

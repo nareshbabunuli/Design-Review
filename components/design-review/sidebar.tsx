@@ -13,6 +13,8 @@ import {
   ChevronUp,
   GripVertical,
   LogOut,
+  Lock,
+  Unlock,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -37,6 +39,7 @@ type SidebarProps = {
   onMoveWorkflowUp?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onMoveWorkflowDown?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onReorderWorkflows?: (projectId: string, sourceIndex: number, destinationIndex: number) => void
+  onToggleOrderLock?: (projectId: string, e?: React.MouseEvent) => void
   onMoveProjectUp?: (projectId: string, e: React.MouseEvent) => void
   onMoveProjectDown?: (projectId: string, e: React.MouseEvent) => void
   onReorderProjects?: (sourceIndex: number, destinationIndex: number) => void
@@ -102,6 +105,7 @@ export function Sidebar({
   onMoveWorkflowUp,
   onMoveWorkflowDown,
   onReorderWorkflows,
+  onToggleOrderLock,
   onMoveProjectUp,
   onMoveProjectDown,
   onReorderProjects,
@@ -278,6 +282,25 @@ export function Sidebar({
                   >
                     <Edit2 className="h-3.5 w-3.5" />
                   </button>
+                  {isOwner && onToggleOrderLock && project.workflows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => onToggleOrderLock(project.id, e)}
+                      className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+                        project.isOrderLocked
+                          ? "bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-800"
+                          : "hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      }`}
+                      title={
+                        project.isOrderLocked
+                          ? "Screen order is LOCKED. Click to unlock and reorder."
+                          : "Screen order is UNLOCKED. Click to lock order."
+                      }
+                      aria-label={project.isOrderLocked ? "Unlock screen order" : "Lock screen order"}
+                    >
+                      {project.isOrderLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
                   {(projects.length > 1 || (userId && project.userId !== userId)) && (
                     project.userId === userId || !project.userId ? (
                       <button
@@ -308,6 +331,41 @@ export function Sidebar({
             {/* Workflows (screens / files) */}
             {project.isExpanded && (
               <div className="ml-5 pl-2 border-l-2 border-slate-100 dark:border-slate-800 mt-1 space-y-0.5">
+                {project.workflows.length > 1 && (
+                  <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium select-none">
+                    <span className="uppercase tracking-wider font-semibold text-[9px] text-slate-400 dark:text-slate-500">
+                      Screens ({project.workflows.length})
+                    </span>
+                    {isOwner && onToggleOrderLock && (
+                      <button
+                        type="button"
+                        onClick={(e) => onToggleOrderLock(project.id, e)}
+                        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
+                          project.isOrderLocked
+                            ? "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80"
+                            : "text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        }`}
+                        title={
+                          project.isOrderLocked
+                            ? "Screens order is locked. Click to unlock and rearrange."
+                            : "Click to lock current screens order."
+                        }
+                      >
+                        {project.isOrderLocked ? (
+                          <>
+                            <Lock className="h-2.5 w-2.5 text-amber-500" />
+                            <span>Order Locked</span>
+                          </>
+                        ) : (
+                          <>
+                            <Unlock className="h-2.5 w-2.5" />
+                            <span>Lock Order</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {project.workflows.map((workflow, wIdx) => {
                   const isDraggingThis =
                     draggedWorkflow?.projectId === project.id && draggedWorkflow?.index === wIdx
@@ -319,15 +377,15 @@ export function Sidebar({
                   return (
                     <div
                       key={workflow.id}
-                      draggable={isOwner && project.workflows.length > 1}
+                      draggable={!project.isOrderLocked && isOwner && project.workflows.length > 1}
                       onDragStart={(e) => {
-                        if (isOwner && project.workflows.length > 1) {
+                        if (!project.isOrderLocked && isOwner && project.workflows.length > 1) {
                           setDraggedWorkflow({ projectId: project.id, index: wIdx })
                           e.dataTransfer.effectAllowed = "move"
                         }
                       }}
                       onDragOver={(e) => {
-                        if (draggedWorkflow && draggedWorkflow.projectId === project.id) {
+                        if (!project.isOrderLocked && draggedWorkflow && draggedWorkflow.projectId === project.id) {
                           e.preventDefault()
                           e.stopPropagation()
                           setDragOverWorkflow({ projectId: project.id, index: wIdx })
@@ -343,6 +401,7 @@ export function Sidebar({
                       }}
                       onDrop={(e) => {
                         if (
+                          !project.isOrderLocked &&
                           draggedWorkflow &&
                           draggedWorkflow.projectId === project.id &&
                           onReorderWorkflows
@@ -370,7 +429,7 @@ export function Sidebar({
                       }`}
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
-                        {isOwner && project.workflows.length > 1 && (
+                        {isOwner && project.workflows.length > 1 && !project.isOrderLocked && (
                           <span
                             className="text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors"
                             title="Drag to reorder screen"
@@ -407,43 +466,46 @@ export function Sidebar({
 
                       {isOwner && (
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
-                          {/* Move Up Button */}
-                          <button
-                            type="button"
-                            disabled={wIdx === 0}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onMoveWorkflowUp?.(project.id, workflow.id, e)
-                            }}
-                            className={`p-1 rounded-md text-slate-400 ${
-                              wIdx === 0
-                                ? "opacity-25 cursor-not-allowed"
-                                : "hover:bg-blue-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
-                            }`}
-                            title="Move up"
-                            aria-label="Move workflow up"
-                          >
-                            <ChevronUp className="h-3.5 w-3.5" />
-                          </button>
+                          {/* Move Up/Down Buttons (Only available when unlocked) */}
+                          {!project.isOrderLocked && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={wIdx === 0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onMoveWorkflowUp?.(project.id, workflow.id, e)
+                                }}
+                                className={`p-1 rounded-md text-slate-400 ${
+                                  wIdx === 0
+                                    ? "opacity-25 cursor-not-allowed"
+                                    : "hover:bg-blue-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                                }`}
+                                title="Move up"
+                                aria-label="Move workflow up"
+                              >
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              </button>
 
-                          {/* Move Down Button */}
-                          <button
-                            type="button"
-                            disabled={wIdx === project.workflows.length - 1}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onMoveWorkflowDown?.(project.id, workflow.id, e)
-                            }}
-                            className={`p-1 rounded-md text-slate-400 ${
-                              wIdx === project.workflows.length - 1
-                                ? "opacity-25 cursor-not-allowed"
-                                : "hover:bg-blue-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
-                            }`}
-                            title="Move down"
-                            aria-label="Move workflow down"
-                          >
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          </button>
+                              <button
+                                type="button"
+                                disabled={wIdx === project.workflows.length - 1}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onMoveWorkflowDown?.(project.id, workflow.id, e)
+                                }}
+                                className={`p-1 rounded-md text-slate-400 ${
+                                  wIdx === project.workflows.length - 1
+                                    ? "opacity-25 cursor-not-allowed"
+                                    : "hover:bg-blue-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                                }`}
+                                title="Move down"
+                                aria-label="Move workflow down"
+                              >
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
 
                           {/* Rename Button */}
                           <button
