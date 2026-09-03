@@ -30,6 +30,8 @@ interface ProjectDashboardProps {
   userEmail?: string | null
   userId?: string | null
   isOwner?: boolean
+  searchQuery?: string
+  onSearchChange?: (q: string) => void
   theme?: "light" | "dark"
   onToggleTheme?: () => void
   onCreateProject: () => void
@@ -46,6 +48,8 @@ export function ProjectDashboard({
   userEmail,
   userId,
   isOwner = true,
+  searchQuery: externalSearchQuery,
+  onSearchChange,
   theme = "dark",
   onToggleTheme,
   onCreateProject,
@@ -56,7 +60,16 @@ export function ProjectDashboard({
   onShareProject,
   onLogout,
 }: ProjectDashboardProps) {
-  const [searchQuery, setSearchQuery] = useState("")
+  const [internalSearchQuery, setInternalSearchQuery] = useState("")
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery
+  const handleSearchChange = (val: string) => {
+    if (onSearchChange) {
+      onSearchChange(val)
+    } else {
+      setInternalSearchQuery(val)
+    }
+  }
+
   const [activeTab, setActiveTab] = useState<"all" | "mine" | "shared">("all")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
@@ -101,100 +114,9 @@ export function ProjectDashboard({
   }
 
   return (
-    <div className="flex flex-col flex-1 h-screen overflow-y-auto bg-slate-50 dark:bg-[#18181b] text-slate-900 dark:text-slate-100 selection:bg-blue-600 selection:text-white transition-colors duration-200">
-      {/* Top Bar matching Figma */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 dark:border-zinc-800/80 bg-white/95 dark:bg-[#18181b]/95 backdrop-blur px-8 py-3.5 flex-shrink-0 transition-colors duration-200">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-md shadow-blue-500/20 overflow-hidden">
-              {/* Split-panel compare icon */}
-              <svg viewBox="0 0 32 32" fill="none" className="h-6 w-6">
-                <rect x="2" y="6" width="12" height="16" rx="2" fill="white" fillOpacity="0.95"/>
-                <rect x="3.5" y="7.5" width="9" height="2" rx="0.8" fill="#2563eb" fillOpacity="0.5"/>
-                <rect x="3.5" y="11" width="6" height="1.5" rx="0.5" fill="#2563eb" fillOpacity="0.4"/>
-                <rect x="3.5" y="14" width="8" height="1.5" rx="0.5" fill="#2563eb" fillOpacity="0.3"/>
-                <rect x="18" y="10" width="12" height="16" rx="2" fill="white" fillOpacity="0.85"/>
-                <rect x="19.5" y="11.5" width="9" height="2" rx="0.8" fill="#4f46e5" fillOpacity="0.5"/>
-                <rect x="19.5" y="15" width="6" height="1.5" rx="0.5" fill="#4f46e5" fillOpacity="0.4"/>
-                <rect x="19.5" y="18" width="8" height="1.5" rx="0.5" fill="#4f46e5" fillOpacity="0.3"/>
-              </svg>
-            </div>
-            <div>
-              <span className="text-sm font-semibold tracking-tight text-slate-900 dark:text-white block leading-tight">
-                Design Review
-              </span>
-              <span className="text-[11px] text-slate-500 dark:text-zinc-400 font-medium">Workspace Projects</span>
-            </div>
-          </div>
-
-          <div className="h-4 w-px bg-slate-200 dark:bg-zinc-800" />
-
-          {/* Search bar */}
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-zinc-400" />
-            <input
-              type="text"
-              placeholder="Search projects or files..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900/90 pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 outline-none transition-all focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-900 focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {/* Light / Dark Mode Toggle */}
-          {onToggleTheme && (
-            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-          )}
-
-          {/* Create Project Button (matching '+ Design' pill in Figma) */}
-          {(isOwner || userEmail || userId) && (
-            <button
-              type="button"
-              onClick={onCreateProject}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-600/25 transition-all active:scale-95"
-            >
-              <Plus className="h-4 w-4 stroke-[2.5]" />
-              <span>New Project</span>
-            </button>
-          )}
-
-          {/* User Profile & Logout on Header */}
-          {userEmail && (
-            <div className="flex items-center gap-3 pl-3 border-l border-slate-200 dark:border-zinc-800">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-xs font-bold text-white shadow-sm ring-1 ring-slate-300 dark:ring-zinc-700">
-                  {userEmail.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="hidden sm:flex flex-col text-left">
-                  <span className="text-xs font-medium text-slate-800 dark:text-zinc-200 leading-tight truncate max-w-[160px]">
-                    {userEmail}
-                  </span>
-                  <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-medium">
-                    {isOwner ? "Sender (Owner)" : "Viewer (Client)"}
-                  </span>
-                </div>
-              </div>
-
-              {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/90 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:border-rose-200 dark:hover:border-rose-800/60 text-slate-700 dark:text-zinc-300 hover:text-rose-600 dark:hover:text-rose-400 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
-                  title="Log out"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>Log out</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </header>
-
+    <div className="flex flex-col flex-1 min-h-0 bg-slate-50 dark:bg-[#18181b] text-slate-900 dark:text-slate-100 selection:bg-blue-600 selection:text-white transition-colors duration-200">
       {/* Main Container */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-8 space-y-8">
+      <div className="flex-1 max-w-7xl w-full mx-auto p-6 sm:p-8 space-y-8">
         {/* Figma-Style Hero Card: "Describe your idea and make it come to life" */}
         <div className="relative overflow-hidden rounded-3xl border border-zinc-800 bg-gradient-to-r from-zinc-900 via-[#1f1e29] to-[#252238] p-8 shadow-2xl">
           <div className="relative z-10 max-w-2xl space-y-3">
@@ -267,6 +189,29 @@ export function ProjectDashboard({
                 <List className="h-4 w-4" />
               </button>
             </div>
+
+            {/* Mobile search input for tiny screens where top header search is hidden */}
+            <div className="relative w-36 sm:hidden">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 dark:text-zinc-400" />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900/90 pl-8 pr-2 py-1 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 outline-none transition-all focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-900"
+              />
+            </div>
+
+            {(isOwner || userEmail || userId) && (
+              <button
+                type="button"
+                onClick={onCreateProject}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
+                <span className="hidden sm:inline">New Project</span>
+              </button>
+            )}
           </div>
         </div>
 

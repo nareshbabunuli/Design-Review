@@ -165,43 +165,22 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 10mm;
-  }
-
-  *,
-  *::before,
-  *::after {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+    margin: 12mm;
   }
 
   html,
   body {
     background: #ffffff !important;
-    color: #000000 !important;
     height: auto !important;
     min-height: auto !important;
-    max-height: none !important;
     overflow: visible !important;
     font-size: 11pt !important;
   }
 
-  /* Unconstrain wrappers so multi-page printing works seamlessly */
-  #__next,
-  [data-nextjs-scroll-focus-boundary],
-  main,
-  div {
-    overflow: visible !important;
-    height: auto !important;
-    max-height: none !important;
-  }
-
-  /* Ensure modal backdrop isn't pinned fixed to 1 page */
-  .fixed {
-    position: static !important;
-  }
-
-  /* Hide navigation, sidebar, and non-printable elements */
+  /* Hide dashboard and sidebars behind the modal — scoped */
+  body:has([data-report-modal]) main,
+  body:has([data-report-modal]) aside,
+  body:has([data-report-modal]) nav,
   aside,
   nav,
   header,
@@ -210,31 +189,54 @@
     display: none !important;
   }
 
+  #report-modal-root {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    display: block !important;
+  }
+
+  /* Force backgrounds and graphics to actually print */
+  #report-modal-root,
+  #report-modal-root * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
   /* Page breaks for presentation slides */
   .print-page-break {
-    page-break-before: always !important;
     break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  #report-modal-root section:first-of-type {
+    break-before: auto !important;
+    page-break-before: auto !important;
   }
 
   .print-avoid-break {
-    page-break-inside: avoid !important;
     break-inside: avoid !important;
-  }
-
-  section {
     page-break-inside: avoid !important;
-    break-inside: avoid !important;
-    height: auto !important;
-    max-height: none !important;
-    min-height: 0 !important;
-    overflow: visible !important;
   }
 
   img {
-    page-break-inside: avoid !important;
     break-inside: avoid !important;
+    page-break-inside: avoid !important;
     max-width: 100% !important;
   }
+}
+
+/* Force light theme on print */
+.print-force-light.dark,
+.print-force-light.dark * {
+  --tw-bg-opacity: 1;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
 }
 
 /* Custom sleek scrollbar */

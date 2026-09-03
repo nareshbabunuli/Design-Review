@@ -224,6 +224,37 @@ export function ReportModal({
     }
   }, [project.id, user, isOwner])
 
+  // Force light theme and clean styles on print (toggles print-force-light class)
+  useEffect(() => {
+    const beforePrint = () => {
+      document.documentElement.classList.add("print-force-light")
+    }
+    const afterPrint = () => {
+      document.documentElement.classList.remove("print-force-light")
+    }
+    window.addEventListener("beforeprint", beforePrint)
+    window.addEventListener("afterprint", afterPrint)
+    return () => {
+      window.removeEventListener("beforeprint", beforePrint)
+      window.removeEventListener("afterprint", afterPrint)
+    }
+  }, [])
+
+  // Preload all images before opening print dialog to avoid missing/broken frames
+  const handlePrint = async () => {
+    const images = Array.from(document.querySelectorAll("#report-modal-root img")) as HTMLImageElement[]
+    await Promise.all(
+      images.map((img) => {
+        if (img.complete) return Promise.resolve()
+        return new Promise((resolve) => {
+          img.onload = resolve
+          img.onerror = resolve
+        })
+      })
+    )
+    window.print()
+  }
+
   const startDrawing = (
     e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
   ) => {
@@ -489,46 +520,48 @@ export function ReportModal({
   }, [lightbox, closeLightbox, navigateImage])
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-200 dark:bg-slate-950 overflow-y-auto print:static print:bg-white print:overflow-visible print:w-full print:h-auto print:block transition-colors">
+    <div
+      id="report-modal-root"
+      data-report-modal="true"
+      className="fixed inset-0 z-50 flex flex-col bg-slate-200 dark:bg-slate-950 overflow-y-auto print:static print:overflow-visible print:w-full print:h-auto print:block transition-colors"
+    >
       {/* Sticky control bar (hidden in print) */}
-      <div className="sticky top-0 z-40 flex justify-between items-center p-4 bg-slate-800 dark:bg-slate-900 text-white border-b border-slate-700 dark:border-slate-800 print:hidden shadow-md transition-colors">
-        <div className="flex items-center gap-4">
-          <h2 className="text-xl font-bold">Project Presentation: {project.title}</h2>
-          <span className="bg-slate-700 dark:bg-slate-800 px-3 py-1 rounded-full text-sm">
-            {project.workflows.length} Workflows
+      <div className="sticky top-0 z-40 flex items-center justify-between gap-4 px-4 sm:px-6 py-3.5 bg-slate-800 dark:bg-slate-900 text-white border-b border-slate-700 dark:border-slate-800 print:hidden shadow-md transition-colors">
+        <div className="flex items-center gap-3 min-w-0 shrink">
+          <h2 className="text-base sm:text-lg lg:text-xl font-bold truncate max-w-[200px] sm:max-w-[360px] lg:max-w-[520px]">Project Presentation: {project.title}</h2>
+          <span className="bg-slate-700 dark:bg-slate-800 px-3 py-1 rounded-full text-sm font-medium whitespace-nowrap shrink-0">
+            {project.workflows.length} Screens
           </span>
           {isOwner ? (
-            <span className="bg-blue-900/80 text-blue-200 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+            <span className="hidden sm:inline-flex items-center gap-1.5 bg-blue-900/80 text-blue-200 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0">
               <ShieldCheck className="h-3.5 w-3.5 text-blue-300" />
               Sender (Project Owner)
             </span>
           ) : (
-            <span className="bg-purple-900/80 text-purple-200 border border-purple-500/40 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+            <span className="hidden sm:inline-flex items-center gap-1.5 bg-purple-900/80 text-purple-200 border border-purple-500/40 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0">
               <Eye className="h-3.5 w-3.5 text-purple-300" />
               Viewer (Review & Comment)
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          {/* Light / Dark Mode Toggle */}
+        <div className="flex items-center gap-3 shrink-0">
           {onToggleTheme && (
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           )}
 
           <button
-            onClick={() => window.print()}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+            onClick={handlePrint}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap"
           >
             <FileText className="h-4 w-4" /> Print / PDF
           </button>
 
-          {/* User Profile & Logout on Presentation Header */}
           {user && (
-            <div className="flex items-center gap-2.5 pl-3 border-l border-slate-700">
+            <div className="hidden md:flex items-center gap-2.5 pl-3 border-l border-slate-700">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white shadow-sm ring-1 ring-slate-600">
                 {user.email ? user.email.slice(0, 2).toUpperCase() : "CL"}
               </div>
-              <div className="hidden md:flex flex-col text-left">
+              <div className="flex flex-col text-left">
                 <span className="text-xs font-medium text-slate-200 leading-tight max-w-[140px] truncate">
                   {user.email}
                 </span>
@@ -553,7 +586,7 @@ export function ReportModal({
           {onClose && (
             <button
               onClick={onClose}
-              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
               title="Close Presentation View"
             >
               <X className="h-4 w-4" /> Close
@@ -565,317 +598,31 @@ export function ReportModal({
       {/* Slides */}
       <div className="flex flex-col items-center gap-8 py-8 print:py-0 print:gap-0 print:block w-full px-4 print:px-0">
         {/* Title slide */}
-        <section className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-avoid-break print:block transition-colors space-y-8">
-          {/* Header Title */}
-          <div className="text-center space-y-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
-              <FolderKanban className="h-3.5 w-3.5" />
-              <span>Project Review &amp; Sign-off Report</span>
-            </div>
-            <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-slate-900 dark:text-white tracking-tight text-balance">
+        <section className="flex flex-col items-center justify-center bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-transparent dark:border-slate-800 p-16 w-full max-w-[1280px] min-h-[500px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:py-16 print:p-8 print:rounded-none print-page-break print-avoid-break print:flex print:items-center print:justify-center transition-colors">
+          <div className="text-center space-y-4">
+            <h1 className="text-5xl md:text-6xl font-bold text-slate-900 dark:text-white mb-6 tracking-tight text-balance">
               Design Review Report
             </h1>
-            <p className="text-lg sm:text-xl text-slate-500 dark:text-slate-400 font-normal">
-              Completed Workflows, Figma Verification, and Change Logs
+            <p className="text-2xl text-slate-500 dark:text-slate-400 font-light mb-3">
+              Completed Workflows &amp; Final Approvals
             </p>
-            <p className="text-xl sm:text-2xl text-blue-600 dark:text-blue-400 font-bold pt-1">
+            <p className="text-xl text-blue-600 dark:text-blue-400 font-semibold">
               Project: {project.title}
             </p>
-          </div>
-
-          {/* Central Project Figma URL at the Top */}
-          <div className="w-full rounded-2xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/80 p-4 sm:p-5 flex flex-col gap-3 transition-colors shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-600 text-white shrink-0 shadow-sm">
-                  <Link2 className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold uppercase tracking-wider text-purple-900 dark:text-purple-200">
-                      Project Figma Board / Prototype URL
-                    </span>
-                    {savedProjectFigmaUrl && (
-                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
-                        <Check className="h-2.5 w-2.5" />
-                        <span>Saved!</span>
-                      </span>
-                    )}
-                  </div>
-                  {projectFigmaUrl ? (
-                    <div className="flex items-center gap-2 pt-1">
-                      <a
-                        href={projectFigmaUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs sm:text-sm font-mono text-blue-600 dark:text-blue-400 hover:underline truncate max-w-[320px] sm:max-w-[580px] flex items-center gap-1.5 font-medium"
-                        title={projectFigmaUrl}
-                      >
-                        <span className="truncate">{projectFigmaUrl}</span>
-                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-                      </a>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 pt-0.5">
-                      No Figma board or prototype URL linked yet for this project.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 shrink-0 print:hidden self-end sm:self-auto">
-                {projectFigmaUrl && (
-                  <>
-                    <a
-                      href={projectFigmaUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-1.5 text-xs font-medium rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-purple-600 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
-                      title="Open Figma File in New Tab"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      <span>Open Figma</span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={handleCopyProjectFigmaUrl}
-                      className="px-3 py-1.5 text-xs font-medium rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-purple-600 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
-                      title="Copy Figma Link"
-                    >
-                      {isCopiedProjectFigmaUrl ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-500" />
-                          <span className="text-emerald-600 font-semibold">Copied!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          <span>Copy Link</span>
-                        </>
-                      )}
-                    </button>
-                  </>
-                )}
-                {effectiveCanEdit && !isEditingProjectFigmaUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsEditingProjectFigmaUrl(true)
-                      setProjectFigmaUrlDraft(projectFigmaUrl)
-                    }}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-purple-600/20"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    <span>{projectFigmaUrl ? "Update Figma URL" : "+ Add Figma URL"}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Inline Editor Box if editing */}
-            {isEditingProjectFigmaUrl && (
-              <div className="pt-2.5 border-t border-purple-200 dark:border-purple-800/80 flex flex-col sm:flex-row items-center gap-2 print:hidden">
-                <input
-                  type="url"
-                  autoFocus
-                  value={projectFigmaUrlDraft}
-                  onChange={(e) => setProjectFigmaUrlDraft(e.target.value)}
-                  placeholder="Paste Figma file, frame, or prototype link (https://figma.com/...)"
-                  className="flex-1 w-full text-xs font-mono rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault()
-                      handleSaveProjectFigmaUrl()
-                    } else if (e.key === "Escape") {
-                      setIsEditingProjectFigmaUrl(false)
-                    }
-                  }}
-                />
-                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                  <button
-                    type="button"
-                    onClick={handleSaveProjectFigmaUrl}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 shadow-sm transition-colors cursor-pointer"
-                  >
-                    Save URL
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingProjectFigmaUrl(false)}
-                    className="px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                </div>
+            {projectFigmaUrl && (
+              <div className="mt-6 flex items-center justify-center gap-2 print:mt-4">
+                <a
+                  href={projectFigmaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-sm font-medium hover:underline shadow-xs"
+                >
+                  <Link2 className="h-4 w-4" />
+                  <span className="truncate max-w-[400px]">Figma: {projectFigmaUrl}</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
               </div>
             )}
-          </div>
-
-          {/* Executive Metrics Dashboard */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full">
-            {/* Total Workflows */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-                <span className="text-xs font-semibold uppercase tracking-wider">Workflows</span>
-                <FolderKanban className="h-4 w-4 text-blue-500" />
-              </div>
-              <div className="pt-2">
-                <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
-                  {totalWorkflows}
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total Review Items</div>
-              </div>
-            </div>
-
-            {/* Verified vs Not Verified */}
-            <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400">
-                <span className="text-xs font-semibold uppercase tracking-wider">Verified</span>
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              </div>
-              <div className="pt-2">
-                <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 dark:text-emerald-300">
-                  {verifiedCount}
-                  <span className="text-sm font-normal text-slate-500 dark:text-slate-400"> / {totalWorkflows}</span>
-                </div>
-                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                  {verificationRate}% Accepted
-                </div>
-              </div>
-            </div>
-
-            {/* Not Verified */}
-            <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-amber-700 dark:text-amber-400">
-                <span className="text-xs font-semibold uppercase tracking-wider">Not Verified</span>
-                <Clock className="h-4 w-4 text-amber-500" />
-              </div>
-              <div className="pt-2">
-                <div className="text-2xl sm:text-3xl font-extrabold text-amber-700 dark:text-amber-300">
-                  {notVerifiedCount}
-                </div>
-                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-                  {notVerifiedCount === 0 ? "All Items Approved" : "Pending Sign-off"}
-                </div>
-              </div>
-            </div>
-
-            {/* Figma URLs & Exports */}
-            <div className="p-4 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/60 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-purple-700 dark:text-purple-400">
-                <span className="text-xs font-semibold uppercase tracking-wider">Figma URLs / Designs</span>
-                <Link2 className="h-4 w-4 text-purple-500" />
-              </div>
-              <div className="pt-2">
-                <div className="text-2xl sm:text-3xl font-extrabold text-purple-700 dark:text-purple-300">
-                  {figmaCount}
-                </div>
-                <div className="text-xs text-purple-600 dark:text-purple-400 font-medium">
-                  {reasonCount} Changes Explained
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="w-full space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
-              <span>Overall Review Verification Progress</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold">{verificationRate}%</span>
-            </div>
-            <div className="w-full h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 transition-all duration-500"
-                style={{ width: `${verificationRate}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Executive Summary Table: Reason of Changes, Figma, and Verification */}
-          <div className="w-full space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider">
-                Workflows, Figma Assets &amp; Reasons for Changes
-              </h3>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                {verifiedCount} of {totalWorkflows} verified
-              </span>
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-              <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
-                <thead className="bg-slate-50 dark:bg-slate-950/80 text-slate-500 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <th className="px-3.5 py-2.5 w-12 text-center">#</th>
-                    <th className="px-3.5 py-2.5">Workflow Name</th>
-                    <th className="px-3.5 py-2.5">Figma Design / URL</th>
-                    <th className="px-3.5 py-2.5">Reason of Changes</th>
-                    <th className="px-3.5 py-2.5 text-right">Verification Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 bg-white dark:bg-slate-900/40">
-                  {project.workflows.map((wf, idx) => {
-                    const figmaUrls = extractFigmaUrls(wf)
-                    const hasFigma = Boolean(wf.designA) || figmaUrls.length > 0
-                    const changeReason = wf.reason || (wf.revisions && wf.revisions.length > 0 ? wf.revisions[0].reason : "")
-
-                    return (
-                      <tr key={wf.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors">
-                        <td className="px-3.5 py-3 text-center font-mono text-slate-400">{idx + 1}</td>
-                        <td className="px-3.5 py-3 font-semibold text-slate-900 dark:text-white max-w-[200px] truncate">
-                          {wf.title}
-                        </td>
-                        <td className="px-3.5 py-3 max-w-[240px]">
-                          {wf.designA ? (
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                <Link2 className="h-3 w-3" />
-                                <span>Design Uploaded</span>
-                              </span>
-                            </div>
-                          ) : projectFigmaUrl ? (
-                            <a
-                              href={projectFigmaUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium"
-                            >
-                              <span>Project Board</span>
-                              <ExternalLink className="h-2.5 w-2.5" />
-                            </a>
-                          ) : (
-                            <span className="text-slate-400 italic text-[11px]">No asset</span>
-                          )}
-                        </td>
-                        <td className="px-3.5 py-3 max-w-[280px]">
-                          {changeReason ? (
-                            <p className="line-clamp-2 text-slate-700 dark:text-slate-300 text-[11px]" title={changeReason}>
-                              {changeReason}
-                            </p>
-                          ) : (
-                            <span className="text-slate-400 italic text-[11px]">Initial design / No changes</span>
-                          )}
-                        </td>
-                        <td className="px-3.5 py-3 text-right whitespace-nowrap">
-                          {wf.clientTaskDone ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                              <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                              <span>Verified</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
-                              <Clock className="h-3 w-3 text-amber-600 dark:text-amber-400" />
-                              <span>Not Verified</span>
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
           </div>
         </section>
 
@@ -885,25 +632,12 @@ export function ReportModal({
             key={workflow.id}
             className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-xl dark:shadow-2xl border border-transparent dark:border-slate-800 p-8 md:p-12 w-full max-w-[1280px] min-h-[720px] shrink-0 relative print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-page-break print-avoid-break print:block transition-colors"
           >
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-8 pb-4 border-b border-slate-200 dark:border-slate-800 gap-3 print:mb-4 print:pb-2">
-              <div className="flex items-center gap-3 flex-wrap">
-                <FolderKanban className="text-blue-500 h-7 w-7 md:h-9 md:w-9 shrink-0" />
-                <h2 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-white print:text-xl">
-                  Workflow: {workflow.title}
-                </h2>
-                {workflow.clientTaskDone ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                    <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span>Verified &amp; Accepted</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
-                    <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                    <span>Not Verified (Pending)</span>
-                  </span>
-                )}
-              </div>
-              <span className="text-xs md:text-sm font-medium text-slate-400 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full self-start sm:self-auto">
+            <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-200 dark:border-slate-800 print:mb-4 print:pb-2">
+              <h2 className="text-3xl md:text-4xl font-bold text-slate-800 dark:text-white flex items-center gap-3 print:text-2xl">
+                <FolderKanban className="text-blue-500 h-8 w-8 md:h-10 md:w-10 shrink-0 print:h-6 print:w-6" />
+                <span>Workflow: {workflow.title}</span>
+              </h2>
+              <span className="text-xs md:text-sm font-medium text-slate-400 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-full print:text-xs">
                 Slide {wfIdx + 1} of {project.workflows.length}
               </span>
             </div>
@@ -912,27 +646,12 @@ export function ReportModal({
               {/* Image comparison grid */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full print:grid-cols-2 print:gap-4">
                 {/* Figma design */}
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3 print:gap-2">
                   <div className="flex justify-between items-center">
+                    <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200 print:text-base">
+                      Figma
+                    </span>
                     <div className="flex items-center gap-2">
-                      <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200">
-                        Figma
-                      </span>
-                      {projectFigmaUrl && (
-                        <a
-                          href={projectFigmaUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2.5 py-0.5 rounded-full flex items-center gap-1 hover:underline print:hidden shadow-xs"
-                          title="Open Project Figma Board"
-                        >
-                          <Link2 className="h-3 w-3" />
-                          <span>Figma Board</span>
-                          <ExternalLink className="h-2.5 w-2.5" />
-                        </a>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
                       {workflow.designA && (
                         <button
                           onClick={() =>
@@ -944,13 +663,13 @@ export function ReportModal({
                               "designA"
                             )
                           }
-                          className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:text-blue-700 text-xs md:text-sm font-medium bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 px-2.5 py-1 rounded-full transition-colors print:hidden"
+                          className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:text-blue-700 text-xs md:text-sm font-medium bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 px-2.5 py-1 rounded-full transition-colors print:hidden cursor-pointer"
                           title="View Full Image"
                         >
                           <Eye className="h-3.5 w-3.5" /> View Full Image
                         </button>
                       )}
-                      <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400 text-xs font-medium bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
+                      <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400 text-xs font-medium bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full print:hidden">
                         <AlertCircle className="h-3.5 w-3.5" /> Read-only
                       </span>
                     </div>
@@ -969,7 +688,7 @@ export function ReportModal({
                         )
                       }
                     }}
-                    className={`h-[420px] md:h-[480px] w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-900/[0.03] dark:bg-slate-950/80 flex items-center justify-center relative group overflow-hidden p-3 transition-all ${
+                    className={`h-[420px] md:h-[480px] print:h-[350px] w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-900/[0.03] dark:bg-slate-950/80 flex items-center justify-center relative group overflow-hidden p-3 print:p-1.5 transition-all ${
                       workflow.designA ? "cursor-pointer hover:border-blue-400 hover:shadow-md" : ""
                     }`}
                   >
@@ -995,83 +714,29 @@ export function ReportModal({
                     )}
                   </div>
 
-                  {/* Our Notes (Developer notes form) */}
-                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl p-5 flex-1 flex flex-col">
-                    <div className="flex justify-between items-center mb-2 text-blue-900 dark:text-blue-200 font-bold text-base md:text-lg">
+                  {/* Our Notes */}
+                  <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl p-5 print:p-3 flex-1 flex flex-col">
+                    <div className="flex justify-between items-center mb-2 text-blue-900 dark:text-blue-200 font-bold text-base md:text-lg print:text-sm">
                       <div className="flex items-center gap-2">
-                        <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                        <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400 print:h-4 print:w-4" />
                         <span>Our Notes</span>
                       </div>
-                      {isOwner && onUpdateWorkflowField && (
-                        <span className="text-xs font-semibold bg-blue-100 dark:bg-blue-900/70 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-700 px-2 py-0.5 rounded-full print:hidden">
-                          Developer Form
-                        </span>
-                      )}
                     </div>
-                    {isOwner && onUpdateWorkflowField ? (
-                      <>
-                        <textarea
-                          value={
-                            notesDrafts[workflow.id] !== undefined
-                              ? notesDrafts[workflow.id]
-                              : workflow.ourNotes || ""
-                          }
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setNotesDrafts((prev) => ({ ...prev, [workflow.id]: val }))
-                          }}
-                          placeholder="Type developer notes about design structure, constraints, or decisions..."
-                          className="w-full flex-1 min-h-[130px] rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-950 p-3 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-y print:hidden"
-                        />
-                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-blue-100 dark:border-blue-900/50 print:hidden">
-                          <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                            {submittedNotesId === workflow.id
-                              ? "✓ Notes submitted successfully!"
-                              : "Click submit to save notes"}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleSubmitNotes(workflow.id)}
-                            className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all cursor-pointer ${
-                              submittedNotesId === workflow.id
-                                ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                                : "bg-blue-600 text-white hover:bg-blue-700"
-                            }`}
-                          >
-                            {submittedNotesId === workflow.id ? (
-                              <>
-                                <CheckCircle className="h-3.5 w-3.5" />
-                                <span>Submitted!</span>
-                              </>
-                            ) : (
-                              <>
-                                <Send className="h-3.5 w-3.5" />
-                                <span>Submit Notes</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                        <p className="hidden print:block text-slate-700 whitespace-pre-wrap text-sm leading-relaxed">
-                          {workflow.ourNotes || "No notes provided."}
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-slate-700 whitespace-pre-wrap text-sm md:text-base leading-relaxed">
-                        {workflow.ourNotes || "No notes provided."}
-                      </p>
-                    )}
+                    <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
+                      {workflow.ourNotes || "No notes provided."}
+                    </p>
                   </div>
                 </div>
 
-                {/* App screenshot */}
-                <div className="flex flex-col gap-3">
+                {/* App Screenshot */}
+                <div className="flex flex-col gap-3 print:gap-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-100">
+                    <span className="text-lg md:text-xl font-bold text-slate-800 dark:text-slate-200 print:text-base">
                       App Screenshot
                     </span>
                     <div className="flex items-center gap-2">
                       {workflow.designB && (
-                         <button
+                        <button
                           onClick={() =>
                             openLightbox(
                               workflow.designB!,
@@ -1081,13 +746,13 @@ export function ReportModal({
                               "designB"
                             )
                           }
-                          className="flex items-center gap-1.5 text-purple-600 hover:text-purple-700 dark:text-purple-400 dark:hover:text-purple-300 text-xs md:text-sm font-medium bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 border border-purple-200 dark:border-purple-800 px-2.5 py-1 rounded-full transition-colors print:hidden"
+                          className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400 hover:text-purple-700 text-xs md:text-sm font-medium bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 border border-purple-200 dark:border-purple-800 px-2.5 py-1 rounded-full transition-colors print:hidden cursor-pointer"
                           title="View Full Image"
                         >
                           <Eye className="h-3.5 w-3.5" /> View Full Image
                         </button>
                       )}
-                      <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400 text-xs font-medium bg-slate-100 dark:bg-slate-800/60 px-2.5 py-1 rounded-full">
+                      <span className="flex items-center gap-1 text-slate-500 dark:text-slate-400 text-xs font-medium bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full print:hidden">
                         <AlertCircle className="h-3.5 w-3.5" /> Read-only
                       </span>
                     </div>
@@ -1106,7 +771,7 @@ export function ReportModal({
                         )
                       }
                     }}
-                    className={`h-[420px] md:h-[480px] w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-900/[0.03] dark:bg-slate-800/30 flex items-center justify-center relative group overflow-hidden p-3 transition-all ${
+                    className={`h-[420px] md:h-[480px] print:h-[350px] w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-900/[0.03] dark:bg-slate-800/30 flex items-center justify-center relative group overflow-hidden p-3 print:p-1.5 transition-all ${
                       workflow.designB ? "cursor-pointer hover:border-purple-400 dark:hover:border-purple-600 hover:shadow-md" : ""
                     }`}
                   >
@@ -1132,333 +797,180 @@ export function ReportModal({
                     )}
                   </div>
 
-                  {/* Client Message (Styled as message sent by client) */}
-                  <div className="bg-purple-50/70 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/60 rounded-xl p-5 flex-1 flex flex-col">
-                    <div className="flex justify-between items-center mb-3 text-purple-900 dark:text-purple-200 font-bold text-base md:text-lg">
+                  {/* Client's Message */}
+                  <div className="bg-purple-50/70 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/60 rounded-xl p-5 print:p-3 flex-1 flex flex-col">
+                    <div className="flex justify-between items-center mb-3 text-purple-900 dark:text-purple-200 font-bold text-base md:text-lg print:text-sm">
                       <div className="flex items-center gap-2">
-                        <MessageSquare className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                        <MessageSquare className="h-5 w-5 text-purple-600 dark:text-purple-400 print:h-4 print:w-4" />
                         <span>Client&apos;s Message</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {isOwner && (
-                          <span className="text-xs font-semibold bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 border border-purple-200 dark:border-purple-700 px-2.5 py-0.5 rounded-full print:hidden">
-                            From Client
-                          </span>
-                        )}
-                        {onUpdateWorkflowField && (
-                          <button
-                            type="button"
-                            disabled={!effectiveCanApprove}
-                            onClick={() => {
-                              if (!effectiveCanApprove) {
-                                alert(`Approval permissions are restricted. You do not have permission to accept or verify.`)
-                                return
-                              }
-                              onUpdateWorkflowField(
-                                workflow.id,
-                                "clientTaskDone",
-                                !workflow.clientTaskDone
-                              )
-                            }}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors print:border ${
-                              !effectiveCanApprove
-                                ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-70"
-                                : workflow.clientTaskDone
-                                  ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
-                                  : "bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-800/40 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 print:hidden"
-                            }`}
-                          >
-                            {workflow.clientTaskDone ? <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> : null}
-                            <span>{workflow.clientTaskDone ? "Accepted & Verified" : "Accept & Verify"}</span>
-                          </button>
-                        )}
-                        {!onUpdateWorkflowField && workflow.clientTaskDone && (
-                          <span className="flex items-center gap-1.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 px-3 py-1 rounded-full text-xs font-semibold">
-                            <CheckCircle className="h-4 w-4" /> Accepted &amp; Verified
-                          </span>
-                        )}
+                    </div>
+                    <div className="flex-1 rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200/90 dark:border-purple-800/50 p-4 print:p-2.5 shadow-sm">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs text-purple-700 dark:text-purple-400 font-semibold print:text-[10px]">
+                          <User className="h-3.5 w-3.5 print:h-3 print:w-3" />
+                          <span>Message from Client:</span>
+                        </div>
+                        <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed pl-1">
+                          {workflow.clientMessage || (
+                            <span className="text-slate-400 dark:text-slate-500 italic">No message sent by client yet.</span>
+                          )}
+                        </p>
                       </div>
                     </div>
-
-                    {!isOwner && onUpdateWorkflowField ? (
-                      /* Client editing their own message */
-                      <>
-                        {!effectiveCanComment && (
-                          <div className="mb-3 flex items-center gap-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 p-3 text-xs text-amber-800 dark:text-amber-300 print:hidden">
-                            <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-                            <span>
-                              Client commenting is disabled for your account.
-                            </span>
-                          </div>
-                        )}
-                        <textarea
-                          value={
-                            clientMessageDrafts[workflow.id] !== undefined
-                              ? clientMessageDrafts[workflow.id]
-                              : workflow.clientMessage || ""
-                          }
-                          disabled={!effectiveCanComment}
-                          onChange={(e) =>
-                            setClientMessageDrafts((prev) => ({
-                              ...prev,
-                              [workflow.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={
-                            !effectiveCanComment
-                              ? "Client commenting is disabled."
-                              : "Type your message, requested changes, or feedback..."
-                          }
-                          className={`w-full flex-1 min-h-[130px] rounded-lg border p-3 text-sm focus:outline-none resize-y print:hidden transition-colors ${
-                            !effectiveCanComment
-                              ? "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                              : "border-purple-200 dark:border-purple-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20"
-                          }`}
-                        />
-                        {effectiveCanComment && (
-                          <div className="flex items-center justify-between mt-3 pt-2 border-t border-purple-100 dark:border-purple-800/50 print:hidden">
-                            <span className="text-xs text-purple-700 dark:text-purple-400 font-medium">
-                              {submittedClientMessageId === workflow.id
-                                ? "✓ Feedback submitted to developer!"
-                                : "Submit your comments to the team"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleSubmitClientMessage(workflow.id)}
-                              className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all ${
-                                submittedClientMessageId === workflow.id
-                                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                                  : "bg-purple-600 text-white hover:bg-purple-700"
-                              }`}
-                            >
-                              {submittedClientMessageId === workflow.id ? (
-                                <>
-                                  <CheckCircle className="h-3.5 w-3.5" />
-                                  <span>Submitted!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Send className="h-3.5 w-3.5" />
-                                  <span>Submit Feedback</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        )}
-                        <p className="hidden print:block text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm leading-relaxed">
-                          {workflow.clientMessage || "No message provided."}
-                        </p>
-                      </>
-                    ) : (
-                      /* Developer viewing client's message styled as a received client message bubble */
-                      <div className="flex-1 min-h-[130px] rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200/90 dark:border-purple-800/50 p-4 shadow-sm flex flex-col justify-between">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5 text-xs text-purple-700 dark:text-purple-400 font-semibold">
-                            <User className="h-3.5 w-3.5" />
-                            <span>Message from Client:</span>
-                          </div>
-                          <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap text-sm md:text-base leading-relaxed pl-1">
-                            {workflow.clientMessage || (
-                              <span className="text-slate-400 dark:text-slate-500 italic">No message sent by client yet.</span>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Reason for Final Changes (Developer gives why this changed form) */}
-              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 w-full flex flex-col space-y-3">
-                <div className="flex justify-between items-center mb-2 text-amber-900 dark:text-amber-200 font-bold text-base md:text-lg">
+              {/* Reason for Final Changes */}
+              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 print:p-3 w-full flex flex-col space-y-2 print:space-y-1">
+                <div className="flex justify-between items-center mb-1 text-amber-900 dark:text-amber-200 font-bold text-base md:text-lg print:text-sm">
                   <div className="flex items-center gap-2">
-                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 print:h-4 print:w-4" />
                     <span>Reason for Final Changes</span>
                   </div>
-                  {effectiveCanEdit && onUpdateWorkflowField && (
-                    <span className="text-xs font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-700 px-2.5 py-0.5 rounded-full print:hidden">
-                      {userRole === "freelancer" ? "Freelancer Submission" : "Developer Explanation"}
-                    </span>
-                  )}
                 </div>
-                {effectiveCanEdit && onUpdateWorkflowField ? (
-                  <>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 print:hidden">
-                      Developer explains why these specific changes were made in response to client feedback or requirements:
-                    </p>
-                    <textarea
-                      value={
-                        reasonDrafts[workflow.id] !== undefined
-                          ? reasonDrafts[workflow.id]
-                          : workflow.reason || ""
-                      }
-                      onChange={(e) => {
-                        const val = e.target.value
-                        setReasonDrafts((prev) => ({ ...prev, [workflow.id]: val }))
-                      }}
-                      placeholder="Type the reason why changes were made (e.g., brand guidelines, responsive adjustments, client request)..."
-                      className="w-full min-h-[90px] rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-slate-900 p-3 text-sm text-slate-800 dark:text-slate-200 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-y print:hidden"
-                    />
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-amber-200/60 dark:border-amber-800/40 print:hidden">
-                      <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                        {submittedReasonId === workflow.id
-                          ? "✓ Reason submitted successfully!"
-                          : "Click submit to save reason"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleSubmitReason(workflow.id)}
-                        className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all ${
-                          submittedReasonId === workflow.id
-                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                            : "bg-amber-600 text-white hover:bg-amber-700"
-                        }`}
-                      >
-                        {submittedReasonId === workflow.id ? (
-                          <>
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            <span>Submitted!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Send className="h-3.5 w-3.5" />
-                            <span>Submit Reason</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <p className="hidden print:block text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm leading-relaxed">
-                      {workflow.reason || "No reason provided."}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base leading-relaxed">
-                    {workflow.reason || "No reason provided."}
-                  </p>
-                )}
-
-                {/* Revision History List in Presentation View */}
-                {workflow.revisions && workflow.revisions.length > 0 && (
-                  <div className="pt-3 border-t border-amber-200/50 dark:border-amber-900/40 space-y-2">
-                    <h5 className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
-                      Past Revisions &amp; Explanations:
-                    </h5>
-                    <div className="space-y-1.5">
-                      {workflow.revisions.map((r) => (
-                        <div
-                          key={r.id}
-                          className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-amber-200/80 dark:border-amber-900/40 text-xs"
-                        >
-                          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 font-semibold mb-1">
-                            <span className="text-amber-700 dark:text-amber-300">Revision {r.revisionNumber} ({r.authorRole})</span>
-                            <span className="text-[10px]">{new Date(r.createdAt).toLocaleDateString()}</span>
-                          </div>
-                          <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{r.reason}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
+                  {workflow.reason || "No reason provided."}
+                </p>
               </div>
             </div>
           </section>
         ))}
 
-        {/* Final slide - Formal Sign-off & Digital Signature */}
-        <section className="flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-8 sm:p-12 md:p-16 w-full max-w-[1280px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:max-w-none print:min-h-0 print:h-auto print:p-6 print:rounded-none print-page-break print-avoid-break print:block transition-colors space-y-8">
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wider">
-              <PenTool className="h-3.5 w-3.5" />
-              <span>Formal Acceptance &amp; Sign-off</span>
+        {/* Final slide with Digital Signature */}
+        <section className="flex flex-col items-center justify-center bg-white dark:bg-slate-900 border border-transparent dark:border-slate-800 rounded-2xl shadow-xl p-8 md:p-12 w-full max-w-[1280px] min-h-[480px] shrink-0 relative overflow-hidden print:shadow-none print:w-full print:aspect-auto print:min-h-0 print:h-auto print:py-12 print:px-6 print:rounded-none print-page-break print-avoid-break print:flex print:items-center print:justify-center">
+          <div className="w-full max-w-2xl text-center space-y-6">
+            <div>
+              <h2 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white mb-3 tracking-tight text-balance">
+                Report Concluded
+              </h2>
+              <p className="text-lg md:text-xl text-slate-500 dark:text-slate-400 font-light text-pretty">
+                All workflows have been successfully reviewed and verified.
+              </p>
             </div>
-            <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight text-balance">
-              Project Sign-off &amp; Approvals
-            </h2>
-            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400 font-normal max-w-2xl mx-auto">
-              This document confirms the review of all workflows, linked Figma designs, reasons for changes, and final verification status for project <strong className="text-slate-900 dark:text-white">{project.title}</strong>.
-            </p>
 
-            {/* Status overview pill */}
-            <div className="pt-2">
-              {verifiedCount === totalWorkflows && totalWorkflows > 0 ? (
-                <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shadow-sm">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>All {totalWorkflows} Workflows Verified &amp; Approved (100%)</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-sm">
-                  <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                  <span>{verifiedCount} of {totalWorkflows} Workflows Verified ({notVerifiedCount} Pending Review)</span>
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Dual Signatures Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 w-full">
-            {/* 1. Client / Approver Signature Box */}
-            <div className="flex flex-col justify-between p-6 sm:p-7 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-4">
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <div className="flex items-center gap-2">
-                    <PenTool className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                      Client / Approver Signature
-                    </h4>
-                  </div>
-                  {isSigned && (
-                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
-                      <CheckCircle2 className="h-3 w-3" /> Signed &amp; Approved
-                    </span>
-                  )}
+            {/* Digital Signature Card */}
+            <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 md:p-8 text-left shadow-xs print:p-4 print:border-slate-300">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4 print:mb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 print:h-4 print:w-4" />
+                  <span className="font-bold text-slate-900 dark:text-white text-base md:text-lg print:text-sm">
+                    Executive Sign-off &amp; Approval
+                  </span>
                 </div>
-
-                {/* Signer Details Form */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                      Signer Name
-                    </label>
-                    <input
-                      type="text"
-                      disabled={isSigned}
-                      value={signerName}
-                      onChange={(e) => setSignerName(e.target.value)}
-                      placeholder="e.g. Jane Doe"
-                      className="w-full text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:border-blue-500 disabled:opacity-75"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
-                      Role / Organization
-                    </label>
-                    <input
-                      type="text"
-                      disabled={isSigned}
-                      value={signerTitle}
-                      onChange={(e) => setSignerTitle(e.target.value)}
-                      placeholder="e.g. Lead Stakeholder"
-                      className="w-full text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white outline-none focus:border-blue-500 disabled:opacity-75"
-                    />
-                  </div>
-                </div>
+                {isSigned ? (
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs px-2.5 py-1 rounded-full font-semibold print:text-[10px]">
+                    <CheckCircle2 className="h-3.5 w-3.5 print:h-3 print:w-3" /> Digitally Signed
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500 dark:text-slate-400 print:hidden">
+                    Pending Signature
+                  </span>
+                )}
               </div>
 
-              {/* Signature Area */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span className="font-medium">Signature Area:</span>
-                  {!isSigned && (
-                    <div className="flex items-center gap-1 bg-slate-200/70 dark:bg-slate-800/80 p-0.5 rounded-lg text-[11px] print:hidden">
+              {isSigned ? (
+                /* Signed State View (Rendered on Screen and in Print) */
+                <div className="space-y-4 print:space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 print:border-slate-300 print:p-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider print:text-[10px]">
+                        Signer Name
+                      </p>
+                      <p className="text-base md:text-lg font-bold text-slate-900 dark:text-white print:text-sm">
+                        {signerName || "Authorized Signer"}
+                      </p>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 print:text-[11px]">
+                        {signerTitle || "Representative"}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1 sm:text-right">
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider print:text-[10px]">
+                        Date &amp; Status
+                      </p>
+                      <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 print:text-xs">
+                        {signatureDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+                      </p>
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                        Verified &amp; Approved
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Signature Display (Draw or Type) */}
+                  <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center min-h-[90px] print:min-h-[70px] print:border-slate-300 print:p-2">
+                    {signatureImage ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={signatureImage}
+                        alt="Digital Signature"
+                        className="max-h-16 max-w-full object-contain filter dark:invert"
+                      />
+                    ) : typedSignature ? (
+                      <span className="font-serif italic text-2xl md:text-3xl text-slate-800 dark:text-slate-100 tracking-wider">
+                        {typedSignature}
+                      </span>
+                    ) : (
+                      <span className="font-serif italic text-2xl text-slate-700 dark:text-slate-200">
+                        {signerName}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Clear / Edit Signature Button (Hidden in Print) */}
+                  <div className="flex justify-end pt-1 print:hidden">
+                    <button
+                      onClick={handleClearSignature}
+                      className="text-xs text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
+                    >
+                      Clear &amp; Re-sign
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Unsigned Interactive Form on Screen + Print Fallback */
+                <div className="space-y-4">
+                  {/* On Screen: Signature Canvas & Inputs */}
+                  <div className="space-y-3 print:hidden">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Signer Full Name
+                        </label>
+                        <input
+                          type="text"
+                          value={signerName}
+                          onChange={(e) => setSignerName(e.target.value)}
+                          placeholder="e.g. Alex Johnson"
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Title / Role
+                        </label>
+                        <input
+                          type="text"
+                          value={signerTitle}
+                          onChange={(e) => setSignerTitle(e.target.value)}
+                          placeholder="e.g. Product Lead"
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Mode Toggle: Draw vs Type */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Signature:</span>
                       <button
                         type="button"
                         onClick={() => setSignatureMode("draw")}
-                        className={`px-2 py-0.5 rounded-md font-semibold transition-all cursor-pointer ${
+                        className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
                           signatureMode === "draw"
-                            ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs"
-                            : "text-slate-600 dark:text-slate-400"
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
                         }`}
                       >
                         Draw
@@ -1466,173 +978,83 @@ export function ReportModal({
                       <button
                         type="button"
                         onClick={() => setSignatureMode("type")}
-                        className={`px-2 py-0.5 rounded-md font-semibold transition-all cursor-pointer ${
+                        className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
                           signatureMode === "type"
-                            ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs"
-                            : "text-slate-600 dark:text-slate-400"
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
                         }`}
                       >
                         Type
                       </button>
                     </div>
-                  )}
-                </div>
 
-                {isSigned ? (
-                  /* Applied Signature View */
-                  <div className="h-32 w-full rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center p-3 relative overflow-hidden shadow-inner">
-                    {signatureMode === "draw" && signatureImage ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={signatureImage}
-                        alt="Digital Signature"
-                        className="max-h-24 max-w-full object-contain filter dark:invert"
-                      />
+                    {signatureMode === "draw" ? (
+                      <div className="relative border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                        <canvas
+                          ref={canvasRef}
+                          width={500}
+                          height={120}
+                          onMouseDown={startDrawing}
+                          onMouseMove={draw}
+                          onMouseUp={stopDrawing}
+                          onMouseLeave={stopDrawing}
+                          onTouchStart={startDrawing}
+                          onTouchMove={draw}
+                          onTouchEnd={stopDrawing}
+                          className="w-full h-[100px] cursor-crosshair touch-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const canvas = canvasRef.current
+                            if (canvas) {
+                              const ctx = canvas.getContext("2d")
+                              if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+                            }
+                            setSignatureImage("")
+                          }}
+                          className="absolute right-2 bottom-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      </div>
                     ) : (
-                      <span className="font-serif italic text-3xl text-blue-600 dark:text-blue-400 select-none">
-                        {typedSignature || signerName || "Digitally Signed"}
-                      </span>
-                    )}
-                    <div className="absolute bottom-1 right-2 text-[10px] text-slate-400 flex items-center gap-1 font-mono">
-                      <span>{signatureDate}</span>
-                    </div>
-                  </div>
-                ) : signatureMode === "draw" ? (
-                  /* Interactive Canvas Pad */
-                  <div className="space-y-1.5 print:hidden">
-                    <div className="relative rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 h-32 overflow-hidden shadow-xs cursor-crosshair">
-                      <canvas
-                        ref={canvasRef}
-                        width={460}
-                        height={128}
-                        onMouseDown={startDrawing}
-                        onMouseMove={draw}
-                        onMouseUp={stopDrawing}
-                        onMouseLeave={stopDrawing}
-                        onTouchStart={startDrawing}
-                        onTouchMove={draw}
-                        onTouchEnd={stopDrawing}
-                        className="w-full h-full touch-none"
+                      <input
+                        type="text"
+                        value={typedSignature}
+                        onChange={(e) => setTypedSignature(e.target.value)}
+                        placeholder="Type your signature here..."
+                        className="w-full px-4 py-3 text-xl font-serif italic rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
-                      {!signatureImage && !isDrawing && (
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-xs text-slate-400 italic">
-                          Draw signature here with finger or mouse
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleClearSignature}
-                        className="text-[11px] text-slate-500 hover:text-rose-500 transition-colors cursor-pointer"
-                      >
-                        Clear Canvas
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  /* Typed Cursive Mode */
-                  <div className="space-y-2 print:hidden">
-                    <input
-                      type="text"
-                      value={typedSignature}
-                      onChange={(e) => setTypedSignature(e.target.value)}
-                      placeholder="Type your formal name to generate signature"
-                      className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 outline-none focus:border-blue-500"
-                    />
-                    <div className="h-20 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center p-2">
-                      <span className="font-serif italic text-2xl text-blue-600 dark:text-blue-400 select-none">
-                        {typedSignature || signerName || "Signature Preview"}
-                      </span>
-                    </div>
-                  </div>
-                )}
+                    )}
 
-                {/* Confirm Signature or Edit Actions */}
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between print:hidden">
-                  {isSigned ? (
-                    <button
-                      type="button"
-                      onClick={handleClearSignature}
-                      className="text-xs text-slate-500 hover:text-blue-500 font-medium transition-colors cursor-pointer flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      <span>Redo Signature</span>
-                    </button>
-                  ) : (
-                    <div className="flex justify-end w-full">
+                    <div className="flex justify-end pt-1">
                       <button
                         type="button"
                         onClick={handleApplySignature}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+                        className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm cursor-pointer"
                       >
-                        <PenTool className="h-3.5 w-3.5" />
-                        <span>Confirm &amp; Apply Signature</span>
+                        <Check className="h-4 w-4" /> Apply Digital Signature
                       </button>
                     </div>
-                  )}
-                  <span className="text-[11px] text-slate-400 font-mono">{signatureDate}</span>
+                  </div>
+
+                  {/* Print-only fallback for unsigned state */}
+                  <div className="hidden print:block space-y-4 pt-2">
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="border-b border-slate-400 pb-1">
+                        <p className="text-[10px] text-slate-500 uppercase font-semibold">Authorized Signature</p>
+                        <div className="h-10" />
+                      </div>
+                      <div className="border-b border-slate-400 pb-1">
+                        <p className="text-[10px] text-slate-500 uppercase font-semibold">Date</p>
+                        <p className="text-xs text-slate-800 pt-6">{new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* 2. Developer / Creator Project Verification Box */}
-            <div className="flex flex-col justify-between p-6 sm:p-7 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-4">
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                      Creator Verification &amp; Seal
-                    </h4>
-                  </div>
-                  <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
-                    <CheckCircle2 className="h-3 w-3" /> Verified Document
-                  </span>
-                </div>
-
-                <div className="space-y-3 pt-3 text-xs">
-                  <div>
-                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Project Creator / Administrator</span>
-                    <span className="font-semibold text-slate-900 dark:text-white text-sm">
-                      {isOwner && user?.email ? user.email : "Design Team Lead"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Project Title</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">{project.title}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Report Date</span>
-                    <span className="font-mono text-slate-700 dark:text-slate-300">{signatureDate}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Digital Seal of Authenticity */}
-              <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
-                  <ShieldCheck className="h-4 w-4" />
-                  <span>Authenticity &amp; Integrity Seal</span>
-                </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  All Figma screen comparisons, version changelogs, and client feedback notes have been securely compiled and recorded in accordance with project review standards.
-                </p>
-                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 font-mono border-t border-slate-100 dark:border-slate-800/80">
-                  <span>SYSTEM AUDIT PASS</span>
-                  <span>{project.id.slice(0, 8)}...</span>
-                </div>
-              </div>
-
-              <div className="text-[11px] text-slate-400 italic">
-                Ready for production export, development handoff, or stakeholder archival.
-              </div>
-            </div>
-          </div>
-
-          {/* Concluding Footer Notice */}
-          <div className="text-center pt-2 text-xs text-slate-400 border-t border-slate-200 dark:border-slate-800">
-            Design Workflow Review System • Generated for {project.title} • {verifiedCount} Verified / {notVerifiedCount} Pending
           </div>
         </section>
       </div>
@@ -1655,7 +1077,7 @@ export function ReportModal({
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <span>{lightbox.title}</span>
                   <span className="text-slate-400 font-normal text-sm">
-                    — Workflow: {lightbox.workflowTitle}
+                    — Screen: {lightbox.workflowTitle}
                   </span>
                 </h3>
                 <p className="text-xs text-slate-400">

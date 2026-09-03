@@ -14,6 +14,8 @@ import {
   Shield,
   ShieldCheck,
   Users,
+  Search,
+  Plus,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type {
@@ -195,6 +197,7 @@ export default function Page() {
   const [authMessage, setAuthMessage] = useState("")
   const [showResend, setShowResend] = useState(false)
   const [viewMode, setViewMode] = useState<"dashboard" | "editor">("dashboard")
+  const [dashboardSearchQuery, setDashboardSearchQuery] = useState("")
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [showLanding, setShowLanding] = useState(true)
   const [isShareOpen, setIsShareOpen] = useState(false)
@@ -1103,7 +1106,7 @@ export default function Page() {
       <div
         className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
           isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        } ${showReport ? "print:hidden" : ""}`}
       >
         <Sidebar
           projects={projects}
@@ -1193,7 +1196,7 @@ export default function Page() {
       </div>
 
       {/* Main Workspace Area */}
-      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200">
+      <main className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200 ${showReport ? "print:hidden" : ""}`}>
         {/* Workspace Top Header */}
         <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 sm:px-6 flex items-center justify-between gap-3 flex-shrink-0 z-10 transition-colors duration-200">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -1235,8 +1238,8 @@ export default function Page() {
               </div>
             )}
 
-            {/* Active Project Title & Role Indicator */}
-            {activeProject && (
+            {/* Active Project Title & Role Indicator (Editor Mode Only) */}
+            {viewMode === "editor" && activeProject && (
               <div className="hidden sm:flex items-center gap-2 min-w-0">
                 <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[200px]">
                   {activeProject.title}
@@ -1247,18 +1250,44 @@ export default function Page() {
                       ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
                       : userRole === "freelancer"
                       ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
-                      : "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+                      : "bg-purple-50 dark:purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
                   }`}
                 >
                   {isOwner ? "Owner" : userRole === "freelancer" ? "Freelancer" : `Client (${canEdit ? "Edit" : "View"})`}
                 </span>
               </div>
             )}
+
+            {/* Global Search Bar (Dashboard Mode Only) */}
+            {viewMode === "dashboard" && (
+              <div className="relative w-48 sm:w-64 md:w-80 hidden sm:block">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 dark:text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder="Search projects or files..."
+                  value={dashboardSearchQuery}
+                  onChange={(e) => setDashboardSearchQuery(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800/90 pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 outline-none transition-all focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            {/* View Presentation Button */}
-            {activeProject && (
+            {/* Create Project Button (Dashboard Mode Only) */}
+            {viewMode === "dashboard" && (isOwner || user) && (
+              <button
+                type="button"
+                onClick={createProject}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
+                <span className="hidden sm:inline">New Project</span>
+              </button>
+            )}
+
+            {/* View Presentation Button (Editor Mode Only) */}
+            {viewMode === "editor" && activeProject && (
               <button
                 type="button"
                 onClick={() => setShowReport(true)}
@@ -1270,8 +1299,8 @@ export default function Page() {
               </button>
             )}
 
-            {/* Share & Permissions Button (Owner Only) */}
-            {isOwner && activeProject && (
+            {/* Share & Permissions Button (Owner Only in Editor Mode) */}
+            {viewMode === "editor" && isOwner && activeProject && (
               <button
                 type="button"
                 onClick={() => setIsShareOpen(true)}
@@ -1320,6 +1349,8 @@ export default function Page() {
               userEmail={user?.email}
               userId={user?.id}
               isOwner={isOwner}
+              searchQuery={dashboardSearchQuery}
+              onSearchChange={setDashboardSearchQuery}
               theme={theme}
               onToggleTheme={toggleTheme}
               onCreateProject={createProject}

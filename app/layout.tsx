@@ -30,8 +30,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="light bg-slate-100">
-      <body className="antialiased">
+    <html lang="en" className="light bg-slate-100" suppressHydrationWarning>
+      <body className="antialiased" suppressHydrationWarning>
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
