@@ -94,7 +94,7 @@ export function SharePermissionsModal({
       })
 
       if (error) {
-        console.error("Error loading people & permissions:", error)
+        console.error("Error loading people & permissions:", error.message || error)
       } else if (data) {
         const rawMembers = Array.isArray(data.members) ? data.members : []
         const mappedMembers: ProjectMember[] = rawMembers.map((m: any) => ({
