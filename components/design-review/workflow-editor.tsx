@@ -477,7 +477,18 @@ export function WorkflowEditor({
             <FolderKanban className="h-4 w-4" />
             {project.title}
             <ChevronRight className="h-3 w-3 text-slate-400" />
-            <span className="text-slate-500 dark:text-slate-400">{workflow.title}</span>
+            <span
+              onDoubleClick={() => {
+                if (effectiveCanEdit) {
+                  setTempTitle(workflow.title)
+                  setIsEditingTitle(true)
+                }
+              }}
+              title={effectiveCanEdit ? "Double-click to rename screen" : undefined}
+              className="text-slate-500 dark:text-slate-400 cursor-pointer select-none"
+            >
+              {workflow.title}
+            </span>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             {isEditingTitle && effectiveCanEdit ? (
@@ -525,7 +536,18 @@ export function WorkflowEditor({
               </div>
             ) : (
               <div className="flex items-center gap-2.5 group">
-                <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{workflow.title}</h1>
+                <h1
+                  onDoubleClick={() => {
+                    if (effectiveCanEdit) {
+                      setTempTitle(workflow.title)
+                      setIsEditingTitle(true)
+                    }
+                  }}
+                  title={effectiveCanEdit ? "Double-click to rename screen" : undefined}
+                  className="text-3xl font-bold text-slate-900 dark:text-white cursor-pointer select-none"
+                >
+                  {workflow.title}
+                </h1>
                 {effectiveCanEdit && (
                   <button
                     type="button"

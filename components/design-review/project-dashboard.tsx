@@ -368,8 +368,13 @@ export function ProjectDashboard({
                           </form>
                         ) : (
                           <h4
-                            className="text-xs font-semibold text-slate-900 dark:text-zinc-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
-                            title={project.title}
+                            onDoubleClick={(e) => {
+                              if (canEditProject) {
+                                handleStartRename(project, e)
+                              }
+                            }}
+                            className="text-xs font-semibold text-slate-900 dark:text-zinc-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors select-none"
+                            title={canEditProject ? "Double-click to rename project" : project.title}
                           >
                             {project.title}
                           </h4>
@@ -501,6 +506,7 @@ export function ProjectDashboard({
           /* List View */
           <div className="divide-y divide-slate-200 dark:divide-zinc-800/80 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 overflow-hidden shadow-sm">
             {filteredProjects.map((project) => {
+              const isRenaming = renamingId === project.id
               const canEditProject = Boolean(
                 isOwner ||
                 userId ||
@@ -538,9 +544,30 @@ export function ProjectDashboard({
                       {canEditProject ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-slate-900 dark:text-zinc-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                        {project.title}
-                      </h4>
+                      {isRenaming && renamingId === project.id ? (
+                        <form onSubmit={(e) => handleSaveRename(project.id, e)} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="text"
+                            autoFocus
+                            value={renameTitle}
+                            onChange={(e) => setRenameTitle(e.target.value)}
+                            onBlur={(e) => handleSaveRename(project.id, e)}
+                            className="rounded border border-blue-500 bg-white dark:bg-zinc-800 px-2 py-0.5 text-xs text-slate-900 dark:text-white outline-none"
+                          />
+                        </form>
+                      ) : (
+                        <h4
+                          onDoubleClick={(e) => {
+                            if (canEditProject) {
+                              handleStartRename(project, e)
+                            }
+                          }}
+                          className="text-sm font-semibold text-slate-900 dark:text-zinc-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors select-none"
+                          title={canEditProject ? "Double-click to rename project" : project.title}
+                        >
+                          {project.title}
+                        </h4>
+                      )}
                       <p className="text-xs text-slate-500 dark:text-zinc-500">
                         {project.workflows.length} workflows • {canEditProject ? "Edit access" : "View only"}
                       </p>

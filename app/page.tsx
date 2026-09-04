@@ -16,6 +16,7 @@ import {
   Users,
   Search,
   Plus,
+  Settings,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type {
@@ -34,6 +35,7 @@ import { ProjectDashboard } from "@/components/design-review/project-dashboard"
 import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { LandingPage } from "@/components/design-review/landing-page"
 import { SharePermissionsModal } from "@/components/design-review/share-permissions-modal"
+import { SettingsModal } from "@/components/design-review/settings-modal"
 
 type ProjectRow = {
   id: string
@@ -210,9 +212,10 @@ export default function Page() {
   const [showReport, setShowReport] = useState(false)
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(false)
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin")
+  const [authMode, setAuthMode] = useState<"signin" | "signup" | "forgot" | "reset">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [authMessage, setAuthMessage] = useState("")
   const [showResend, setShowResend] = useState(false)
   const [viewMode, setViewMode] = useState<"dashboard" | "editor">("dashboard")
@@ -220,6 +223,7 @@ export default function Page() {
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [showLanding, setShowLanding] = useState(true)
   const [isShareOpen, setIsShareOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState<string | null>(null)
   const [inviteModalData, setInviteModalData] = useState<{
@@ -240,10 +244,16 @@ export default function Page() {
     canApprove: false,
   })
 
-  // Extract invite token on client mount
+  // Extract invite token or password recovery on client mount
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const token = new URLSearchParams(window.location.search).get("invite")
+      const hash = window.location.hash
+      const params = new URLSearchParams(window.location.search)
+      if (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) {
+        setAuthMode("reset")
+        setShowLanding(false)
+      }
+      const token = params.get("invite")
       if (token) {
         setInviteToken(token)
         setShowLanding(false)
@@ -294,8 +304,14 @@ export default function Page() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (!mounted) return
+      if (event === "PASSWORD_RECOVERY") {
+        setAuthMode("reset")
+        setShowLanding(false)
+        setIsAuthChecking(false)
+        return
+      }
       if (session?.user) {
         setUser({ id: session.user.id, email: session.user.email })
       } else {
@@ -662,6 +678,46 @@ export default function Page() {
     setAuthLoading(true)
     setAuthMessage("")
     setShowResend(false)
+
+    if (authMode === "forgot") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/`,
+      })
+      setAuthLoading(false)
+      if (error) {
+        setAuthMessage(error.message)
+      } else {
+        setAuthMessage("Password reset instructions have been sent to your email. Check your inbox.")
+      }
+      return
+    }
+
+    if (authMode === "reset") {
+      if (!password || password.length < 6) {
+        setAuthMessage("Password must be at least 6 characters long.")
+        setAuthLoading(false)
+        return
+      }
+      if (password !== confirmPassword) {
+        setAuthMessage("Passwords do not match. Please re-enter.")
+        setAuthLoading(false)
+        return
+      }
+      const { data, error } = await supabase.auth.updateUser({ password })
+      setAuthLoading(false)
+      if (error) {
+        setAuthMessage(error.message)
+      } else {
+        alert("Password updated successfully! You are now signed in.")
+        if (data.user) {
+          setUser({ id: data.user.id, email: data.user.email })
+        }
+        setAuthMode("signin")
+        setPassword("")
+        setConfirmPassword("")
+      }
+      return
+    }
 
     const result =
       authMode === "signin"
@@ -1387,41 +1443,93 @@ export default function Page() {
 
           <div className="mb-6">
             <FolderKanban className="mb-4 h-12 w-12 rounded-2xl bg-slate-900 dark:bg-zinc-800 p-3 text-white shadow" />
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Design Review</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+              {authMode === "forgot"
+                ? "Reset Password"
+                : authMode === "reset"
+                ? "Set New Password"
+                : "Design Review"}
+            </h1>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {inviteToken
                 ? "You've been invited to collaborate on this project. Please sign in or create an account with your invited email to access."
+                : authMode === "forgot"
+                ? "Enter your account email address to receive password reset instructions."
+                : authMode === "reset"
+                ? "Enter your new password below to regain access to your workspace."
                 : authMode === "signin"
                 ? "Sign in to your review workspace."
                 : "Create your account to get started."}
             </p>
           </div>
 
-          <label className="mb-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
-            Email Address
-            <input
-              className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@company.com"
-              required
-            />
-          </label>
-          <label className="mb-5 block text-xs font-semibold text-slate-700 dark:text-slate-300">
-            Password
-            <input
-              className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              minLength={6}
-              required
-            />
-          </label>
+          {/* Email input (for signin, signup, forgot) */}
+          {authMode !== "reset" && (
+            <label className="mb-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Email Address
+              <input
+                className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@company.com"
+                required
+              />
+            </label>
+          )}
+
+          {/* Password input (for signin, signup, reset) */}
+          {authMode !== "forgot" && (
+            <label className="mb-3 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              <div className="flex items-center justify-between">
+                <span>{authMode === "reset" ? "New Password" : "Password"}</span>
+                {authMode === "signin" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("forgot")
+                      setAuthMessage("")
+                    }}
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-normal cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+              <input
+                className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={6}
+                placeholder="Enter at least 6 characters"
+                required
+              />
+            </label>
+          )}
+
+          {/* Confirm Password input (for reset) */}
+          {authMode === "reset" && (
+            <label className="mb-5 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Confirm New Password
+              <input
+                className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                minLength={6}
+                placeholder="Re-enter your new password"
+                required
+              />
+            </label>
+          )}
 
           {authMessage && (
-            <div className="mb-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 p-3 text-xs text-rose-700 dark:text-rose-300">
+            <div className={`mb-4 rounded-xl p-3 text-xs border ${
+              authMessage.includes("sent") || authMessage.includes("successfully")
+                ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300"
+                : "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300"
+            }`}>
               <p>{authMessage}</p>
               {showResend && (
                 <button
@@ -1436,18 +1544,44 @@ export default function Page() {
           )}
 
           <button
-            className="w-full rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 py-3 text-white font-semibold transition-colors cursor-pointer text-sm shadow-md"
+            className="w-full rounded-xl bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 py-3 text-white font-semibold transition-colors cursor-pointer text-sm shadow-md mt-2"
             disabled={authLoading}
           >
-            {authLoading ? "Loading..." : authMode === "signin" ? "Sign In & Access" : "Create Account & Access"}
+            {authLoading
+              ? "Loading..."
+              : authMode === "signin"
+              ? "Sign In & Access"
+              : authMode === "signup"
+              ? "Create Account & Access"
+              : authMode === "forgot"
+              ? "Send Password Reset Link"
+              : "Update Password & Continue"}
           </button>
-          <button
-            type="button"
-            className="mt-4 w-full text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
-            onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}
-          >
-            {authMode === "signin" ? "Need an account? Sign up" : "Already have an account? Sign in"}
-          </button>
+
+          {/* Navigation toggles */}
+          {authMode === "forgot" || authMode === "reset" ? (
+            <button
+              type="button"
+              className="mt-4 w-full text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              onClick={() => {
+                setAuthMode("signin")
+                setAuthMessage("")
+              }}
+            >
+              &larr; Back to Sign In
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mt-4 w-full text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              onClick={() => {
+                setAuthMode(authMode === "signin" ? "signup" : "signin")
+                setAuthMessage("")
+              }}
+            >
+              {authMode === "signin" ? "Need an account? Sign up" : "Already have an account? Sign in"}
+            </button>
+          )}
         </form>
       </main>
     )
@@ -1703,7 +1837,7 @@ export default function Page() {
             {/* Theme Toggle */}
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
 
-            {/* User Profile & Logout */}
+            {/* User Profile, Settings & Logout */}
             {user ? (
               <div className="flex items-center gap-1.5 sm:gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
                 <div
@@ -1712,6 +1846,15 @@ export default function Page() {
                 >
                   {user.email ? user.email.slice(0, 2).toUpperCase() : "US"}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors flex-shrink-0 cursor-pointer"
+                  title="Account Settings"
+                  aria-label="Account Settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={handleSignOut}
@@ -1788,6 +1931,14 @@ export default function Page() {
           )}
         </div>
       </main>
+
+      {/* Account Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        userEmail={user?.email}
+        userId={user?.id}
+      />
 
       {/* Share & Granular Permissions Modal */}
       {isOwner && activeProject && (

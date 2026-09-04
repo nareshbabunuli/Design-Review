@@ -222,7 +222,18 @@ export function Sidebar({
                     onCancel={() => setEditingId(null)}
                   />
                 ) : (
-                  <span className="truncate text-sm font-medium">{project.title}</span>
+                  <span
+                    onDoubleClick={(e) => {
+                      if (isProjectOwner) {
+                        e.stopPropagation()
+                        setEditingId(`project-${project.id}`)
+                      }
+                    }}
+                    title={isProjectOwner ? "Double-click to rename project" : undefined}
+                    className="truncate text-sm font-medium select-none"
+                  >
+                    {project.title}
+                  </span>
                 )}
               </div>
 
@@ -440,6 +451,10 @@ export function Sidebar({
                         setDragOverWorkflow(null)
                       }}
                       onClick={() => onSelectWorkflow(project.id, workflow.id)}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        setEditingId(`workflow-${workflow.id}`)
+                      }}
                       className={`group flex items-center justify-between w-full p-2 rounded-lg cursor-pointer transition-all ${
                         isDraggingThis ? "opacity-40 scale-95" : ""
                       } ${
@@ -477,7 +492,12 @@ export function Sidebar({
                           />
                         ) : (
                           <span
-                            className={`truncate text-sm ${
+                            onDoubleClick={(e) => {
+                              e.stopPropagation()
+                              setEditingId(`workflow-${workflow.id}`)
+                            }}
+                            title="Double-click to rename screen"
+                            className={`truncate text-sm select-none ${
                               workflow.isDone ? "line-through opacity-70" : ""
                             }`}
                           >
