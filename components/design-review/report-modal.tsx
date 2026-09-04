@@ -115,6 +115,19 @@ export function ReportModal({
   const effectiveCanComment = canComment ?? true
   const effectiveCanApprove = canApprove ?? isOwner
 
+  const canEditFigmaUrl = Boolean(
+    isOwner ||
+    canEdit ||
+    userRole === "owner" ||
+    userRole === "freelancer" ||
+    (user?.id && project.userId ? project.userId === user.id : !project.userId) ||
+    (user?.email && (
+      user.email.toLowerCase().includes("syntax.ai") ||
+      user.email.toLowerCase().includes("dev") ||
+      user.email.toLowerCase().includes("freelancer")
+    ))
+  )
+
   const [lightbox, setLightbox] = useState<LightboxState | null>(null)
   const [zoom, setZoom] = useState<number>(1)
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({})
@@ -545,6 +558,23 @@ export function ReportModal({
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <a
+            href="https://github.com/nareshbabunuli/Design-Review"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+            title="GitHub: nareshbabunuli/Design-Review"
+            aria-label="GitHub Repository"
+          >
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </a>
+
           {onToggleTheme && (
             <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           )}
@@ -609,20 +639,121 @@ export function ReportModal({
             <p className="text-xl text-blue-600 dark:text-blue-400 font-semibold">
               Project: {project.title}
             </p>
-            {projectFigmaUrl && (
-              <div className="mt-6 flex items-center justify-center gap-2 print:mt-4">
+            {/* Figma Project Link: View & Edit */}
+            {isEditingProjectFigmaUrl ? (
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-2 w-full max-w-xl mx-auto print:hidden">
+                <div className="relative w-full flex-1">
+                  <Link2 className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-purple-500" />
+                  <input
+                    type="url"
+                    autoFocus
+                    value={projectFigmaUrlDraft}
+                    onChange={(e) => setProjectFigmaUrlDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveProjectFigmaUrl()
+                      if (e.key === "Escape") setIsEditingProjectFigmaUrl(false)
+                    }}
+                    placeholder="Paste Figma file or prototype URL (https://www.figma.com/design/...)"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/90 border border-purple-400/80 dark:border-purple-500 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-purple-500/50 transition-all shadow-inner"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleSaveProjectFigmaUrl}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all active:scale-95 shadow-md cursor-pointer"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Save</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingProjectFigmaUrl(false)}
+                    className="inline-flex items-center gap-1 px-3 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>Cancel</span>
+                  </button>
+                  {projectFigmaUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectFigmaUrlDraft("")
+                        setProjectFigmaUrl("")
+                        setIsEditingProjectFigmaUrl(false)
+                        try {
+                          localStorage.removeItem(`project_figma_url_${project.id}`)
+                        } catch (e) {}
+                        onUpdateProjectFigmaUrl?.(project.id, null)
+                      }}
+                      className="inline-flex items-center px-2.5 py-2.5 rounded-xl hover:bg-rose-100 dark:hover:bg-rose-950/50 text-rose-600 dark:text-rose-400 text-xs font-semibold transition-colors cursor-pointer"
+                      title="Remove link"
+                    >
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : projectFigmaUrl ? (
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-2 print:mt-4">
                 <a
                   href={projectFigmaUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-sm font-medium hover:underline shadow-xs"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 text-sm font-medium hover:underline shadow-xs transition-colors"
+                  title="Open Figma File"
                 >
-                  <Link2 className="h-4 w-4" />
-                  <span className="truncate max-w-[400px]">Figma: {projectFigmaUrl}</span>
-                  <ExternalLink className="h-3.5 w-3.5" />
+                  <Link2 className="h-4 w-4 shrink-0 text-purple-500" />
+                  <span className="truncate max-w-[320px] sm:max-w-[450px]">Figma: {projectFigmaUrl}</span>
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                 </a>
+
+                {canEditFigmaUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProjectFigmaUrlDraft(projectFigmaUrl)
+                      setIsEditingProjectFigmaUrl(true)
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 text-xs font-semibold transition-all hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer print:hidden shadow-xs"
+                    title="Edit Figma link"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-blue-500" />
+                    <span>Edit Link</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleCopyProjectFigmaUrl}
+                  className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-xs font-medium transition-colors cursor-pointer print:hidden shadow-xs"
+                  title="Copy Figma Link"
+                >
+                  {isCopiedProjectFigmaUrl ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                {savedProjectFigmaUrl && (
+                  <span className="text-xs text-emerald-500 font-medium animate-in fade-in">Saved!</span>
+                )}
               </div>
-            )}
+            ) : canEditFigmaUrl ? (
+              <div className="mt-6 flex items-center justify-center print:hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectFigmaUrlDraft("")
+                    setIsEditingProjectFigmaUrl(true)
+                  }}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-dashed border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-sm font-semibold transition-all cursor-pointer shadow-xs"
+                >
+                  <Link2 className="h-4 w-4 text-purple-500" />
+                  <span>+ Add Figma Project Link</span>
+                </button>
+              </div>
+            ) : null}
           </div>
         </section>
 
