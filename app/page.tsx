@@ -721,14 +721,27 @@ export default function Page() {
   }
 
   const handleSignOut = async () => {
-    if (!supabase) return
-    await supabase.auth.signOut()
-    setUser(null)
-    setProjects([])
-    setActiveProjectId(null)
-    setActiveWorkflowId(null)
-    setAuthMessage("")
-    setIsAuthChecking(false)
+    try {
+      if (supabase) {
+        await supabase.auth.signOut()
+      }
+    } catch (err) {
+      console.error("Error signing out:", err)
+    } finally {
+      setUser(null)
+      setProjects([])
+      setActiveProjectId(null)
+      setActiveWorkflowId(null)
+      setShowReport(false)
+      setViewMode("dashboard")
+      setInviteToken(null)
+      setInviteModalData(null)
+      setAuthMessage("")
+      setShowLanding(true)
+      setIsAuthChecking(false)
+      setEmail("")
+      setPassword("")
+    }
   }
 
   const handleSelectProject = useCallback((projectId: string) => {
@@ -1738,6 +1751,7 @@ export default function Page() {
               onDeleteProject={handleDeleteOrLeaveProject}
               onRenameProject={handleRenameProject}
               onDuplicateProject={duplicateProject}
+              onLogout={handleSignOut}
               onShareProject={(id: string) => {
                 setActiveProjectId(id)
                 setIsShareOpen(true)
