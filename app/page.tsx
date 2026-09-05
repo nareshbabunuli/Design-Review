@@ -1112,7 +1112,20 @@ export default function Page() {
     field: keyof Workflow,
     value: string | boolean | null
   ) => {
-    if (!supabase || !workflowId) return
+    console.log("[DEBUG] updateWorkflowField called", {
+      workflowId,
+      field,
+      value: typeof value === "string" && value.length > 100 ? `${value.substring(0, 100)}...` : value,
+      valueType: typeof value
+    })
+
+    if (!supabase || !workflowId) {
+      console.warn("[DEBUG] updateWorkflowField early return", {
+        hasSupabase: !!supabase,
+        hasWorkflowId: !!workflowId
+      })
+      return
+    }
 
     // Optimistic local update (instant UI response across all loaded projects)
     update((xs) =>
@@ -1126,53 +1139,93 @@ export default function Page() {
     const timerKey = `${workflowId}-${field}`
 
     const executeSave = async () => {
-      const valueText = typeof value === "string" ? value : null
-      const valueBool = typeof value === "boolean" ? value : null
+      try {
+        const valueText = typeof value === "string" ? value : null
+        const valueBool = typeof value === "boolean" ? value : null
 
-      const { error } = await supabase.rpc("update_workflow_field_secure", {
-        p_workflow_id: workflowId,
-        p_field: field,
-        p_value_text: valueText,
-        p_value_bool: valueBool,
-      })
+        console.log("[DEBUG] Calling RPC update_workflow_field_secure", {
+          p_workflow_id: workflowId,
+          p_field: field,
+          p_value_text: valueText ? (valueText.length > 100 ? `${valueText.substring(0, 100)}...` : valueText) : null,
+          p_value_bool: valueBool
+        })
 
-      if (error) {
-        console.error("Permission error updating workflow field via RPC, attempting fallback:", error)
-        const columnMap: Record<string, string> = {
-          title: "title",
-          ourNotes: "our_notes",
-          clientMessage: "client_message",
-          clientTaskDone: "client_task_done",
-          reason: "reason",
-          isDone: "is_done",
-          designA: "design_a",
-          designB: "design_b",
-          figmaUrl: "figma_url",
-        }
-        const col = columnMap[field as string]
-        if (col) {
-          const { error: directError } = await supabase.from("workflows").update({ [col]: value }).eq("id", workflowId)
-          if (directError) {
-            console.error("Direct update of workflow field also failed:", directError)
-            alert(`Error saving change: ${error.message || directError.message}`)
-            loadWorkspace()
+        const { data: rpcData, error: rpcError } = await supabase.rpc("update_workflow_field_secure", {
+          p_workflow_id: workflowId,
+          p_field: field,
+          p_value_text: valueText,
+          p_value_bool: valueBool,
+        })
+
+        console.log("[DEBUG] RPC response", { data: rpcData, error: rpcError })
+
+        if (rpcError) {
+          console.error("[DEBUG] RPC failed, attempting direct database update fallback:", rpcError)
+          
+          const columnMap: Record<string, string> = {
+            title: "title",
+            ourNotes: "our_notes",
+            clientMessage: "client_message",
+            clientTaskDone: "client_task_done",
+            reason: "reason",
+            isDone: "is_done",
+            designA: "design_a",
+            designB: "design_b",
+            figmaUrl: "figma_url",
+          }
+          
+          const col = columnMap[field as string]
+          if (col) {
+            console.log("[DEBUG] Attempting direct table update", {
+              table: "workflows",
+              column: col,
+              workflowId,
+              value: typeof value === "string" && value.length > 100 ? `${value.substring(0, 100)}...` : value
+            })
+
+            const { data: directData, error: directError } = await supabase
+              .from("workflows")
+              .update({ [col]: value })
+              .eq("id", workflowId)
+              .select()
+
+            console.log("[DEBUG] Direct update response", { data: directData, error: directError })
+
+            if (directError) {
+              console.error("[DEBUG] Direct update also failed:", directError)
+              throw new Error(`Both RPC and direct update failed. RPC error: ${rpcError.message}. Direct error: ${directError.message}`)
+            } else {
+              console.log("[DEBUG] Direct update succeeded as fallback")
+            }
+          } else {
+            console.error("[DEBUG] No column mapping found for field:", field)
+            throw new Error(`Field mapping not found for ${field}. RPC error: ${rpcError.message}`)
           }
         } else {
-          alert(`Permission Error: ${error.message}`)
-          loadWorkspace()
+          console.log("[DEBUG] RPC update succeeded")
         }
+      } catch (error) {
+        console.error("[DEBUG] executeSave failed:", error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        alert(`Error saving ${field}: ${errorMessage}`)
+        // Reload the workspace to get the correct state from the database
+        await loadWorkspace()
+        throw error
       }
     }
 
     if (isTextField) {
+      // Debounce text field updates to avoid excessive API calls
       if (fieldDebounceTimers.current[timerKey]) {
         clearTimeout(fieldDebounceTimers.current[timerKey])
       }
       fieldDebounceTimers.current[timerKey] = setTimeout(() => {
-        executeSave()
+        executeSave().catch(console.error)
         delete fieldDebounceTimers.current[timerKey]
       }, 400)
     } else {
+      // Execute immediately for non-text fields like designB, designA, etc.
+      console.log("[DEBUG] Executing save immediately for non-text field:", field)
       await executeSave()
     }
   }
