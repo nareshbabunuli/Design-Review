@@ -577,20 +577,127 @@ export function WorkflowSimulator({
         }
       }
 
-      // 2. Direct DOM capture of the second screen element using html2canvas (zero prompts, captures screen 2 directly)
+      // 2. Direct DOM capture of the second screen element (zero prompts, captures screen 2 directly)
       if (secondScreenRef.current) {
-        const canvas = await html2canvas(secondScreenRef.current, {
-          backgroundColor: "#0f1117",
-          useCORS: true,
-          allowTaint: true,
-          scale: 1 / Math.max(0.1, currentScale),
-          logging: false,
-          ignoreElements: (element) => element.tagName === "IFRAME",
-        })
+        // Fast path: If the screen element already contains an <img>, draw it directly to <canvas> without CSS parsers
+        const existingImg = secondScreenRef.current.querySelector("img")
+        if (existingImg && existingImg.complete && existingImg.naturalWidth > 0) {
+          try {
+            const canvas = document.createElement("canvas")
+            canvas.width = viewportWidth
+            canvas.height = viewportHeight
+            const ctx = canvas.getContext("2d")
+            if (ctx) {
+              ctx.fillStyle = "#0f1117"
+              ctx.fillRect(0, 0, canvas.width, canvas.height)
+              ctx.drawImage(existingImg, 0, 0, viewportWidth, viewportHeight)
+              const dataUrl = canvas.toDataURL("image/png")
+              await saveCapturedScreenshot(dataUrl)
+              return
+            }
+          } catch (imgDrawErr) {
+            console.warn("Direct image draw fallback to html2canvas:", imgDrawErr)
+          }
+        }
 
-        const dataUrl = canvas.toDataURL("image/png")
-        await saveCapturedScreenshot(dataUrl)
-        return
+        // Try html2canvas with modern color function sanitization (converts lab, oklch, lch, oklab to rgb)
+        try {
+          const colorCanvas = document.createElement("canvas")
+          const colorCtx = colorCanvas.getContext("2d")
+          const COLOR_REGEX = /(?:oklch|oklab|lab|lch)\([^)]+\)/gi
+
+          const sanitizeColor = (val: string): string => {
+            if (!val || typeof val !== "string") return val
+            if (!val.includes("lab(") && !val.includes("oklch(") && !val.includes("lch(") && !val.includes("oklab(")) {
+              return val
+            }
+            return val.replace(COLOR_REGEX, (match) => {
+              if (!colorCtx) return "rgb(15, 17, 23)"
+              try {
+                colorCtx.fillStyle = "#000000"
+                colorCtx.fillStyle = match
+                return colorCtx.fillStyle || "rgb(15, 17, 23)"
+              } catch {
+                return "rgb(15, 17, 23)"
+              }
+            })
+          }
+
+          // Monkeypatch getComputedStyle globally during html2canvas to intercept any lab() or oklch()
+          const originalGetComputedStyle = window.getComputedStyle
+          const patchedGetComputedStyle: typeof window.getComputedStyle = function (elt, pseudoElt) {
+            const cs = originalGetComputedStyle.call(window, elt, pseudoElt)
+            return new Proxy(cs, {
+              get(target, prop) {
+                const origVal = (target as any)[prop]
+                if (typeof origVal === "function") {
+                  if (prop === "getPropertyValue") {
+                    return (p: string) => sanitizeColor(target.getPropertyValue(p))
+                  }
+                  return origVal.bind(target)
+                }
+                if (typeof origVal === "string") {
+                  return sanitizeColor(origVal)
+                }
+                return origVal
+              },
+            })
+          }
+
+          let canvas: HTMLCanvasElement
+          try {
+            window.getComputedStyle = patchedGetComputedStyle
+
+            canvas = await html2canvas(secondScreenRef.current, {
+              backgroundColor: "#0f1117",
+              useCORS: true,
+              allowTaint: true,
+              scale: 1 / Math.max(0.1, currentScale),
+              logging: false,
+              ignoreElements: (element) => element.tagName === "IFRAME",
+              onclone: (clonedDoc) => {
+                // Also sanitize all style tags in the cloned document
+                try {
+                  clonedDoc.querySelectorAll("style").forEach((styleEl) => {
+                    if (styleEl.textContent) {
+                      styleEl.textContent = sanitizeColor(styleEl.textContent)
+                    }
+                  })
+                } catch {
+                  // ignore
+                }
+              },
+            })
+          } finally {
+            window.getComputedStyle = originalGetComputedStyle
+          }
+
+          const dataUrl = canvas.toDataURL("image/png")
+          await saveCapturedScreenshot(dataUrl)
+          return
+        } catch (canvasErr: any) {
+          console.warn("html2canvas encountered error, trying fallback canvas:", canvasErr)
+          // Ultimate fallback: create clean fallback canvas of viewport dimensions
+          const fallbackCanvas = document.createElement("canvas")
+          fallbackCanvas.width = viewportWidth
+          fallbackCanvas.height = viewportHeight
+          const fbCtx = fallbackCanvas.getContext("2d")
+          if (fbCtx) {
+            fbCtx.fillStyle = "#0f1117"
+            fbCtx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height)
+            if (existingImg && existingImg.complete) {
+              fbCtx.drawImage(existingImg, 0, 0, viewportWidth, viewportHeight)
+            } else {
+              fbCtx.fillStyle = "#6366f1"
+              fbCtx.font = "bold 16px sans-serif"
+              fbCtx.textAlign = "center"
+              fbCtx.fillText(currentWorkflow?.title || "App Preview", viewportWidth / 2, viewportHeight / 2)
+            }
+            const dataUrl = fallbackCanvas.toDataURL("image/png")
+            await saveCapturedScreenshot(dataUrl)
+            return
+          }
+        }
       }
 
       triggerToast("Could not capture second screen")
