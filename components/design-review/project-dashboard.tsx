@@ -399,7 +399,17 @@ export function ProjectDashboard({
 
                       {/* Dropdown menu */}
                       {menuOpenId === project.id && (
-                        <div className="absolute right-0 bottom-full mb-1 w-44 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-1.5 shadow-xl dark:shadow-2xl z-30 flex flex-col gap-0.5 text-xs">
+                        <>
+                          {/* Fixed transparent backdrop to collapse and hide on outside click */}
+                          <div
+                            className="fixed inset-0 z-20 bg-transparent cursor-default"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setMenuOpenId(null)
+                            }}
+                            aria-hidden="true"
+                          />
+                          <div className="absolute right-0 bottom-full mb-1 w-44 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-1.5 shadow-xl dark:shadow-2xl z-30 flex flex-col gap-0.5 text-xs animate-in fade-in-50 zoom-in-95 duration-150">
                           {canEditProject && (
                             <button
                               type="button"
@@ -495,7 +505,8 @@ export function ProjectDashboard({
                             </button>
                           )}
                         </div>
-                      )}
+                      </>
+                    )}
                     </div>
                   </div>
                 </div>

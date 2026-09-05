@@ -27,14 +27,8 @@ async function inspectHooperProject() {
   })
   await client.connect()
 
-  const { rows: projects } = await client.query("SELECT id, title, user_id FROM projects")
-  console.log("All projects:", projects)
-
-  const { rows: members } = await client.query("SELECT * FROM project_members")
-  console.log("All project members:", members)
-
-  const { rows: invites } = await client.query("SELECT * FROM project_invites")
-  console.log("All project invites:", invites)
+  const { rows: workflows } = await client.query("SELECT id, title, design_a, design_b FROM workflows WHERE project_id = 'a02d0105-4c34-4a23-820b-7c5242fdf454' ORDER BY created_at ASC LIMIT 5")
+  console.log("Workflows:", workflows)
 
   await client.end()
 }

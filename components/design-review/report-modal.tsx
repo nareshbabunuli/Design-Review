@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Eye,
   User,
+  ChevronDown,
   Send,
   Check,
   LogOut,
@@ -40,7 +41,7 @@ type ReportModalProps = {
   isViewerOnly?: boolean
   canComment?: boolean
   canApprove?: boolean
-  userRole?: "client" | "freelancer" | "owner" | null
+  userRole?: "client" | "freelancer" | "owner" | "developer" | null
   inviteeEmail?: string | null
   user?: { id: string; email?: string } | null
   theme?: "light" | "dark"
@@ -115,11 +116,12 @@ export function ReportModal({
   const effectiveCanComment = canComment ?? true
   const effectiveCanApprove = canApprove ?? isOwner
 
-  const canEditFigmaUrl = Boolean(
+  const isDeveloperOrOwner = Boolean(
     isOwner ||
-    canEdit ||
     userRole === "owner" ||
     userRole === "freelancer" ||
+    (userRole as string) === "developer" ||
+    (!isViewerOnly && effectiveCanEdit) ||
     (user?.id && project.userId ? project.userId === user.id : !project.userId) ||
     (user?.email && (
       user.email.toLowerCase().includes("syntax.ai") ||
@@ -127,6 +129,8 @@ export function ReportModal({
       user.email.toLowerCase().includes("freelancer")
     ))
   )
+
+  const canEditFigmaUrl = isDeveloperOrOwner
 
   const [lightbox, setLightbox] = useState<LightboxState | null>(null)
   const [zoom, setZoom] = useState<number>(1)
@@ -136,6 +140,8 @@ export function ReportModal({
   const [submittedNotesId, setSubmittedNotesId] = useState<string | null>(null)
   const [submittedReasonId, setSubmittedReasonId] = useState<string | null>(null)
   const [submittedClientMessageId, setSubmittedClientMessageId] = useState<string | null>(null)
+  const [isSubmittingRevisionId, setIsSubmittingRevisionId] = useState<string | null>(null)
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState<boolean>(false)
 
   // Executive Metrics
   const totalWorkflows = project.workflows.length
@@ -376,16 +382,22 @@ export function ReportModal({
         ? reasonDrafts[workflowId]
         : project.workflows.find((w) => w.id === workflowId)?.reason || ""
 
-    if (onSubmitRevision) {
-      await onSubmitRevision(workflowId, currentVal)
-    } else if (onUpdateWorkflowField) {
-      onUpdateWorkflowField(workflowId, "reason", currentVal)
-    }
+    if (isSubmittingRevisionId) return
+    setIsSubmittingRevisionId(workflowId)
+    try {
+      if (onSubmitRevision) {
+        await onSubmitRevision(workflowId, currentVal)
+      } else if (onUpdateWorkflowField) {
+        onUpdateWorkflowField(workflowId, "reason", currentVal)
+      }
 
-    setSubmittedReasonId(workflowId)
-    setTimeout(() => {
-      setSubmittedReasonId((prev) => (prev === workflowId ? null : prev))
-    }, 2500)
+      setSubmittedReasonId(workflowId)
+      setTimeout(() => {
+        setSubmittedReasonId((prev) => (prev === workflowId ? null : prev))
+      }, 2500)
+    } finally {
+      setIsSubmittingRevisionId(null)
+    }
   }
 
   const handleSubmitClientMessage = (workflowId: string) => {
@@ -548,7 +560,12 @@ export function ReportModal({
           {isOwner ? (
             <span className="hidden sm:inline-flex items-center gap-1.5 bg-blue-900/80 text-blue-200 border border-blue-500/40 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0">
               <ShieldCheck className="h-3.5 w-3.5 text-blue-300" />
-              Sender (Project Owner)
+              Project Owner
+            </span>
+          ) : isDeveloperOrOwner ? (
+            <span className="hidden sm:inline-flex items-center gap-1.5 bg-indigo-900/80 text-indigo-200 border border-indigo-500/40 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0">
+              <Pencil className="h-3.5 w-3.5 text-indigo-300" />
+              Developer
             </span>
           ) : (
             <span className="hidden sm:inline-flex items-center gap-1.5 bg-purple-900/80 text-purple-200 border border-purple-500/40 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shrink-0">
@@ -587,28 +604,68 @@ export function ReportModal({
           </button>
 
           {user && (
-            <div className="hidden md:flex items-center gap-2.5 pl-3 border-l border-slate-700">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white shadow-sm ring-1 ring-slate-600">
-                {user.email ? user.email.slice(0, 2).toUpperCase() : "CL"}
-              </div>
-              <div className="flex flex-col text-left">
-                <span className="text-xs font-medium text-slate-200 leading-tight max-w-[140px] truncate">
-                  {user.email}
-                </span>
-                <span className="text-[10px] text-purple-300 font-medium">
-                  {isOwner ? "Sender (Owner)" : "Viewer (Client)"}
-                </span>
-              </div>
-              {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 hover:bg-rose-950/60 hover:border-rose-700 hover:text-rose-300 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors cursor-pointer"
-                  title="Log out"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>Log out</span>
-                </button>
+            <div className="relative pl-3 border-l border-slate-700">
+              <button
+                type="button"
+                onClick={() => setIsProfileMenuOpen((prev) => !prev)}
+                className="flex items-center gap-1.5 p-0.5 pr-1 rounded-full hover:bg-slate-800 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                title={isProfileMenuOpen ? "Collapse profile menu" : "Open profile menu"}
+                aria-expanded={isProfileMenuOpen}
+                aria-haspopup="true"
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white shadow-sm ring-1 ring-slate-600">
+                  {user.email ? user.email.slice(0, 2).toUpperCase() : "CL"}
+                </div>
+                <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${isProfileMenuOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {/* Fixed transparent backdrop to collapse and hide on outside click */}
+              {isProfileMenuOpen && (
+                <div
+                  className="fixed inset-0 z-40 bg-transparent cursor-default"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setIsProfileMenuOpen(false)
+                  }}
+                  aria-hidden="true"
+                />
+              )}
+
+              {/* Profile Dropdown Menu */}
+              {isProfileMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 sm:w-64 rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-2xl z-50 flex flex-col text-xs transition-all animate-in fade-in-50 zoom-in-95 duration-150 origin-top-right">
+                  {/* User info */}
+                  <div className="px-3 py-2 border-b border-slate-800 mb-1">
+                    <div className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
+                      Signed in as
+                    </div>
+                    <div className="font-semibold text-slate-100 truncate mt-0.5" title={user.email || ""}>
+                      {user.email}
+                    </div>
+                    <div className="text-[10px] text-purple-300 font-medium mt-0.5">
+                      {isOwner
+                        ? "Project Owner"
+                        : isDeveloperOrOwner
+                        ? "Developer"
+                        : "Viewer (Client)"}
+                    </div>
+                  </div>
+
+                  {/* Logout */}
+                  {onLogout && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false)
+                        onLogout()
+                      }}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-rose-400 hover:bg-rose-950/40 transition-colors text-left font-medium cursor-pointer"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span>Log out</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -847,15 +904,72 @@ export function ReportModal({
 
                   {/* Our Notes */}
                   <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl p-5 print:p-3 flex-1 flex flex-col">
-                    <div className="flex justify-between items-center mb-2 text-blue-900 dark:text-blue-200 font-bold text-base md:text-lg print:text-sm">
+                    <div className="flex justify-between items-center mb-3 text-blue-900 dark:text-blue-200 font-bold text-base md:text-lg print:text-sm">
                       <div className="flex items-center gap-2">
                         <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400 print:h-4 print:w-4" />
                         <span>Our Notes</span>
                       </div>
+                      {isDeveloperOrOwner ? (
+                        <span className="flex items-center gap-1 text-[11px] text-blue-700 dark:text-blue-300 font-medium bg-blue-100/90 dark:bg-blue-900/60 border border-blue-200 dark:border-blue-800 px-2.5 py-0.5 rounded-full print:hidden">
+                          <Pencil className="h-3 w-3" />
+                          {userRole === "freelancer" ? "Freelancer Notes" : "Developer & Owner"}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full print:hidden">
+                          <AlertCircle className="h-3 w-3" /> Read-only
+                        </span>
+                      )}
                     </div>
-                    <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
-                      {workflow.ourNotes || "No notes provided."}
-                    </p>
+
+                    {/* Interactive Editor for Developer & Owner */}
+                    {isDeveloperOrOwner ? (
+                      <div className="flex-1 flex flex-col print:hidden">
+                        <textarea
+                          value={notesDrafts[workflow.id] ?? (workflow.ourNotes || "")}
+                          onChange={(e) =>
+                            setNotesDrafts((prev) => ({ ...prev, [workflow.id]: e.target.value }))
+                          }
+                          onBlur={() => handleSubmitNotes(workflow.id)}
+                          className="flex-1 min-h-[140px] w-full resize-y rounded-xl border border-blue-200 dark:border-blue-900/80 bg-white dark:bg-slate-900/90 p-3.5 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 leading-relaxed shadow-inner transition-all"
+                          placeholder="Developer notes about the design structure, constraints, or UX decisions..."
+                        />
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-blue-200/60 dark:border-blue-900/40">
+                          <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                            {submittedNotesId === workflow.id
+                              ? "✓ Notes saved!"
+                              : "Auto-saves on blur or click save"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitNotes(workflow.id)}
+                            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold shadow-xs transition-all cursor-pointer ${
+                              submittedNotesId === workflow.id
+                                ? "bg-emerald-600 text-white hover:bg-emerald-700 ring-2 ring-emerald-500/30"
+                                : "bg-blue-600 text-white hover:bg-blue-700 hover:shadow-md"
+                            }`}
+                          >
+                            {submittedNotesId === workflow.id ? (
+                              <>
+                                <CheckCircle className="h-3.5 w-3.5" />
+                                <span>Saved!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="h-3.5 w-3.5" />
+                                <span>Save Notes</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Print & Non-Developer Read-Only View */}
+                    <div className={isDeveloperOrOwner ? "hidden print:block" : "block flex-1"}>
+                      <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
+                        {notesDrafts[workflow.id] ?? (workflow.ourNotes || "No notes provided.")}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -954,16 +1068,128 @@ export function ReportModal({
               </div>
 
               {/* Reason for Final Changes */}
-              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 print:p-3 w-full flex flex-col space-y-2 print:space-y-1">
-                <div className="flex justify-between items-center mb-1 text-amber-900 dark:text-amber-200 font-bold text-base md:text-lg print:text-sm">
+              <div className="bg-amber-50/80 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-xl p-5 print:p-3 w-full flex flex-col space-y-3 print:space-y-1">
+                <div className="flex justify-between items-center text-amber-900 dark:text-amber-200 font-bold text-base md:text-lg print:text-sm">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 print:h-4 print:w-4" />
                     <span>Reason for Final Changes</span>
                   </div>
+                  {isDeveloperOrOwner ? (
+                    <span className="flex items-center gap-1 text-[11px] text-amber-800 dark:text-amber-300 font-medium bg-amber-100/90 dark:bg-amber-900/60 border border-amber-200 dark:border-amber-800 px-2.5 py-0.5 rounded-full print:hidden">
+                      <Pencil className="h-3 w-3" />
+                      {userRole === "freelancer" ? "Freelancer Submission" : "Developer & Owner"}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full print:hidden">
+                      <AlertCircle className="h-3 w-3" /> Read-only
+                    </span>
+                  )}
                 </div>
-                <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
-                  {workflow.reason || "No reason provided."}
-                </p>
+
+                {isDeveloperOrOwner ? (
+                  <div className="space-y-3 print:hidden">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                      Provide an explanation for the adjustments made in this revision in response to client feedback:
+                    </p>
+                    <textarea
+                      value={reasonDrafts[workflow.id] ?? (workflow.reason || "")}
+                      onChange={(e) =>
+                        setReasonDrafts((prev) => ({ ...prev, [workflow.id]: e.target.value }))
+                      }
+                      onBlur={() => {
+                        const val = reasonDrafts[workflow.id]
+                        if (val !== undefined && onUpdateWorkflowField) {
+                          onUpdateWorkflowField(workflow.id, "reason", val)
+                        }
+                      }}
+                      className="min-h-[90px] w-full resize-y rounded-xl border border-amber-200 dark:border-amber-800/80 bg-white dark:bg-slate-900/90 p-3.5 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 leading-relaxed shadow-inner transition-all"
+                      placeholder="e.g., Updated the button hierarchy, improved contrast, and adjusted mobile padding..."
+                    />
+                    <div className="flex items-center justify-between pt-1 border-t border-amber-200/60 dark:border-amber-900/40">
+                      <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                        {submittedReasonId === workflow.id
+                          ? "✓ Revision & reason submitted!"
+                          : isSubmittingRevisionId === workflow.id
+                          ? "Submitting revision..."
+                          : "Auto-saves on blur, or submit official revision"}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={
+                          isSubmittingRevisionId === workflow.id ||
+                          !(reasonDrafts[workflow.id] ?? workflow.reason ?? "").trim()
+                        }
+                        onClick={() => handleSubmitReason(workflow.id)}
+                        className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold shadow-sm transition-all cursor-pointer disabled:opacity-50 ${
+                          submittedReasonId === workflow.id
+                            ? "bg-emerald-600 text-white hover:bg-emerald-700 ring-2 ring-emerald-500/30"
+                            : "bg-amber-600 text-white hover:bg-amber-700 hover:shadow-md"
+                        }`}
+                      >
+                        {submittedReasonId === workflow.id ? (
+                          <>
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            <span>Submitted!</span>
+                          </>
+                        ) : isSubmittingRevisionId === workflow.id ? (
+                          <>
+                            <Clock className="h-3.5 w-3.5 animate-spin" />
+                            <span>Submitting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Submit Revision &amp; Reason</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Print & Non-Developer Read-Only View */}
+                <div className={isDeveloperOrOwner ? "hidden print:block" : "block"}>
+                  <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap text-sm md:text-base print:text-xs print:max-h-[240px] print:overflow-hidden leading-relaxed">
+                    {reasonDrafts[workflow.id] ?? (workflow.reason || "No reason provided.")}
+                  </p>
+                </div>
+
+                {/* Revision History Log if present */}
+                {workflow.revisions && workflow.revisions.length > 0 && (
+                  <div className="mt-2 pt-3 border-t border-amber-200/70 dark:border-amber-900/50 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-amber-500" />
+                        <span>Revision History Log ({workflow.revisions.length})</span>
+                      </h4>
+                    </div>
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                      {workflow.revisions.map((rev) => (
+                        <div
+                          key={rev.id}
+                          className="p-3 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-amber-200/80 dark:border-amber-800/40 text-xs space-y-1 shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-amber-700 dark:text-amber-400">
+                              Revision {rev.revisionNumber}
+                            </span>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {new Date(rev.createdAt).toLocaleDateString()} at{" "}
+                              {new Date(rev.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                            <span className="font-semibold text-slate-600 dark:text-slate-400">Reason:</span> {rev.reason}
+                          </p>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 pt-0.5">
+                            Submitted by: <span className="capitalize font-medium text-slate-700 dark:text-slate-300">{rev.authorRole}</span>{" "}
+                            {rev.authorEmail ? `(${rev.authorEmail})` : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </section>
