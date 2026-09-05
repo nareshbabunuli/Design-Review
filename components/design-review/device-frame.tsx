@@ -547,11 +547,12 @@ export function DeviceFrame({
             {/* Display Inner Screen */}
             <div
               ref={screenRef}
+              data-device-screen="true"
               style={{ width: `${width}px`, height: `${height}px` }}
               className="relative rounded-[44px] overflow-hidden bg-[#0a0c10] shadow-inner flex flex-col shrink-0"
             >
               {/* Dynamic Island Pill */}
-              <div className="absolute top-[10px] left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center justify-between px-3 w-[122px] h-[33px] bg-black rounded-full shadow-[0_0_6px_rgba(0,0,0,0.9)] border border-black/80">
+              <div className="device-frame-overlay absolute top-[10px] left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center justify-between px-3 w-[122px] h-[33px] bg-black rounded-full shadow-[0_0_6px_rgba(0,0,0,0.9)] border border-black/80 transition-opacity">
                 {/* Front Camera Lens Specular Highlight */}
                 <div className="w-2.5 h-2.5 rounded-full bg-[#080d19] ring-1 ring-[#161f33] flex items-center justify-center">
                   <div className="w-1 h-1 rounded-full bg-[#1b2b52]" />
@@ -562,7 +563,7 @@ export function DeviceFrame({
 
               {/* Status Bar Overlay (Clock & Icons) */}
               {showStatusBar && (
-                <div className="absolute top-0 inset-x-0 h-10 px-7 z-20 pointer-events-none flex items-center justify-between text-white text-[12px] font-semibold tracking-tight">
+                <div className="device-frame-overlay absolute top-0 inset-x-0 h-10 px-7 z-20 pointer-events-none flex items-center justify-between text-white text-[12px] font-semibold tracking-tight transition-opacity">
                   <span className="font-mono text-[11px] pt-0.5">9:41</span>
                   <div className="flex items-center gap-1.5 pt-0.5">
                     <div className="flex items-end gap-0.5 h-2.5">
@@ -584,7 +585,7 @@ export function DeviceFrame({
               <div className="w-full h-full relative overflow-hidden">{children}</div>
 
               {/* iOS Home Indicator Bar */}
-              <div className="absolute bottom-[8px] left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[134px] h-[4px] bg-white/70 hover:bg-white rounded-full shadow-sm" />
+              <div className="device-frame-overlay absolute bottom-[8px] left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[134px] h-[4px] bg-white/70 hover:bg-white rounded-full shadow-sm transition-opacity" />
             </div>
           </div>
         )}
@@ -605,11 +606,12 @@ export function DeviceFrame({
             {/* Display Inner Screen */}
             <div
               ref={screenRef}
+              data-device-screen="true"
               style={{ width: `${width}px`, height: `${height}px` }}
               className="relative rounded-[40px] overflow-hidden bg-[#0a0c10] shadow-inner flex flex-col shrink-0"
             >
               {/* Notch Cutout */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[148px] h-[28px] bg-black rounded-b-[18px] flex items-center justify-center shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+              <div className="device-frame-overlay absolute top-0 left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[148px] h-[28px] bg-black rounded-b-[18px] flex items-center justify-center shadow-[0_2px_4px_rgba(0,0,0,0.6)] transition-opacity">
                 {/* Speaker mesh slit */}
                 <div className="w-12 h-1 bg-[#1a1c22] rounded-full border border-black" />
                 {/* Camera dot */}
@@ -618,7 +620,7 @@ export function DeviceFrame({
 
               {/* Status Bar flanking the notch */}
               {showStatusBar && (
-                <div className="absolute top-0 inset-x-0 h-8 px-6 z-20 pointer-events-none flex items-center justify-between text-white text-[12px] font-semibold tracking-tight">
+                <div className="device-frame-overlay absolute top-0 inset-x-0 h-8 px-6 z-20 pointer-events-none flex items-center justify-between text-white text-[12px] font-semibold tracking-tight transition-opacity">
                   <span className="font-mono text-[11px] pt-1">9:41</span>
                   <div className="flex items-center gap-1.5 pt-1">
                     <Wifi className="w-3 h-3 stroke-[2.5]" />
@@ -633,7 +635,7 @@ export function DeviceFrame({
               <div className="w-full h-full relative overflow-hidden">{children}</div>
 
               {/* iOS Home Indicator Bar */}
-              <div className="absolute bottom-[8px] left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[134px] h-[4px] bg-white/70 rounded-full shadow-sm" />
+              <div className="device-frame-overlay absolute bottom-[8px] left-1/2 -translate-x-1/2 z-30 pointer-events-none w-[134px] h-[4px] bg-white/70 rounded-full shadow-sm transition-opacity" />
             </div>
           </div>
         )}

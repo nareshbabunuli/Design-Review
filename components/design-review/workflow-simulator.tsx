@@ -16,6 +16,7 @@ import {
   X,
   Plus,
   Lock,
+  Key,
   Globe,
   SlidersHorizontal,
   ChevronDown,
@@ -32,9 +33,12 @@ import {
   FileText,
   AlertCircle,
   Upload,
+  Crop,
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
+import { AreaSelectionOverlay } from "./area-selection-overlay"
+import { CapturedResultModal } from "./captured-result-modal"
 import {
   DeviceFrame,
   EXTENDED_DEVICE_PRESETS,
@@ -44,11 +48,20 @@ import {
   getDeviceFrameMetrics,
 } from "./device-frame"
 import { ThemeToggle } from "./theme-toggle"
-import { CanvasScreencast, CanvasScreencastRef } from "./canvas-screencast"
 
 // ============================================================================
 // Types & Constants
 // ============================================================================
+
+export type CaptureMode = "clean-app" | "framed-device"
+export type CaptureScope = "full" | "selection"
+
+export interface NativeCrop {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 const DEVICE_CATEGORIES = ["Desktop", "Laptop", "Tablet", "Mobile", "Custom"] as const
 type DeviceCategory = (typeof DEVICE_CATEGORIES)[number]
@@ -223,50 +236,43 @@ export function WorkflowSimulator({
 
   // Live browser navigation
   const defaultUrl = useMemo(() => {
-    return "http://localhost:8082"
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("simulator_active_url")
+      if (saved) return saved
+    }
+    return "http://localhost:8081"
   }, [])
 
   const [urlInput, setUrlInput] = useState<string>(defaultUrl)
   const [currentUrl, setCurrentUrl] = useState<string>(defaultUrl)
-  const [canvasReloadKey, setCanvasReloadKey] = useState<number>(0)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => !currentWorkflow?.designB)
-  const canvasScreencastRef = useRef<CanvasScreencastRef>(null)
-  const [currentSession, setCurrentSession] = useState<any>(null)
-  const [isSessionLoaded, setIsSessionLoaded] = useState<boolean>(false)
-
-  useEffect(() => {
-    let isMounted = true
-    const supabase = createClient()
-    const initSession = async () => {
-      try {
-        const { data } = await supabase.auth.getSession()
-        if (isMounted) {
-          setCurrentSession(data?.session ?? null)
-        }
-      } catch (err) {
-        console.error("[WorkflowSimulator] Error fetching Supabase session:", err)
-      } finally {
-        if (isMounted) {
-          setIsSessionLoaded(true)
-        }
-      }
+  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("simulator_is_live_mode")
+      if (saved !== null) return saved === "true"
     }
-    initSession()
-    return () => {
-      isMounted = false
+    return true
+  })
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false)
+  const [authConfig, setAuthConfig] = useState<{
+    type: "login" | "cookie" | "token"
+    username?: string
+    password?: string
+    cookie?: string
+    token?: string
+  }>(() => {
+    if (typeof window === "undefined") return { type: "login", username: "", password: "" }
+    try {
+      const saved = localStorage.getItem("simulator_auth_credentials")
+      return saved ? JSON.parse(saved) : { type: "login", username: "", password: "" }
+    } catch {
+      return { type: "login", username: "", password: "" }
     }
-  }, [])
+  })
 
   const [navHistory, setNavHistory] = useState<string[]>([defaultUrl])
   const [navIndex, setNavIndex] = useState<number>(0)
-
-  // Default to showing saved App Screenshot when designB is already saved
-  useEffect(() => {
-    if (currentWorkflow?.designB) {
-      setIsLiveCanvas(false)
-    }
-  }, [currentWorkflow?.id, currentWorkflow?.designB])
 
   // Toast queue
   const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([])
@@ -315,8 +321,18 @@ export function WorkflowSimulator({
       setIsLiveCanvas(true)
 
       if (target === currentUrl) {
-        setCanvasReloadKey((k) => k + 1)
+        if (iframeRef.current) {
+          try {
+            iframeRef.current.contentWindow?.location.reload()
+          } catch (e) {
+            const src = iframeRef.current.src
+            iframeRef.current.src = src
+          }
+        }
       } else {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("simulator_active_url", target)
+        }
         setCurrentUrl(target)
         setNavHistory((prev) => [...prev.slice(0, navIndex + 1), target])
         setNavIndex((prev) => prev + 1)
@@ -346,8 +362,15 @@ export function WorkflowSimulator({
   }, [navIndex, navHistory, triggerToast])
 
   const handleRefresh = useCallback(() => {
-    setCanvasReloadKey((k) => k + 1)
-    triggerToast("Reloaded canvas")
+    if (iframeRef.current) {
+      try {
+        iframeRef.current.contentWindow?.location.reload()
+      } catch (e) {
+        const src = iframeRef.current.src
+        iframeRef.current.src = src
+      }
+    }
+    triggerToast("Reloaded preview")
   }, [triggerToast])
 
   const [showGrid, setShowGrid] = useState<boolean>(true)
@@ -359,6 +382,34 @@ export function WorkflowSimulator({
   const [pendingScreenshotUrl, setPendingScreenshotUrl] = useState<string | null>(null)
   const [isSavingScreenshot, setIsSavingScreenshot] = useState<boolean>(false)
   const [isCapturing, setIsCapturing] = useState<boolean>(false)
+
+  // Interactive Area Selection & Native Live Snip
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("clean-app")
+  const [isAreaSelectionActive, setIsAreaSelectionActive] = useState<boolean>(false)
+  const selectionBoxRef = useRef<HTMLDivElement>(null)
+  const [capturedResultUrl, setCapturedResultUrl] = useState<string | null>(null)
+  const [isResultModalOpen, setIsResultModalOpen] = useState<boolean>(false)
+  const [isSavingResult, setIsSavingResult] = useState<boolean>(false)
+
+  // Global Escape key handler to dismiss overlays, modals, and pin placement
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isAreaSelectionActive) {
+          e.preventDefault()
+          setIsAreaSelectionActive(false)
+        } else if (isResultModalOpen) {
+          e.preventDefault()
+          setIsResultModalOpen(false)
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown)
+    }
+  }, [isAreaSelectionActive, isResultModalOpen])
 
   // Annotations
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -464,7 +515,8 @@ export function WorkflowSimulator({
 
   const autoFitScale = useMemo(() => {
     if (!workspaceSize.width || !workspaceSize.height) return 0.58
-    const availH = Math.max(120, workspaceSize.height - 60)
+    // Leave 84px headroom for headers, browser address bar (h-9), and container padding
+    const availH = Math.max(120, workspaceSize.height - 84)
     const metrics = getDeviceFrameMetrics(currentFrameType, viewportWidth, viewportHeight, showDeviceFrame)
     const effectiveW = metrics.totalWidth
     const effectiveH = metrics.totalHeight
@@ -720,13 +772,15 @@ export function WorkflowSimulator({
     triggerToast("Screenshot upload cancelled")
   }
 
-  const handleCaptureLiveFrame = async () => {
+  const handleCaptureLiveFrame = async (crop?: NativeCrop) => {
     console.log("[DEBUG] handleCaptureLiveFrame started", {
       currentWorkflow: currentWorkflow?.id,
       isCapturing,
       currentUrl,
       viewportWidth,
       viewportHeight,
+      crop,
+      captureMode,
     })
 
     if (!currentWorkflow || isCapturing) {
@@ -738,88 +792,67 @@ export function WorkflowSimulator({
     }
 
     setIsCapturing(true)
-    triggerToast("Capturing live frame…")
+    triggerToast(crop ? "Capturing selected area…" : "Capturing full app screen…")
 
     try {
       const supabase = createClient()
       let finalUrl: string | null = null
 
-      // 1. Capture directly from the Canvas element (Instant 0ms, zero CORS!)
-      if (canvasScreencastRef.current) {
-        const dataUrl = canvasScreencastRef.current.getScreenshot()
-        if (dataUrl && dataUrl.length > 1000) {
-          console.log("[DEBUG] Instant Canvas screenshot captured!")
+      console.log("[DEBUG] Running server-side capture with credentials...")
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const SCREENSHOT_TOKEN = "screenshot_bypass_dev_token_12345"
+      const captureUrl = currentUrl.includes("?")
+        ? `${currentUrl}&screenshot_token=${SCREENSHOT_TOKEN}`
+        : `${currentUrl}?screenshot_token=${SCREENSHOT_TOKEN}`
 
-          try {
-            const resBlob = await fetch(dataUrl)
-            const blob = await resBlob.blob()
-            const fileName = `${currentWorkflow.id}-designB-${Date.now()}.png`
-            const filePath = `workflows/${currentWorkflow.id}/${fileName}`
+      const savedCredsStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+      const credentials = savedCredsStr ? JSON.parse(savedCredsStr) : (authConfig.username || authConfig.cookie || authConfig.token ? authConfig : null)
 
-            const { error: uploadError } = await supabase.storage
-              .from("designs")
-              .upload(filePath, blob, {
-                upsert: true,
-                contentType: "image/png",
-              })
-
-            if (!uploadError) {
-              const { data: pubData } = supabase.storage.from("designs").getPublicUrl(filePath)
-              finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
-              console.log("[DEBUG] Canvas screenshot uploaded:", finalUrl)
-            } else {
-              console.warn("[DEBUG] Upload error, using preview dataUrl:", uploadError)
-              finalUrl = dataUrl
-            }
-          } catch (uploadErr) {
-            console.warn("[DEBUG] Upload error, using preview dataUrl:", uploadErr)
-            finalUrl = dataUrl
-          }
-        }
-      }
-
-      // 2. Fallback to server-side capture if Canvas was not ready
-      if (!finalUrl) {
-        console.log("[DEBUG] Running server-side capture fallback...")
-        const {
-          data: { session },
-        } = await supabase.auth.getSession()
-        const SCREENSHOT_TOKEN = "screenshot_bypass_dev_token_12345"
-        const captureUrl = currentUrl.includes("?")
-          ? `${currentUrl}&screenshot_token=${SCREENSHOT_TOKEN}`
-          : `${currentUrl}?screenshot_token=${SCREENSHOT_TOKEN}`
-
-        const res = await fetch("/api/capture-screenshot", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session?.access_token && {
-              Authorization: `Bearer ${session.access_token}`,
-            }),
-          },
-          body: JSON.stringify({
-            url: captureUrl,
-            width: viewportWidth,
-            height: viewportHeight,
-            workflowId: currentWorkflow.id,
-            accessToken: session?.access_token,
-            refreshToken: session?.refresh_token,
-            session: session,
-            rawStorageKey: Object.keys(window.localStorage).find(
-              (k) => k.includes("auth-token") || k.includes("supabase")
-            ),
+      const res = await fetch("/api/capture-screenshot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token && {
+            Authorization: `Bearer ${session.access_token}`,
           }),
-        })
+        },
+        body: JSON.stringify({
+          url: captureUrl,
+          width: viewportWidth,
+          height: viewportHeight,
+          workflowId: currentWorkflow.id,
+          credentials,
+          accessToken: session?.access_token,
+          refreshToken: session?.refresh_token,
+          session: session,
+          rawStorageKey: Object.keys(window.localStorage).find(
+            (k) => k.includes("auth-token") || k.includes("supabase")
+          ),
+          crop: crop
+            ? {
+                x: Math.round(crop.x),
+                y: Math.round(crop.y),
+                width: Math.round(crop.width),
+                height: Math.round(crop.height),
+              }
+            : undefined,
+          captureMode,
+        }),
+      })
 
-        const data = await res.json()
-        if (!res.ok || !data.publicUrl) {
-          const errorMsg = data.error || "Capture failed"
-          console.error("[DEBUG] Capture API failed", { data, error: errorMsg })
-          throw new Error(errorMsg)
-        }
-
-        finalUrl = `${data.publicUrl}?v=${Date.now()}`
+      const data = await res.json()
+      if (!res.ok || !data.publicUrl) {
+        const errorMsg = data.error || "Capture failed"
+        console.error("[DEBUG] Capture API failed", { data, error: errorMsg })
+        throw new Error(errorMsg)
       }
+
+      finalUrl = `${data.publicUrl}?v=${Date.now()}`
+
+      const capW = crop ? Math.round(crop.width) : viewportWidth
+      const capH = crop ? Math.round(crop.height) : viewportHeight
 
       // 3. AUTOMATICALLY ADD SCREENSHOT TO WORKFLOW DESIGN B!
       if (finalUrl && onUpdateField) {
@@ -834,7 +867,7 @@ export function WorkflowSimulator({
         const newCapture: CapturedScreenshot = {
           id: `snap-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          dimensions: `${viewportWidth} × ${viewportHeight}`,
+          dimensions: `${capW} × ${capH}`,
           url: finalUrl,
           mode: compareMode,
         }
@@ -842,9 +875,18 @@ export function WorkflowSimulator({
         console.log("[DEBUG] Adding new capture to history", newCapture)
         setCapturedScreenshots((prev) => [newCapture, ...prev])
 
+        // Update preview modal and deactivate area selection
+        setCapturedResultUrl(finalUrl)
+        setIsResultModalOpen(true)
+        setIsAreaSelectionActive(false)
+
         // Automatically switch view to show the newly saved App Screenshot!
         setIsLiveCanvas(false)
-        triggerToast("Screenshot automatically captured & added to Design B!")
+        triggerToast(
+          crop
+            ? `Area captured & saved to Design B! (${capW} × ${capH}px)`
+            : `App screen captured & saved to Design B! (${capW} × ${capH}px)`
+        )
 
         setDebugInfo((prev) => ({
           ...prev,
@@ -862,6 +904,277 @@ export function WorkflowSimulator({
       triggerToast(errorMsg)
     } finally {
       setIsCapturing(false)
+    }
+  }
+
+  // Persistent live stream reference so the user only authorizes once per session
+  const activeStreamRef = useRef<MediaStream | null>(null)
+
+  useEffect(() => {
+    return () => {
+      activeStreamRef.current?.getTracks().forEach((t) => t.stop())
+      activeStreamRef.current = null
+    }
+  }, [])
+
+  // Primary capture: Instant 0-second live screen capture from active tab
+  const handleLiveScreenCapture = async (
+    forceFullScreen = false,
+    cropBox?: NativeCrop
+  ) => {
+    if (!currentWorkflow || isCapturing) return
+    setIsCapturing(true)
+    triggerToast(cropBox && !forceFullScreen ? "Capturing selected area…" : "Capturing live app screen…")
+
+    // 1. Temporarily disable CSS transitions so fit-mode snap does not animate/zoom during capture
+    const styleTag = document.createElement("style")
+    styleTag.id = "capture-no-transitions"
+    styleTag.textContent = "* { transition: none !important; animation: none !important; }"
+    document.head.appendChild(styleTag)
+
+    const prevZoom = zoomMode
+
+    try {
+      // 2. Ensure device is fully fitted and centered inside view so bottom nav is never cut off
+      if (zoomMode !== "fit") {
+        setZoomMode("fit")
+      }
+
+      if (secondScreenRef.current) {
+        secondScreenRef.current.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior })
+      }
+
+      // Wait 2 animation frames so the layout renders without animation
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      await new Promise((r) => setTimeout(r, 60))
+
+      // 3. Reuse active media stream if available, otherwise prompt user once
+      let stream = activeStreamRef.current
+      const isStreamActive =
+        stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live")
+
+      if (!isStreamActive) {
+        triggerToast("Select this tab in the browser prompt to start live capture...")
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: "browser",
+            width: { ideal: 3840, max: 3840 },
+            height: { ideal: 2160, max: 2160 },
+            frameRate: { ideal: 30 },
+          },
+          preferCurrentTab: true,
+          selfBrowserSurface: "include",
+          systemAudio: "exclude",
+        } as any)
+
+        activeStreamRef.current = stream
+
+        stream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            if (activeStreamRef.current === stream) {
+              activeStreamRef.current = null
+            }
+          }
+        })
+      }
+
+      const video = document.createElement("video")
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+      await video.play()
+
+      // Brief delay to ensure stable video frame buffer
+      await new Promise((r) => setTimeout(r, 60))
+
+      // 4. Exact screen dimensions of the device selected
+      const deviceW = viewportWidth
+      const deviceH = viewportHeight
+
+      // Crop coordinates in device space (0 to viewportWidth, 0 to viewportHeight)
+      const box =
+        !forceFullScreen && isAreaSelectionActive && cropBox
+          ? cropBox
+          : { x: 0, y: 0, width: deviceW, height: deviceH }
+
+      // 5. Find the exact iframe element or screen container in viewport
+      const targetEl = iframeRef.current || secondScreenRef.current
+      if (!targetEl) {
+        throw new Error("Could not find live preview element")
+      }
+      const targetRect = targetEl.getBoundingClientRect()
+
+      // 6. Temporarily hide fake frame overlays (status bar, dynamic island, home bar)
+      // and selection overlay if clean-app mode is active
+      const overlayEls = document.querySelectorAll(
+        captureMode === "clean-app"
+          ? ".device-frame-overlay, #area-selection-overlay-root"
+          : "#area-selection-overlay-root"
+      )
+      overlayEls.forEach((el) => ((el as HTMLElement).style.opacity = "0"))
+
+      const screenContainer = document.querySelector("[data-device-screen='true']") as HTMLElement | null
+      const prevRadius = screenContainer?.style.borderRadius
+      if (screenContainer && captureMode === "clean-app") screenContainer.style.borderRadius = "0px"
+
+      await new Promise((r) => requestAnimationFrame(r))
+      await new Promise((r) => setTimeout(r, 40))
+
+      // 7. Map device crop coordinates to rendered screen pixels
+      const screenScaleX = targetRect.width / deviceW
+      const screenScaleY = targetRect.height / deviceH
+
+      const screenX = targetRect.left + box.x * screenScaleX
+      const screenY = targetRect.top + box.y * screenScaleY
+      const screenW = box.width * screenScaleX
+      const screenH = box.height * screenScaleY
+
+      // Map from window CSS pixels to video stream pixels
+      const videoScaleX = video.videoWidth / window.innerWidth
+      const videoScaleY = video.videoHeight / window.innerHeight
+
+      const sx = Math.max(0, Math.min(Math.round(screenX * videoScaleX), video.videoWidth - 1))
+      const sy = Math.max(0, Math.min(Math.round(screenY * videoScaleY), video.videoHeight - 1))
+      const sWidth = Math.max(1, Math.min(Math.round(screenW * videoScaleX), video.videoWidth - sx))
+      const sHeight = Math.max(1, Math.min(Math.round(screenH * videoScaleY), video.videoHeight - sy))
+
+      // 8. Output canvas matching the EXACT dimensions of the selected device / selection!
+      const destW = Math.round(box.width)
+      const destH = Math.round(box.height)
+
+      const canvas = document.createElement("canvas")
+      canvas.width = destW
+      canvas.height = destH
+      const ctx = canvas.getContext("2d")
+      if (!ctx) throw new Error("Could not initialize canvas context")
+
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = "high"
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, destW, destH)
+
+      // Restore overlays and border radius
+      overlayEls.forEach((el) => ((el as HTMLElement).style.opacity = "1"))
+      if (screenContainer && prevRadius !== undefined) screenContainer.style.borderRadius = prevRadius
+
+      const dataUrl = canvas.toDataURL("image/png", 1.0)
+
+      // 9. Convert to blob and upload directly to Supabase storage
+      let finalUrl = dataUrl
+      try {
+        const res = await fetch(dataUrl)
+        const blob = await res.blob()
+        const file = new File([blob], `live-capture-${Date.now()}.png`, { type: "image/png" })
+
+        const supabase = createClient()
+        const filePath = `workflows/${currentWorkflow.id}/live-capture-${Date.now()}.png`
+
+        const { error: uploadError } = await supabase.storage
+          .from("designs")
+          .upload(filePath, file, {
+            contentType: "image/png",
+            cacheControl: "3600",
+            upsert: false,
+          })
+
+        if (!uploadError) {
+          const { data: pubData } = supabase.storage.from("designs").getPublicUrl(filePath)
+          finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
+        }
+      } catch (uploadErr) {
+        console.warn("[DEBUG] Storage upload notice:", uploadErr)
+      }
+
+      // Automatically save to Design B in workflow
+      if (onUpdateField) {
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+      }
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${destW} × ${destH}`,
+        url: finalUrl,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+      setCapturedResultUrl(finalUrl)
+      setIsResultModalOpen(true)
+      setIsAreaSelectionActive(false)
+      setIsLiveCanvas(false)
+
+      triggerToast(
+        box.width < deviceW || box.height < deviceH
+          ? `Area captured & saved to Design B! (${destW} × ${destH}px)`
+          : `Live screen captured & saved to Design B! (${destW} × ${destH}px)`
+      )
+    } catch (err: any) {
+      console.error("Live capture error:", err)
+      if (err.name !== "NotAllowedError") {
+        triggerToast(`Capture error: ${err?.message || "Unknown error"}`)
+      }
+    } finally {
+      document.getElementById("capture-no-transitions")?.remove()
+      if (prevZoom !== "fit") {
+        setZoomMode(prevZoom)
+      }
+      setIsCapturing(false)
+    }
+  }
+
+  const handleSaveCapturedResult = async () => {
+    if (!capturedResultUrl || !currentWorkflow) return
+    setIsSavingResult(true)
+    try {
+      if (capturedResultUrl.startsWith("http") && !capturedResultUrl.startsWith("blob:")) {
+        if (onUpdateField) {
+          await onUpdateField(currentWorkflow.id, "designB", capturedResultUrl)
+        }
+        setIsResultModalOpen(false)
+        triggerToast("Screenshot saved to Design B!")
+        return
+      }
+
+      const res = await fetch(capturedResultUrl)
+      const blob = await res.blob()
+      const file = new File([blob], `live-snip-${Date.now()}.png`, { type: "image/png" })
+
+      const supabase = createClient()
+      const filePath = `workflows/${currentWorkflow.id}/live-snip-${Date.now()}.png`
+
+      const { error: uploadError } = await supabase.storage
+        .from("designs")
+        .upload(filePath, file, {
+          contentType: "image/png",
+          cacheControl: "3600",
+          upsert: false,
+        })
+
+      if (uploadError) throw uploadError
+
+      const { data } = supabase.storage.from("designs").getPublicUrl(filePath)
+      const finalUrl = `${data.publicUrl}?v=${Date.now()}`
+
+      if (onUpdateField) {
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+      }
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${viewportWidth} × ${viewportHeight}`,
+        url: finalUrl,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+      setIsResultModalOpen(false)
+      triggerToast("Screenshot saved to Design B!")
+    } catch (err: any) {
+      console.error("Save capture error:", err)
+      triggerToast(`Save failed: ${err?.message || "Unknown error"}`)
+    } finally {
+      setIsSavingResult(false)
     }
   }
 
@@ -1035,16 +1348,77 @@ export function WorkflowSimulator({
             <span className="hidden sm:inline">Options</span>
           </label>
 
-          {/* Capture live frame button */}
+          {/* Snip Area Selection Toggle */}
           <button
             type="button"
-            onClick={handleCaptureLiveFrame}
+            onClick={() => {
+              if (!isLiveCanvas) setIsLiveCanvas(true)
+              setIsAreaSelectionActive((prev) => !prev)
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer border ${
+              isAreaSelectionActive
+                ? "bg-indigo-600 border-indigo-400 text-white shadow-indigo-500/25 ring-2 ring-indigo-400"
+                : "bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-800 dark:text-slate-200"
+            }`}
+            title={isAreaSelectionActive ? "Disable selection overlay" : "Enable selection area on live screen (drag & resize to crop)"}
+          >
+            <Crop className="w-3.5 h-3.5" />
+            <span>{isAreaSelectionActive ? "Disable Selection" : "Enable Selection Area"}</span>
+          </button>
+
+          {/* Capture Mode Toggle: Clean App vs Framed */}
+          <div className="flex items-center bg-slate-100 dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-lg p-0.5 shadow-xs">
+            <button
+              type="button"
+              onClick={() => setCaptureMode("clean-app")}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
+                captureMode === "clean-app"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+              }`}
+              title="Capture clean web app screen (recommended: matches Figma spec, full screen including bottom navigation)"
+            >
+              Clean App
+            </button>
+            <button
+              type="button"
+              onClick={() => setCaptureMode("framed-device")}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
+                captureMode === "framed-device"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+              }`}
+              title="Include device frame/status bar in capture"
+            >
+              With Frame
+            </button>
+          </div>
+
+          {/* Primary Live Capture */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isAreaSelectionActive && selectionBoxRef.current) {
+                const style = window.getComputedStyle(selectionBoxRef.current)
+                const left = parseFloat(style.left) || 0
+                const top = parseFloat(style.top) || 0
+                const width = parseFloat(style.width) || viewportWidth
+                const height = parseFloat(style.height) || viewportHeight
+                handleLiveScreenCapture(false, { x: left, y: top, width, height })
+              } else {
+                handleLiveScreenCapture(false)
+              }
+            }}
             disabled={isCapturing || isSavingScreenshot}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
-            title="Capture a screenshot of the live frame via headless browser"
+            className={`px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${
+              isAreaSelectionActive
+                ? "bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400 shadow-emerald-500/20"
+                : "bg-indigo-600 hover:bg-indigo-500"
+            }`}
+            title={isAreaSelectionActive ? "Capture the selected area from live screen" : "Capture full app screen (clean, full height including bottom navigation)"}
           >
             <Camera className="w-3.5 h-3.5" />
-            <span>{isCapturing ? "Capturing…" : "Capture Live Frame"}</span>
+            <span>{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}</span>
           </button>
 
           {/* Debug Mode Toggle */}
@@ -1248,6 +1622,17 @@ export function WorkflowSimulator({
             Redlines
           </button>
 
+          {/* Server Snapshot option */}
+          <button
+            type="button"
+            onClick={() => handleCaptureLiveFrame()}
+            disabled={isCapturing}
+            className="px-2.5 py-1 rounded border border-slate-300 dark:border-[#272b38] bg-white dark:bg-[#1b1e29] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white transition text-[11px] font-medium cursor-pointer"
+            title="Optional server render snapshot via headless browser"
+          >
+            Server URL Snapshot
+          </button>
+
           {compareMode !== "side-by-side" && (
             <div className="flex items-center gap-2 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1 shadow-xs transition-colors">
               <label htmlFor="blend-slider" className="text-[11px] text-slate-600 dark:text-[#8e95a5]">
@@ -1271,8 +1656,7 @@ export function WorkflowSimulator({
       {/* ================= MAIN WORKSPACE ================= */}
       <div className="flex-1 flex overflow-hidden">
         <main ref={containerRef} className="flex-1 flex relative overflow-hidden bg-slate-200/80 dark:bg-[#090a0e] transition-colors">
-          {compareMode === "side-by-side" && (
-            <div className={`flex w-full h-full ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
+          <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
               {/* PANEL A: FIGMA SPEC */}
               <section
                 style={{ width: `${splitRatio}%` }}
@@ -1434,22 +1818,44 @@ export function WorkflowSimulator({
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
 
-                  {/* Live Canvas vs App Screenshot Switch */}
+                  {/* Auth Credentials Modal Trigger */}
+                  <button
+                    type="button"
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                      authConfig.username || authConfig.cookie || authConfig.token
+                        ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
+                        : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
+                    title="Configure App Credentials for auto-login & screenshot capture"
+                  >
+                    <Key className="w-3 h-3" />
+                    <span>Credentials</span>
+                    {(authConfig.username || authConfig.cookie || authConfig.token) && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    )}
+                  </button>
+
+                  {/* Live View vs App Screenshot Switch */}
                   <button
                     type="button"
                     onClick={() => {
-                      setIsLiveCanvas(!isLiveCanvas)
-                      triggerToast(isLiveCanvas ? (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox") : "Showing Live Canvas")
+                      const next = !isLiveCanvas
+                      setIsLiveCanvas(next)
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("simulator_is_live_mode", String(next))
+                      }
+                      triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
                     }}
                     className={`px-2.5 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
                       isLiveCanvas
                         ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
                         : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
                     }`}
-                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Canvas preview"}
+                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
                   >
                     <Sparkles className="w-3 h-3" />
-                    <span>{isLiveCanvas ? "Live Canvas" : "App Screenshot"}</span>
+                    <span>{isLiveCanvas ? "Live Iframe" : "App Screenshot"}</span>
                   </button>
                 </div>
 
@@ -1467,38 +1873,61 @@ export function WorkflowSimulator({
                     showStatusBar={showDeviceStatusBar}
                     screenRef={secondScreenRef}
                   >
-                    {isLiveCanvas ? (
-                      isSessionLoaded ? (
-                        <CanvasScreencast
-                          key={canvasReloadKey}
-                          ref={canvasScreencastRef}
-                          url={currentUrl}
-                          width={viewportWidth}
-                          height={viewportHeight}
-                          accessToken={currentSession?.access_token}
-                          refreshToken={currentSession?.refresh_token}
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-slate-900 flex items-center justify-center text-xs text-slate-400">
-                          Connecting...
-                        </div>
-                      )
-                    ) : currentWorkflow?.designB ? (
-                      <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center relative overflow-hidden select-none">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
-                        <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
-                      </div>
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
-                        No screenshot saved. Click &quot;Capture Live Frame&quot; to automatically capture and save from the live canvas.
+                    {/* The Live Iframe is always kept alive in the layout tree */}
+                    <iframe
+                      ref={iframeRef}
+                      src={currentUrl}
+                      title="Live App Preview"
+                      className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
+                      style={
+                        isLiveCanvas
+                          ? {}
+                          : {
+                              position: "absolute",
+                              opacity: 0,
+                              pointerEvents: "none",
+                              zIndex: -1,
+                            }
+                      }
+                      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                      allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone"
+                    />
+
+                    {/* Area Selection Box Overlay for live screen */}
+                    {isLiveCanvas && (
+                      <AreaSelectionOverlay
+                        isActive={isAreaSelectionActive}
+                        containerWidth={viewportWidth}
+                        containerHeight={viewportHeight}
+                        scale={currentScale}
+                        selectionBoxRef={selectionBoxRef}
+                        onCapture={(box) => handleLiveScreenCapture(false, box)}
+                        onCaptureFullScreen={() => handleLiveScreenCapture(true)}
+                        onClose={() => setIsAreaSelectionActive(false)}
+                        isCapturing={isCapturing}
+                      />
+                    )}
+
+                    {/* The Saved App Screenshot View */}
+                    {!isLiveCanvas && (
+                      <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
+                        {currentWorkflow?.designB ? (
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
+                            <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
+                          </>
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                            No screenshot saved. Click &quot;Capture Live Screen&quot; to capture and save a screenshot.
+                          </div>
+                        )}
                       </div>
                     )}
                   </DeviceFrame>
                 </div>
               </section>
             </div>
-          )}
 
           {compareMode !== "side-by-side" && (
             <div className={`w-full h-full flex items-center justify-center p-4 bg-slate-200/50 dark:bg-[#090a0e] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
@@ -2017,6 +2446,181 @@ export function WorkflowSimulator({
           </div>
         ))}
       </div>
+
+      {/* ================= CREDENTIALS / AUTH MODAL ================= */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white dark:bg-[#14161f] border border-slate-200 dark:border-[#272b38] rounded-xl shadow-2xl overflow-hidden p-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-[#202433]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <Key className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">App Credentials</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-[#7e8596]">Auto-login or inject cookies for screenshot captures</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAuthModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-md transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex items-center gap-1 my-4 bg-slate-100 dark:bg-[#1b1e2a] p-1 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "login" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
+                  authConfig.type === "login"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                Auto-Login (User/Pass)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "cookie" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
+                  authConfig.type === "cookie"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                Session Cookie
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "token" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
+                  authConfig.type === "token"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                Bearer Token
+              </button>
+            </div>
+
+            {/* Fields */}
+            {authConfig.type === "login" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Email / Username
+                  </label>
+                  <input
+                    type="text"
+                    value={authConfig.username || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, username: e.target.value }))}
+                    placeholder="e.g. trainer@example.com or admin"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={authConfig.password || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder="••••••••••••"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-[#6b7280]">
+                  Whenever screenshot capture hits a login screen, Puppeteer will automatically fill and submit these credentials.
+                </p>
+              </div>
+            )}
+
+            {authConfig.type === "cookie" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Cookie String
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={authConfig.cookie || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, cookie: e.target.value }))}
+                    placeholder="session=xyz...; token=abc..."
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {authConfig.type === "token" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    JWT / Auth Token
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={authConfig.token || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, token: e.target.value }))}
+                    placeholder="ey..."
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center justify-between mt-5 pt-3 border-t border-slate-100 dark:border-[#202433]">
+              <button
+                type="button"
+                onClick={() => {
+                  const cleared = { type: "login" as const, username: "", password: "", cookie: "", token: "" }
+                  setAuthConfig(cleared)
+                  localStorage.removeItem("simulator_auth_credentials")
+                  triggerToast("Credentials cleared")
+                }}
+                className="text-xs text-rose-500 hover:text-rose-600 transition cursor-pointer"
+              >
+                Clear
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAuthModalOpen(false)}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-[#272b38] text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181a24] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem("simulator_auth_credentials", JSON.stringify(authConfig))
+                    setIsAuthModalOpen(false)
+                    triggerToast("Credentials saved!")
+                  }}
+                  className="px-4 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition cursor-pointer shadow-xs"
+                >
+                  Save Credentials
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Captured Result Modal */}
+      <CapturedResultModal
+        isOpen={isResultModalOpen}
+        imageUrl={capturedResultUrl}
+        onClose={() => setIsResultModalOpen(false)}
+        onSaveToWorkflow={handleSaveCapturedResult}
+        isSaving={isSavingResult}
+      />
     </div>
   )
 }

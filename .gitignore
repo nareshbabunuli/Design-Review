@@ -27,3 +27,4 @@ pnpm-debug.log*
 .idea
 .vscode
 *.tsbuildinfo
+.chrome-profile/

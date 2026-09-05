@@ -17,6 +17,19 @@ const globalForScreencast = globalThis as unknown as {
   screencastSession?: ScreencastSession | null
 }
 
+function normalizeUrl(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl)
+    let path = u.pathname
+    if (path.length > 1 && path.endsWith("/")) {
+      path = path.slice(0, -1)
+    }
+    return `${u.protocol}//${u.host}${path}${u.search}`
+  } catch {
+    return (rawUrl || "").trim().replace(/\/+$/, "")
+  }
+}
+
 export class ScreencastManager {
   private static startLock: Promise<void> | null = null
 
@@ -59,29 +72,46 @@ export class ScreencastManager {
   }): Promise<void> {
     let current = await this.getSession()
 
-    // Clean up if browser disconnected
-    if (current && !current.browser.connected) {
+    // Clean up if browser disconnected or page was closed
+    if (current && (!current.browser.connected || current.page.isClosed())) {
+      try {
+        await current.browser.close()
+      } catch (e) {}
       current = null
       globalForScreencast.screencastSession = null
     }
 
-    // Reuse existing session if already running
-    if (current) {
+    // Reuse existing session if already running and healthy
+    if (current && current.browser.connected && !current.page.isClosed()) {
       try {
-        // Update viewport if changed
-        if (current.width !== options.width || current.height !== options.height) {
+        // Update viewport if changed by more than 1px
+        if (
+          Math.abs(current.width - options.width) > 1 ||
+          Math.abs(current.height - options.height) > 1
+        ) {
           current.width = options.width
           current.height = options.height
-          await current.page.setViewport({
-            width: Math.round(options.width),
-            height: Math.round(options.height),
-          })
+          await current.page
+            .setViewport({
+              width: Math.round(options.width),
+              height: Math.round(options.height),
+            })
+            .catch(() => {})
         }
 
-        // Navigate if URL changed
-        if (current.currentUrl !== options.url) {
+        // Navigate ONLY if URL genuinely changed
+        if (normalizeUrl(current.currentUrl) !== normalizeUrl(options.url)) {
           current.currentUrl = options.url
-          await current.page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 20000 })
+          try {
+            // Fast non-fatal navigation: if it takes longer than 8s (e.g. slow dev server or websockets),
+            // do not crash or restart Chrome! The page keeps loading and CDP streams frames as it renders.
+            await current.page.goto(options.url, {
+              waitUntil: "domcontentloaded",
+              timeout: 8000,
+            })
+          } catch (navErr: any) {
+            console.warn("[ScreencastManager] Navigation notice (streaming live while page renders):", navErr?.message || navErr)
+          }
         }
 
         // Inject/refresh auth if provided
@@ -89,31 +119,40 @@ export class ScreencastManager {
           await this.injectAuthIntoLivePage(current.page, options)
         }
 
-        // Dispatch a fresh screenshot so any waiting subscribers get a frame immediately
-        try {
-          const freshFrame = await current.page.screenshot({
-            type: "jpeg",
-            quality: 60,
-            encoding: "base64",
-          })
-          if (freshFrame) {
-            current.latestFrame = freshFrame
-            for (const sub of current.subscribers) {
-              try {
-                sub(freshFrame)
-              } catch (e) {}
+        // Only take an immediate frame if no frame has ever arrived yet
+        if (!current.latestFrame) {
+          try {
+            const freshFrame = await current.page.screenshot({
+              type: "jpeg",
+              quality: 50,
+              encoding: "base64",
+            })
+            if (freshFrame) {
+              current.latestFrame = freshFrame
+              for (const sub of current.subscribers) {
+                try {
+                  sub(freshFrame)
+                } catch (e) {}
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
 
         return
       } catch (err) {
-        console.warn("[ScreencastManager] Error updating existing page, restarting browser:", err)
-        try {
-          await current.browser.close()
-        } catch (e) {}
-        current = null
-        globalForScreencast.screencastSession = null
+        console.warn("[ScreencastManager] Warning updating existing page:", err)
+        // CRITICAL: NEVER kill the browser unless the process has actually crashed/disconnected!
+        if (!current.browser.connected || current.page.isClosed()) {
+          console.warn("[ScreencastManager] Browser process lost, cleaning up for restart...")
+          try {
+            await current.browser.close()
+          } catch (e) {}
+          current = null
+          globalForScreencast.screencastSession = null
+        } else {
+          // Browser is still alive and streaming, continue without crashing
+          return
+        }
       }
     }
 
@@ -125,7 +164,7 @@ export class ScreencastManager {
       globalForScreencast.screencastSession = null
     }
 
-    console.log("[ScreencastManager] Launching new Chrome instance for Canvas Screencast...")
+    console.log("[ScreencastManager] Launching fast Chrome instance for Canvas Screencast...")
     const browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -137,6 +176,13 @@ export class ScreencastManager {
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
+        "--disable-extensions",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-default-apps",
+        "--mute-audio",
+        "--no-default-browser-check",
+        "--autoplay-policy=no-user-gesture-required",
+        "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
       ],
     })
 
@@ -168,12 +214,10 @@ export class ScreencastManager {
 
     globalForScreencast.screencastSession = newSession
 
-    // Set up CDP screencast frame listener
-    cdp.on("Page.screencastFrame", async ({ data, sessionId }) => {
-      // Immediately acknowledge frame so CDP sends the next one
-      try {
-        await cdp.send("Page.screencastFrameAck", { sessionId })
-      } catch (e) {}
+    // Set up CDP screencast frame listener with non-blocking ACK
+    cdp.on("Page.screencastFrame", ({ data, sessionId }) => {
+      // Immediately acknowledge frame asynchronously without blocking the event loop
+      cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {})
 
       // Cache latest frame for immediate delivery to new subscribers
       newSession.latestFrame = data
@@ -188,32 +232,31 @@ export class ScreencastManager {
       }
     })
 
-    // Navigate to page
+    // Fast initial navigation: if it takes >10s, don't crash, let it render live
     try {
-      await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 25000 })
-    } catch (navErr) {
-      console.warn("[ScreencastManager] Initial navigation warning:", navErr)
+      await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 10000 })
+    } catch (navErr: any) {
+      console.warn("[ScreencastManager] Initial navigation notice (streaming live while page renders):", navErr?.message || navErr)
     }
 
-    // Start CDP continuous screencast
+    // Start CDP continuous screencast with optimized frame rate (everyNthFrame: 2 cuts CPU & bandwidth by 50%)
     try {
       await cdp.send("Page.startScreencast", {
         format: "jpeg",
-        quality: 50,
+        quality: 55,
         maxWidth: Math.round(options.width),
         maxHeight: Math.round(options.height),
-        everyNthFrame: 1,
+        everyNthFrame: 2,
       })
     } catch (startErr) {
       console.warn("[ScreencastManager] Failed to start CDP screencast:", startErr)
     }
 
-    // CRITICAL FIX: Take an immediate screenshot right now!
-    // This guarantees the first frame is dispatched immediately, even on static pages!
+    // Dispatch an initial frame immediately if available
     try {
       const initialFrame = await page.screenshot({
         type: "jpeg",
-        quality: 60,
+        quality: 50,
         encoding: "base64",
       })
       if (initialFrame) {
@@ -483,24 +526,6 @@ export class ScreencastManager {
 
         case "keyup":
           break
-      }
-
-      // Immediately trigger a frame refresh after typing or clicking so the UI updates with zero lag
-      if (session.page && (event.type === "click" || event.type === "keydown" || event.type === "insertText")) {
-        setTimeout(async () => {
-          try {
-            if (!session.page) return
-            const shot = await session.page.screenshot({ type: "jpeg", quality: 75, encoding: "base64" })
-            if (shot) {
-              session.latestFrame = shot
-              for (const sub of session.subscribers) {
-                try {
-                  sub(shot)
-                } catch (e) {}
-              }
-            }
-          } catch (e) {}
-        }, 50)
       }
     } catch (dispatchErr) {
       console.error("[ScreencastManager] Input dispatch error:", dispatchErr)

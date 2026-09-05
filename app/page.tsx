@@ -1143,24 +1143,36 @@ export default function Page() {
         const valueText = typeof value === "string" ? value : null
         const valueBool = typeof value === "boolean" ? value : null
 
-        console.log("[DEBUG] Calling RPC update_workflow_field_secure", {
-          p_workflow_id: workflowId,
-          p_field: field,
-          p_value_text: valueText ? (valueText.length > 100 ? `${valueText.substring(0, 100)}...` : valueText) : null,
-          p_value_bool: valueBool
-        })
+        // Check if there is an active authenticated user session before calling authenticated-only RPC
+        const { data: sessionData } = await supabase.auth.getSession()
+        const isAuthenticated = !!sessionData?.session?.user
 
-        const { data: rpcData, error: rpcError } = await supabase.rpc("update_workflow_field_secure", {
-          p_workflow_id: workflowId,
-          p_field: field,
-          p_value_text: valueText,
-          p_value_bool: valueBool,
-        })
+        let rpcError: any = null
+        if (isAuthenticated) {
+          console.log("[DEBUG] Calling RPC update_workflow_field_secure", {
+            p_workflow_id: workflowId,
+            p_field: field,
+            p_value_text: valueText ? (valueText.length > 100 ? `${valueText.substring(0, 100)}...` : valueText) : null,
+            p_value_bool: valueBool,
+          })
 
-        console.log("[DEBUG] RPC response", { data: rpcData, error: rpcError })
+          const { data: rpcData, error } = await supabase.rpc("update_workflow_field_secure", {
+            p_workflow_id: workflowId,
+            p_field: field,
+            p_value_text: valueText,
+            p_value_bool: valueBool,
+          })
+          rpcError = error
+          console.log("[DEBUG] RPC response", { data: rpcData, error: rpcError })
+        } else {
+          console.log("[DEBUG] Unauthenticated or dev session; proceeding directly with database update")
+          rpcError = { message: "Unauthenticated session - using direct update fallback" }
+        }
 
         if (rpcError) {
-          console.error("[DEBUG] RPC failed, attempting direct database update fallback:", rpcError)
+          if (isAuthenticated) {
+            console.warn("[DEBUG] RPC update_workflow_field_secure returned error, attempting direct update fallback:", rpcError?.message || rpcError)
+          }
           
           const columnMap: Record<string, string> = {
             title: "title",
@@ -2040,72 +2052,93 @@ export default function Page() {
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-slate-400" />
             </div>
-          ) : viewMode === "dashboard" ? (
-            <ProjectDashboard
-              projects={projects}
-              userEmail={user?.email}
-              userId={user?.id}
-              isOwner={isOwner}
-              searchQuery={dashboardSearchQuery}
-              onSearchChange={setDashboardSearchQuery}
-              theme={theme}
-              onToggleTheme={toggleTheme}
-              onCreateProject={createProject}
-              onSelectProject={handleSelectProject}
-              onOpenPresentation={(id: string) => {
-                setActiveProjectId(id)
-                setShowReport(true)
-              }}
-              onDeleteProject={handleDeleteOrLeaveProject}
-              onRenameProject={handleRenameProject}
-              onDuplicateProject={duplicateProject}
-              onLogout={handleSignOut}
-              onShareProject={(id: string) => {
-                setActiveProjectId(id)
-                setIsShareOpen(true)
-              }}
-            />
-          ) : viewMode === "simulator" && activeProject ? (
-            <WorkflowSimulator
-              project={activeProject}
-              initialWorkflowId={activeWorkflowId}
-              isOwner={isOwner}
-              canEdit={canEdit}
-              userRole={userRole}
-              onSelectWorkflow={(id) => setActiveWorkflowId(id)}
-              onUpdateField={updateWorkflowField}
-              onOpenPresentation={() => setShowReport(true)}
-              theme={theme}
-              onToggleTheme={toggleTheme}
-            />
-          ) : activeProject && activeWorkflow ? (
-            <WorkflowEditor
-              project={activeProject}
-              workflow={activeWorkflow}
-              isOwner={isOwner}
-              canEdit={canEdit}
-              canComment={canClientComment}
-              canApprove={canApprove}
-              userRole={userRole}
-              onUpdateField={updateField}
-              onSubmitRevision={submitFinalRevision}
-              onShowReport={() => setShowReport(true)}
-              onAddComment={addComment}
-            />
           ) : (
-            <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">
-              <p className="text-sm">Select or create a workflow to begin</p>
-              {canEdit && activeProject && (
-                <button
-                  type="button"
-                  onClick={() => createWorkflow(activeProject.id)}
-                  className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-95 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4 stroke-[2.5]" />
-                  <span>Create First Screen</span>
-                </button>
+            <>
+              {/* Dashboard View */}
+              {viewMode === "dashboard" && (
+                <ProjectDashboard
+                  projects={projects}
+                  userEmail={user?.email}
+                  userId={user?.id}
+                  isOwner={isOwner}
+                  searchQuery={dashboardSearchQuery}
+                  onSearchChange={setDashboardSearchQuery}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
+                  onCreateProject={createProject}
+                  onSelectProject={handleSelectProject}
+                  onOpenPresentation={(id: string) => {
+                    setActiveProjectId(id)
+                    setShowReport(true)
+                  }}
+                  onDeleteProject={handleDeleteOrLeaveProject}
+                  onRenameProject={handleRenameProject}
+                  onDuplicateProject={duplicateProject}
+                  onLogout={handleSignOut}
+                  onShareProject={(id: string) => {
+                    setActiveProjectId(id)
+                    setIsShareOpen(true)
+                  }}
+                />
               )}
-            </div>
+
+              {/* Simulator View (Keep-Alive: stays mounted once loaded so iframe never reloads on tab switch) */}
+              {activeProject && (
+                <div
+                  className={`h-full w-full flex flex-col flex-1 ${
+                    viewMode === "simulator"
+                      ? "flex"
+                      : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"
+                  }`}
+                >
+                  <WorkflowSimulator
+                    project={activeProject}
+                    initialWorkflowId={activeWorkflowId}
+                    isOwner={isOwner}
+                    canEdit={canEdit}
+                    userRole={userRole}
+                    onSelectWorkflow={(id) => setActiveWorkflowId(id)}
+                    onUpdateField={updateWorkflowField}
+                    onOpenPresentation={() => setShowReport(true)}
+                    theme={theme}
+                    onToggleTheme={toggleTheme}
+                  />
+                </div>
+              )}
+
+              {/* Editor View */}
+              {viewMode === "editor" && activeProject && (
+                activeWorkflow ? (
+                  <WorkflowEditor
+                    project={activeProject}
+                    workflow={activeWorkflow}
+                    isOwner={isOwner}
+                    canEdit={canEdit}
+                    canComment={canClientComment}
+                    canApprove={canApprove}
+                    userRole={userRole}
+                    onUpdateField={updateField}
+                    onSubmitRevision={submitFinalRevision}
+                    onShowReport={() => setShowReport(true)}
+                    onAddComment={addComment}
+                  />
+                ) : (
+                  <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">
+                    <p className="text-sm">Select or create a workflow to begin</p>
+                    {canEdit && activeProject && (
+                      <button
+                        type="button"
+                        onClick={() => createWorkflow(activeProject.id)}
+                        className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-95 cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4 stroke-[2.5]" />
+                        <span>Create First Screen</span>
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+            </>
           )}
         </div>
       </main>
