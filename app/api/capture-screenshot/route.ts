@@ -40,15 +40,17 @@ export async function POST(req: NextRequest) {
       "--headless=new",
       "--disable-gpu",
       "--no-sandbox",
+      "--hide-scrollbars",
+      "--virtual-time-budget=4000",
       `--user-data-dir=${userDataDir}`,
       `--screenshot=${outFile}`,
       `--window-size=${Math.round(width)},${Math.round(height)}`,
       targetUrl,
     ]
 
-    // Run headless browser with 6-second timeout
+    // Run headless browser with 15-second timeout
     await new Promise<void>((resolve, reject) => {
-      const child = execFile(browserExe, args, { timeout: 6000 }, (err) => {
+      const child = execFile(browserExe, args, { timeout: 15000 }, (err) => {
         if (err && !fs.existsSync(outFile)) {
           reject(err)
         } else {

@@ -35,7 +35,6 @@ import {
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
-import html2canvas from "html2canvas"
 import {
   DeviceFrame,
   EXTENDED_DEVICE_PRESETS,
@@ -339,6 +338,11 @@ export function WorkflowSimulator({
 
   // Screenshots
   const [capturedScreenshots, setCapturedScreenshots] = useState<CapturedScreenshot[]>([])
+  const [pendingScreenshot, setPendingScreenshot] = useState<File | null>(null)
+  const [pendingScreenshotUrl, setPendingScreenshotUrl] = useState<string | null>(null)
+  const [isSavingScreenshot, setIsSavingScreenshot] = useState<boolean>(false)
+  // Live frame capture: stores the already-uploaded public URL from the server API
+  const [pendingCaptureUrl, setPendingCaptureUrl] = useState<string | null>(null)
   const [isCapturing, setIsCapturing] = useState<boolean>(false)
 
   // Annotations
@@ -462,284 +466,176 @@ export function WorkflowSimulator({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const secondScreenRef = useRef<HTMLDivElement>(null)
 
-  const dataUrlToFile = (dataUrl: string, filename: string): File => {
-    const arr = dataUrl.split(",")
-    const mime = arr[0].match(/:(.*?);/)?.[1] || "image/png"
-    const bstr = atob(arr[1])
-    let n = bstr.length
-    const u8arr = new Uint8Array(n)
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n)
+  const handleExactScreenshotSelect = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    if (!file.type.startsWith("image/")) {
+      triggerToast("Please choose an image file.")
+      event.target.value = ""
+      return
     }
-    return new File([u8arr], filename, { type: mime })
+
+    if (pendingScreenshotUrl) {
+      URL.revokeObjectURL(pendingScreenshotUrl)
+    }
+
+    const localPreviewUrl = URL.createObjectURL(file)
+
+    setPendingScreenshot(file)
+    setPendingScreenshotUrl(localPreviewUrl)
+
+    event.target.value = ""
   }
 
-  const saveCapturedScreenshot = useCallback(
-    async (fileOrDataUrl: File | string) => {
-      if (!currentWorkflow) return
-      setIsCapturing(true)
-      try {
-        const supabase = createClient()
-        let file: File
+  const saveExactScreenshot = async () => {
+    if (!currentWorkflow || !pendingScreenshot) return
 
-        if (typeof fileOrDataUrl === "string") {
-          const fileName = `${currentWorkflow.id}-designB-${Date.now()}.png`
-          file = dataUrlToFile(fileOrDataUrl, fileName)
-        } else {
-          file = fileOrDataUrl
-        }
+    setIsSavingScreenshot(true)
 
-        const fileExt = file.name.split(".").pop()?.toLowerCase() || "png"
-        const fileName = `${currentWorkflow.id}-designB-${Date.now()}.${fileExt}`
-        const filePath = `workflows/${currentWorkflow.id}/${fileName}`
-
-        // Upload to Supabase storage 'designs' bucket
-        const { error: uploadError } = await supabase.storage
-          .from("designs")
-          .upload(filePath, file, { upsert: true, contentType: file.type || "image/png" })
-
-        if (uploadError) {
-          console.error("Storage upload error:", uploadError)
-          triggerToast(`Upload error: ${uploadError.message}`)
-          setIsCapturing(false)
-          return
-        }
-
-        const { data } = supabase.storage.from("designs").getPublicUrl(filePath)
-        const publicUrl = data.publicUrl
-
-        // Save to workflow App Screenshot (designB)
-        await onUpdateField?.(currentWorkflow.id, "designB", publicUrl)
-
-        const newCapture: CapturedScreenshot = {
-          id: `snap-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          dimensions: `${viewportWidth} × ${viewportHeight}`,
-          url: publicUrl,
-          mode: compareMode,
-        }
-        setCapturedScreenshots((prev) => [newCapture, ...prev])
-
-        // Switch to App Screenshot view immediately in simulator so the user sees the result!
-        setIsLiveIframe(false)
-        triggerToast("✓ Saved to App Screenshot!")
-      } catch (err) {
-        console.error("Failed to update app screenshot:", err)
-        triggerToast("Failed to save screenshot")
-      } finally {
-        setIsCapturing(false)
-      }
-    },
-    [currentWorkflow, onUpdateField, viewportWidth, viewportHeight, compareMode, triggerToast]
-  )
-
-  const handleCaptureScreenshot = useCallback(async () => {
-    setIsCapturing(true)
     try {
-      // 1. If viewing live URL in iframe, try headless capture directly without opening any browser prompts
-      if (isLiveIframe && currentUrl && currentWorkflow) {
-        try {
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), 4500)
+      const supabase = createClient()
 
-          const res = await fetch("/api/capture-screenshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              url: currentUrl,
-              width: viewportWidth,
-              height: viewportHeight,
-              workflowId: currentWorkflow.id,
-            }),
-            signal: controller.signal,
-          })
-          clearTimeout(timeoutId)
+      const extension =
+        pendingScreenshot.name.split(".").pop()?.toLowerCase() || "png"
 
-          if (res.ok) {
-            const data = await res.json()
-            if (data?.publicUrl) {
-              await onUpdateField?.(currentWorkflow.id, "designB", data.publicUrl)
-              const newCapture: CapturedScreenshot = {
-                id: `snap-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-                dimensions: `${viewportWidth} × ${viewportHeight}`,
-                url: data.publicUrl,
-                mode: compareMode,
-              }
-              setCapturedScreenshots((prev) => [newCapture, ...prev])
-              setIsLiveIframe(false)
-              triggerToast("✓ Captured second screen to App Screenshot!")
-              return
-            }
-          }
-        } catch (serverErr) {
-          console.warn("Headless capture unavailable, capturing DOM directly:", serverErr)
-        }
+      const filePath = [
+        "workflows",
+        currentWorkflow.id,
+        `exact-screenshot-${Date.now()}.${extension}`,
+      ].join("/")
+
+      const { error: uploadError } = await supabase.storage
+        .from("designs")
+        .upload(filePath, pendingScreenshot, {
+          contentType: pendingScreenshot.type,
+          cacheControl: "3600",
+          upsert: false,
+        })
+
+      if (uploadError) {
+        throw uploadError
       }
 
-      // 2. Direct DOM capture of the second screen element (zero prompts, captures screen 2 directly)
-      if (secondScreenRef.current) {
-        // Fast path: If the screen element already contains an <img>, draw it directly to <canvas> without CSS parsers
-        const existingImg = secondScreenRef.current.querySelector("img")
-        if (existingImg && existingImg.complete && existingImg.naturalWidth > 0) {
-          try {
-            const canvas = document.createElement("canvas")
-            canvas.width = viewportWidth
-            canvas.height = viewportHeight
-            const ctx = canvas.getContext("2d")
-            if (ctx) {
-              ctx.fillStyle = "#0f1117"
-              ctx.fillRect(0, 0, canvas.width, canvas.height)
-              ctx.drawImage(existingImg, 0, 0, viewportWidth, viewportHeight)
-              const dataUrl = canvas.toDataURL("image/png")
-              await saveCapturedScreenshot(dataUrl)
-              return
-            }
-          } catch (imgDrawErr) {
-            console.warn("Direct image draw fallback to html2canvas:", imgDrawErr)
-          }
-        }
+      const { data } = supabase.storage
+        .from("designs")
+        .getPublicUrl(filePath)
 
-        // Try html2canvas with modern color function sanitization (converts lab, oklch, lch, oklab to rgb)
-        try {
-          const colorCanvas = document.createElement("canvas")
-          const colorCtx = colorCanvas.getContext("2d")
-          const COLOR_REGEX = /(?:oklch|oklab|lab|lch)\([^)]+\)/gi
+      const fullPublicUrl = `${data.publicUrl}?v=${Date.now()}`
 
-          const sanitizeColor = (val: string): string => {
-            if (!val || typeof val !== "string") return val
-            if (!val.includes("lab(") && !val.includes("oklch(") && !val.includes("lch(") && !val.includes("oklab(")) {
-              return val
-            }
-            return val.replace(COLOR_REGEX, (match) => {
-              if (!colorCtx) return "rgb(15, 17, 23)"
-              try {
-                colorCtx.fillStyle = "#000000"
-                colorCtx.fillStyle = match
-                return colorCtx.fillStyle || "rgb(15, 17, 23)"
-              } catch {
-                return "rgb(15, 17, 23)"
-              }
-            })
-          }
+      await onUpdateField?.(
+        currentWorkflow.id,
+        "designB",
+        fullPublicUrl
+      )
 
-          // Monkeypatch getComputedStyle globally during html2canvas to intercept any lab() or oklch()
-          const originalGetComputedStyle = window.getComputedStyle
-          const patchedGetComputedStyle: typeof window.getComputedStyle = function (elt, pseudoElt) {
-            const cs = originalGetComputedStyle.call(window, elt, pseudoElt)
-            return new Proxy(cs, {
-              get(target, prop) {
-                const origVal = (target as any)[prop]
-                if (typeof origVal === "function") {
-                  if (prop === "getPropertyValue") {
-                    return (p: string) => sanitizeColor(target.getPropertyValue(p))
-                  }
-                  return origVal.bind(target)
-                }
-                if (typeof origVal === "string") {
-                  return sanitizeColor(origVal)
-                }
-                return origVal
-              },
-            })
-          }
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${viewportWidth} × ${viewportHeight}`,
+        url: fullPublicUrl,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
 
-          let canvas: HTMLCanvasElement
-          try {
-            window.getComputedStyle = patchedGetComputedStyle
+      setIsLiveIframe(false)
+      triggerToast("Exact screenshot saved successfully.")
 
-            canvas = await html2canvas(secondScreenRef.current, {
-              backgroundColor: "#0f1117",
-              useCORS: true,
-              allowTaint: true,
-              scale: 1 / Math.max(0.1, currentScale),
-              logging: false,
-              ignoreElements: (element) => element.tagName === "IFRAME",
-              onclone: (clonedDoc) => {
-                // Also sanitize all style tags in the cloned document
-                try {
-                  clonedDoc.querySelectorAll("style").forEach((styleEl) => {
-                    if (styleEl.textContent) {
-                      styleEl.textContent = sanitizeColor(styleEl.textContent)
-                    }
-                  })
-                } catch {
-                  // ignore
-                }
-              },
-            })
-          } finally {
-            window.getComputedStyle = originalGetComputedStyle
-          }
-
-          const dataUrl = canvas.toDataURL("image/png")
-          await saveCapturedScreenshot(dataUrl)
-          return
-        } catch (canvasErr: any) {
-          console.warn("html2canvas encountered error, trying fallback canvas:", canvasErr)
-          // Ultimate fallback: create clean fallback canvas of viewport dimensions
-          const fallbackCanvas = document.createElement("canvas")
-          fallbackCanvas.width = viewportWidth
-          fallbackCanvas.height = viewportHeight
-          const fbCtx = fallbackCanvas.getContext("2d")
-          if (fbCtx) {
-            fbCtx.fillStyle = "#0f1117"
-            fbCtx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height)
-            if (existingImg && existingImg.complete) {
-              fbCtx.drawImage(existingImg, 0, 0, viewportWidth, viewportHeight)
-            } else {
-              fbCtx.fillStyle = "#6366f1"
-              fbCtx.font = "bold 16px sans-serif"
-              fbCtx.textAlign = "center"
-              fbCtx.fillText(currentWorkflow?.title || "App Preview", viewportWidth / 2, viewportHeight / 2)
-            }
-            const dataUrl = fallbackCanvas.toDataURL("image/png")
-            await saveCapturedScreenshot(dataUrl)
-            return
-          }
-        }
+      if (pendingScreenshotUrl) {
+        URL.revokeObjectURL(pendingScreenshotUrl)
       }
 
-      triggerToast("Could not capture second screen")
-    } catch (err) {
-      console.error("Capture failed:", err)
-      triggerToast("Capture failed")
+      setPendingScreenshot(null)
+      setPendingScreenshotUrl(null)
+    } catch (error) {
+      console.error("Exact screenshot save failed:", error)
+      triggerToast("Screenshot was not saved.")
+    } finally {
+      setIsSavingScreenshot(false)
+    }
+  }
+
+  const cancelExactScreenshot = () => {
+    if (pendingScreenshotUrl) {
+      URL.revokeObjectURL(pendingScreenshotUrl)
+    }
+
+    setPendingScreenshot(null)
+    setPendingScreenshotUrl(null)
+    setPendingCaptureUrl(null)
+  }
+
+  // Capture the live iframe via server-side headless Chrome
+  const handleCaptureLiveFrame = async () => {
+    if (!currentWorkflow || isCapturing) return
+
+    setIsCapturing(true)
+    triggerToast("Capturing live frame…")
+
+    try {
+      const res = await fetch("/api/capture-screenshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: currentUrl,
+          width: viewportWidth,
+          height: viewportHeight,
+          workflowId: currentWorkflow.id,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || !data.publicUrl) {
+        throw new Error(data.error || "Capture failed")
+      }
+
+      // Show the captured image in the confirmation modal before saving
+      setPendingCaptureUrl(`${data.publicUrl}?v=${Date.now()}`)
+    } catch (err: any) {
+      console.error("Live frame capture failed:", err)
+      triggerToast(`Capture failed: ${err?.message || "Unknown error"}`)
     } finally {
       setIsCapturing(false)
     }
-  }, [isLiveIframe, currentUrl, currentWorkflow, viewportWidth, viewportHeight, compareMode, currentScale, onUpdateField, saveCapturedScreenshot, triggerToast])
+  }
 
-  // Support pasting screenshot directly from clipboard (Ctrl+V) anywhere on page
-  useEffect(() => {
-    const handlePaste = async (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return
+  // Save the server-captured screenshot to designB
+  const saveCapturedScreenshot = async () => {
+    if (!currentWorkflow || !pendingCaptureUrl) return
 
-      const items = e.clipboardData?.items
-      if (!items) return
+    setIsSavingScreenshot(true)
 
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf("image") !== -1) {
-          const file = items[i].getAsFile()
-          if (file) {
-            e.preventDefault()
-            const reader = new FileReader()
-            reader.onload = async (event) => {
-              const dataUrl = event.target?.result as string
-              if (dataUrl) {
-                await saveCapturedScreenshot(dataUrl)
-              }
-            }
-            reader.readAsDataURL(file)
-            break
-          }
-        }
+    try {
+      await onUpdateField?.(
+        currentWorkflow.id,
+        "designB",
+        pendingCaptureUrl
+      )
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${viewportWidth} × ${viewportHeight}`,
+        url: pendingCaptureUrl,
+        mode: compareMode,
       }
-    }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
 
-    window.addEventListener("paste", handlePaste)
-    return () => window.removeEventListener("paste", handlePaste)
-  }, [saveCapturedScreenshot])
+      setIsLiveIframe(false)
+      triggerToast("Live frame screenshot saved successfully.")
+
+      setPendingCaptureUrl(null)
+    } catch (error) {
+      console.error("Save captured screenshot failed:", error)
+      triggerToast("Screenshot was not saved.")
+    } finally {
+      setIsSavingScreenshot(false)
+    }
+  }
 
   const handleBrowserCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isAddingAnnotation) return
@@ -911,48 +807,36 @@ export function WorkflowSimulator({
             <span className="hidden sm:inline">Options</span>
           </label>
 
-          {/* Capture screenshot button & companion file upload */}
-          <div className="flex items-center rounded-lg bg-emerald-600 hover:bg-emerald-500 transition overflow-hidden shadow-sm">
-            <button
-              type="button"
-              onClick={handleCaptureScreenshot}
-              disabled={isCapturing}
-              className={`px-3 py-1.5 text-xs font-semibold text-white transition active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
-                isCapturing ? "cursor-wait opacity-80" : ""
-              }`}
-              title="Capture screen to update App Screenshot (Design B)"
-            >
-              <span>{isCapturing ? "Capturing…" : "Capture"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="px-2 py-1.5 border-l border-emerald-500/60 hover:bg-emerald-700/60 text-white transition cursor-pointer"
-              title="Upload image file as App Screenshot"
-            >
-              <Upload className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          {/* Capture live frame button */}
+          <button
+            type="button"
+            onClick={handleCaptureLiveFrame}
+            disabled={isCapturing || isSavingScreenshot}
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
+            title="Capture a screenshot of the live frame via headless browser"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>{isCapturing ? "Capturing…" : "Capture Live Frame"}</span>
+          </button>
+
+          {/* Upload exact screenshot button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSavingScreenshot}
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
+            title="Upload exact screenshot image"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Screenshot</span>
+          </button>
 
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp"
             className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0]
-              if (file) {
-                const reader = new FileReader()
-                reader.onload = async (event) => {
-                  const dataUrl = event.target?.result as string
-                  if (dataUrl) {
-                    await saveCapturedScreenshot(dataUrl)
-                  }
-                }
-                reader.readAsDataURL(file)
-              }
-              e.target.value = ""
-            }}
+            onChange={handleExactScreenshotSelect}
           />
         </div>
       </header>
@@ -1322,7 +1206,7 @@ export function WorkflowSimulator({
                     title={isLiveIframe ? "Switch to App Screenshot preview" : "Switch to Live Iframe preview"}
                   >
                     <Globe className="w-3 h-3" />
-                    <span>{isLiveIframe ? "Iframe" : (currentWorkflow?.designB ? "App Screenshot" : "Sandbox")}</span>
+                    <span>{isLiveIframe ? "Iframe" : "App Screenshot"}</span>
                   </button>
                 </div>
 
@@ -1352,12 +1236,12 @@ export function WorkflowSimulator({
                     ) : currentWorkflow?.designB ? (
                       <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center relative overflow-hidden select-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={currentWorkflow.designB} alt="App screenshot" className="w-full h-full object-contain pointer-events-none" />
+                        <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
                         <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
                       </div>
                     ) : (
-                      <div className="w-full h-full overflow-auto">
-                        <LiveDevSandboxMock annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} title={currentWorkflow?.title || "Platform Health Overview"} />
+                      <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                        No screenshot saved. Upload the exact reference image.
                       </div>
                     )}
                   </DeviceFrame>
@@ -1395,9 +1279,11 @@ export function WorkflowSimulator({
                 >
                   {currentWorkflow?.designB ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={currentWorkflow.designB} alt="App screenshot" className="w-full h-full object-contain pointer-events-none" />
+                    <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
                   ) : (
-                    <LiveDevSandboxMock annotations={[]} activeAnnotationId={null} setActiveAnnotationId={() => {}} newAnnotationCoords={null} title={currentWorkflow?.title || "Platform Health Overview"} />
+                    <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                      No screenshot saved. Upload the exact reference image.
+                    </div>
                   )}
                 </div>
               </DeviceFrame>
@@ -1778,6 +1664,53 @@ export function WorkflowSimulator({
           </div>
         </div>
       )}
+
+      {/* ================= CONFIRM SCREENSHOT MODAL (Upload or Capture) ================= */}
+      {(pendingScreenshot && pendingScreenshotUrl) || pendingCaptureUrl ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6 animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-slate-900 border border-slate-800 p-5 text-white shadow-2xl">
+            <h2 className="text-base font-semibold">
+              {pendingCaptureUrl ? "Confirm captured screenshot" : "Confirm exact screenshot"}
+            </h2>
+
+            <p className="mt-1 text-xs text-slate-400">
+              {pendingCaptureUrl
+                ? "This screenshot was captured from the live frame. Check it before saving."
+                : "Check the image carefully before saving. This file will be uploaded unchanged."
+              }
+            </p>
+
+            <div className="mt-4 overflow-hidden rounded-lg bg-black border border-slate-800 flex items-center justify-center max-h-[60vh]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={pendingCaptureUrl || pendingScreenshotUrl!}
+                alt="Screenshot preview"
+                className="max-h-[60vh] w-full object-contain"
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelExactScreenshot}
+                disabled={isSavingScreenshot}
+                className="rounded-lg px-4 py-2 text-xs text-slate-300 hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={pendingCaptureUrl ? saveCapturedScreenshot : saveExactScreenshot}
+                disabled={isSavingScreenshot}
+                className="rounded-lg bg-lime-500 hover:bg-lime-400 px-4 py-2 text-xs font-bold text-black disabled:opacity-50 transition cursor-pointer flex items-center gap-1.5"
+              >
+                {isSavingScreenshot ? "Saving…" : "Save this screenshot"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* ================= TOAST QUEUE: stacked instead of overwritten ================= */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2" aria-live="polite">
