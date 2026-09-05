@@ -63,6 +63,15 @@ export default function ResetPasswordPage() {
           }
         }
 
+        const token_hash = params.get("token_hash")
+        const type = params.get("type") as any
+        if (token_hash && type) {
+          const { error } = await supabase.auth.verifyOtp({ token_hash, type })
+          if (!error && isMounted) {
+            setHasValidSession(true)
+          }
+        }
+
         // 2. Check if hash tokens exist (#access_token=...&type=recovery)
         const hash = window.location.hash
         if (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) {

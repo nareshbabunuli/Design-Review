@@ -287,8 +287,12 @@ export default function Page() {
       const hash = window.location.hash
       const params = new URLSearchParams(window.location.search)
       if (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) {
-        setAuthMode("reset")
-        setShowLanding(false)
+        window.location.replace(`/reset-password${hash}`)
+        return
+      }
+      if (params.get("type") === "recovery" || params.get("next") === "/reset-password") {
+        window.location.replace(`/reset-password${window.location.search}`)
+        return
       }
       const token = params.get("invite")
       if (token) {
@@ -344,9 +348,7 @@ export default function Page() {
     } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (!mounted) return
       if (event === "PASSWORD_RECOVERY") {
-        setAuthMode("reset")
-        setShowLanding(false)
-        setIsAuthChecking(false)
+        window.location.replace("/reset-password")
         return
       }
       if (session?.user) {
