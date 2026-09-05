@@ -80,7 +80,8 @@ export function CapturedResultModal({
           <img
             src={imageUrl}
             alt="Captured Result"
-            className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-md border border-slate-200 dark:border-[#222736]"
+            className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-md border border-slate-200 dark:border-[#222736] [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+            style={{ imageRendering: "-webkit-optimize-contrast" }}
           />
         </div>
 

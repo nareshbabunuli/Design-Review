@@ -34,6 +34,13 @@ import {
   AlertCircle,
   Upload,
   Crop,
+  Copy,
+  CopyPlus,
+  Check,
+  Maximize,
+  Minimize,
+  ChevronUp,
+  FolderKanban,
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
@@ -73,6 +80,7 @@ export interface WorkflowSimulatorProps {
   canEdit?: boolean
   userRole?: "client" | "freelancer" | "owner" | "developer" | null
   onSelectWorkflow?: (workflowId: string) => void
+  onDuplicateWorkflow?: (workflowId: string) => Promise<void>
   onUpdateField?: (
     workflowId: string,
     field: "ourNotes" | "clientMessage" | "clientTaskDone" | "reason" | "figmaUrl" | "designA" | "designB",
@@ -81,6 +89,9 @@ export interface WorkflowSimulatorProps {
   onOpenPresentation?: () => void
   theme?: "light" | "dark"
   onToggleTheme?: () => void
+  isFullscreen?: boolean
+  onToggleFullscreen?: (val?: boolean) => void
+  onNavigateView?: (mode: "dashboard" | "editor" | "simulator") => void
 }
 
 interface Annotation {
@@ -131,13 +142,12 @@ function ToolbarButton({
       onClick={onClick}
       title={title}
       aria-pressed={active}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
-        active
+      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${active
           ? variant === "primary"
             ? "bg-indigo-600 text-white shadow-sm font-semibold"
             : "bg-indigo-50 border border-indigo-200 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/40 dark:text-indigo-300 font-semibold"
           : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] hover:bg-slate-200/80 dark:hover:bg-[#202430] border border-transparent"
-      }`}
+        }`}
     >
       {children}
     </button>
@@ -155,10 +165,14 @@ export function WorkflowSimulator({
   canEdit = false,
   userRole = "owner",
   onSelectWorkflow,
+  onDuplicateWorkflow,
   onUpdateField,
   onOpenPresentation,
   theme = "dark",
   onToggleTheme,
+  isFullscreen: isFullscreenProp,
+  onToggleFullscreen,
+  onNavigateView,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
 
@@ -271,8 +285,12 @@ export function WorkflowSimulator({
     }
   })
 
-  const [navHistory, setNavHistory] = useState<string[]>([defaultUrl])
-  const [navIndex, setNavIndex] = useState<number>(0)
+  // Fullscreen, Copy Figma, and Captures Dock states
+  const [internalFullscreen, setInternalFullscreen] = useState<boolean>(false)
+  const isFullscreen = isFullscreenProp ?? internalFullscreen
+  const [copiedFigma, setCopiedFigma] = useState<boolean>(false)
+  const [showCapturesDock, setShowCapturesDock] = useState<boolean>(false)
+  const [showQuickDock, setShowQuickDock] = useState<boolean>(true)
 
   // Toast queue
   const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([])
@@ -282,6 +300,138 @@ export function WorkflowSimulator({
     setToastQueue((q) => [...q, { id, message: msg }])
     setTimeout(() => setToastQueue((q) => q.filter((t) => t.id !== id)), 3200)
   }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    const next = !isFullscreen
+    if (onToggleFullscreen) {
+      onToggleFullscreen(next)
+    } else {
+      setInternalFullscreen(next)
+    }
+    if (next) {
+      triggerToast("Total header hidden (Fullscreen mode)")
+    } else {
+      triggerToast("Total header restored")
+    }
+  }, [isFullscreen, onToggleFullscreen, triggerToast])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isFullscreen) {
+        if (onToggleFullscreen) {
+          onToggleFullscreen(false)
+        } else {
+          setInternalFullscreen(false)
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [isFullscreen, onToggleFullscreen])
+
+  const [navHistory, setNavHistory] = useState<string[]>([defaultUrl])
+  const [navIndex, setNavIndex] = useState<number>(0)
+
+  const [isDuplicating, setIsDuplicating] = useState(false)
+
+  const handleDuplicateScreen = useCallback(async () => {
+    if (!currentWorkflow) return
+    setIsDuplicating(true)
+    try {
+      if (onDuplicateWorkflow) {
+        await onDuplicateWorkflow(currentWorkflow.id)
+        triggerToast("Screen duplicated successfully!")
+      } else {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from("workflows")
+          .insert({
+            project_id: currentWorkflow.projectId || project.id,
+            title: `${currentWorkflow.title} (Copy)`,
+            design_a: currentWorkflow.designA,
+            design_b: currentWorkflow.designB,
+            figma_url: currentWorkflow.figmaUrl,
+            our_notes: currentWorkflow.ourNotes,
+            reason: currentWorkflow.reason,
+            client_message: currentWorkflow.clientMessage,
+            client_task_done: currentWorkflow.clientTaskDone,
+            is_done: currentWorkflow.isDone,
+          })
+          .select("*")
+          .single()
+
+        if (error) throw error
+        if (data && onSelectWorkflow) {
+          onSelectWorkflow(data.id)
+        }
+        triggerToast("Screen duplicated successfully!")
+      }
+    } catch (err: any) {
+      console.error("Error duplicating screen:", err)
+      triggerToast(err?.message || "Failed to duplicate screen")
+    } finally {
+      setIsDuplicating(false)
+    }
+  }, [currentWorkflow, onDuplicateWorkflow, project.id, onSelectWorkflow, triggerToast])
+
+  const handleCopyFigmaImage = useCallback(async () => {
+    if (!currentWorkflow?.designA) {
+      triggerToast("No Figma spec image available to copy")
+      return
+    }
+    try {
+      const res = await fetch(currentWorkflow.designA)
+      const blob = await res.blob()
+
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard && navigator.clipboard.write) {
+        let pngBlob = blob
+        if (blob.type !== "image/png") {
+          const img = new Image()
+          img.crossOrigin = "anonymous"
+          await new Promise((resolve, reject) => {
+            img.onload = resolve
+            img.onerror = reject
+            img.src = currentWorkflow.designA!
+          })
+          const canvas = document.createElement("canvas")
+          canvas.width = img.naturalWidth || img.width
+          canvas.height = img.naturalHeight || img.height
+          const ctx = canvas.getContext("2d")
+          if (ctx) {
+            ctx.drawImage(img, 0, 0)
+            pngBlob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b || blob), "image/png"))
+          }
+        }
+
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "image/png": pngBlob,
+          }),
+        ])
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec image copied to clipboard!")
+        return
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentWorkflow.designA)
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec URL copied to clipboard!")
+      }
+    } catch (err) {
+      console.warn("Direct blob clipboard copy notice, falling back to URL copy:", err)
+      if (navigator.clipboard && navigator.clipboard.writeText && currentWorkflow?.designA) {
+        await navigator.clipboard.writeText(currentWorkflow.designA)
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec URL copied to clipboard!")
+      } else {
+        triggerToast("Could not copy to clipboard")
+      }
+    }
+  }, [currentWorkflow, triggerToast])
 
   const handleSaveInfo = useCallback(() => {
     if (!currentWorkflow || !onUpdateField) return
@@ -439,8 +589,8 @@ export function WorkflowSimulator({
   const railMode: "none" | "new" | "inspect" = newAnnotationCoords
     ? "new"
     : activeAnnotationId
-    ? "inspect"
-    : "none"
+      ? "inspect"
+      : "none"
 
   const currentPreset = useMemo(() => {
     return EXTENDED_DEVICE_PRESETS.find((p) => p.id === selectedPresetId) || null
@@ -687,7 +837,7 @@ export function WorkflowSimulator({
           lastError = error
           retryCount++
           console.warn(`[DEBUG] onUpdateField attempt ${retryCount} failed:`, error)
-          
+
           if (retryCount < maxRetries) {
             console.log(`[DEBUG] Retrying in ${retryCount * 1000}ms...`)
             await new Promise(resolve => setTimeout(resolve, retryCount * 1000))
@@ -708,7 +858,7 @@ export function WorkflowSimulator({
         url: fullPublicUrl,
         mode: compareMode,
       }
-      
+
       console.log("[DEBUG] Adding exact screenshot to capture history", newCapture)
       setCapturedScreenshots((prev) => [newCapture, ...prev])
 
@@ -759,7 +909,7 @@ export function WorkflowSimulator({
 
   const cancelExactScreenshot = () => {
     console.log("[DEBUG] cancelExactScreenshot called")
-    
+
     if (pendingScreenshotUrl) {
       URL.revokeObjectURL(pendingScreenshotUrl)
       console.log("[DEBUG] Revoked pending screenshot URL")
@@ -767,7 +917,7 @@ export function WorkflowSimulator({
 
     setPendingScreenshot(null)
     setPendingScreenshotUrl(null)
-    
+
     console.log("[DEBUG] Cleared all pending screenshot state")
     triggerToast("Screenshot upload cancelled")
   }
@@ -832,11 +982,11 @@ export function WorkflowSimulator({
           ),
           crop: crop
             ? {
-                x: Math.round(crop.x),
-                y: Math.round(crop.y),
-                width: Math.round(crop.width),
-                height: Math.round(crop.height),
-              }
+              x: Math.round(crop.x),
+              y: Math.round(crop.y),
+              width: Math.round(crop.width),
+              height: Math.round(crop.height),
+            }
             : undefined,
           captureMode,
         }),
@@ -997,8 +1147,15 @@ export function WorkflowSimulator({
           ? cropBox
           : { x: 0, y: 0, width: deviceW, height: deviceH }
 
-      // 5. Find the exact iframe element or screen container in viewport
-      const targetEl = iframeRef.current || secondScreenRef.current
+      // 5. Find the exact element to capture
+      const targetEl =
+        captureMode === "framed-device"
+          ? (secondScreenRef.current?.closest(".device-chassis") as HTMLElement) ||
+            secondScreenRef.current?.parentElement ||
+            secondScreenRef.current ||
+            iframeRef.current
+          : iframeRef.current || secondScreenRef.current
+
       if (!targetEl) {
         throw new Error("Could not find live preview element")
       }
@@ -1020,7 +1177,20 @@ export function WorkflowSimulator({
       await new Promise((r) => requestAnimationFrame(r))
       await new Promise((r) => setTimeout(r, 40))
 
-      // 7. Map device crop coordinates to rendered screen pixels
+      // 7. Calculate exact coordinates within the stream accounting for tab letterboxing
+      const tabW = window.innerWidth
+      const tabH = window.innerHeight
+      const videoW = video.videoWidth
+      const videoH = video.videoHeight
+
+      // Uniform fit scale and offset applied by browser when streaming tab into video track
+      const fitScale = Math.min(videoW / tabW, videoH / tabH)
+      const renderW = tabW * fitScale
+      const renderH = tabH * fitScale
+      const offsetX = (videoW - renderW) / 2
+      const offsetY = (videoH - renderH) / 2
+
+      // Map device crop coordinates to rendered screen pixels within targetRect
       const screenScaleX = targetRect.width / deviceW
       const screenScaleY = targetRect.height / deviceH
 
@@ -1029,14 +1199,11 @@ export function WorkflowSimulator({
       const screenW = box.width * screenScaleX
       const screenH = box.height * screenScaleY
 
-      // Map from window CSS pixels to video stream pixels
-      const videoScaleX = video.videoWidth / window.innerWidth
-      const videoScaleY = video.videoHeight / window.innerHeight
-
-      const sx = Math.max(0, Math.min(Math.round(screenX * videoScaleX), video.videoWidth - 1))
-      const sy = Math.max(0, Math.min(Math.round(screenY * videoScaleY), video.videoHeight - 1))
-      const sWidth = Math.max(1, Math.min(Math.round(screenW * videoScaleX), video.videoWidth - sx))
-      const sHeight = Math.max(1, Math.min(Math.round(screenH * videoScaleY), video.videoHeight - sy))
+      // Precise pixel coordinates inside video buffer with letterbox offset compensation
+      const sx = Math.max(0, Math.min(Math.round(offsetX + screenX * fitScale), videoW - 1))
+      const sy = Math.max(0, Math.min(Math.round(offsetY + screenY * fitScale), videoH - 1))
+      const sWidth = Math.max(1, Math.min(Math.round(screenW * fitScale), videoW - sx))
+      const sHeight = Math.max(1, Math.min(Math.round(screenH * fitScale), videoH - sy))
 
       // 8. Output canvas matching the EXACT dimensions of the selected device / selection!
       const destW = Math.round(box.width)
@@ -1225,9 +1392,10 @@ export function WorkflowSimulator({
   }, [])
 
   return (
-    <div className="flex flex-col h-full w-full bg-slate-100 dark:bg-[#0b0c10] text-slate-800 dark:text-[#e2e4ea] select-none font-sans overflow-hidden transition-colors duration-150">
-      {/* ================= TOP HEADER: identity + primary mode switch only ================= */}
-      <header className="h-14 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-4 flex items-center justify-between gap-3 z-20 shrink-0 transition-colors">
+    <div className="flex flex-col h-full w-full bg-slate-100 dark:bg-[#0b0c10] text-slate-800 dark:text-[#e2e4ea] select-none font-sans overflow-hidden transition-colors duration-150 relative">
+      {/* ================= TOP HEADER: identity + primary mode switch only (Hidden in Fullscreen) ================= */}
+      {!isFullscreen && (
+        <header className="h-14 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-4 flex items-center justify-between gap-3 z-20 shrink-0 transition-colors">
         <div className="flex items-center gap-2 text-xs min-w-0">
           <span className="text-slate-500 dark:text-[#8e95a5] font-medium shrink-0">Design</span>
           <select
@@ -1312,11 +1480,10 @@ export function WorkflowSimulator({
         <div className="flex items-center gap-2 shrink-0">
           {/* Enable Frame toggle with checkbox */}
           <label
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${
-              showDeviceFrame
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showDeviceFrame
                 ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-600/20 dark:border-indigo-500/60 dark:text-indigo-300 ring-1 ring-indigo-500/20"
                 : "bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] shadow-xs"
-            }`}
+              }`}
             title="Enable or disable phone device frame"
           >
             <input
@@ -1329,13 +1496,33 @@ export function WorkflowSimulator({
             <span>Enable Frame: {showDeviceFrame ? "Yes" : "No"}</span>
           </label>
 
+          {/* Live View vs App Screenshot Switch (Side-by-side with Enable Frame) */}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !isLiveCanvas
+              setIsLiveCanvas(next)
+              if (typeof window !== "undefined") {
+                localStorage.setItem("simulator_is_live_mode", String(next))
+              }
+              triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition cursor-pointer select-none shadow-xs ${isLiveCanvas
+                ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
+                : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
+              }`}
+            title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
+          </button>
+
           {/* Options toggle with checkbox */}
           <label
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${
-              showOptions
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showOptions
                 ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-600/20 dark:border-indigo-500/60 dark:text-indigo-300 ring-1 ring-indigo-500/20"
                 : "bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] shadow-xs"
-            }`}
+              }`}
             title="Toggle options panel"
           >
             <input
@@ -1347,52 +1534,6 @@ export function WorkflowSimulator({
             />
             <span className="hidden sm:inline">Options</span>
           </label>
-
-          {/* Snip Area Selection Toggle */}
-          <button
-            type="button"
-            onClick={() => {
-              if (!isLiveCanvas) setIsLiveCanvas(true)
-              setIsAreaSelectionActive((prev) => !prev)
-            }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer border ${
-              isAreaSelectionActive
-                ? "bg-indigo-600 border-indigo-400 text-white shadow-indigo-500/25 ring-2 ring-indigo-400"
-                : "bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-800 dark:text-slate-200"
-            }`}
-            title={isAreaSelectionActive ? "Disable selection overlay" : "Enable selection area on live screen (drag & resize to crop)"}
-          >
-            <Crop className="w-3.5 h-3.5" />
-            <span>{isAreaSelectionActive ? "Disable Selection" : "Enable Selection Area"}</span>
-          </button>
-
-          {/* Capture Mode Toggle: Clean App vs Framed */}
-          <div className="flex items-center bg-slate-100 dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-lg p-0.5 shadow-xs">
-            <button
-              type="button"
-              onClick={() => setCaptureMode("clean-app")}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
-                captureMode === "clean-app"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-              }`}
-              title="Capture clean web app screen (recommended: matches Figma spec, full screen including bottom navigation)"
-            >
-              Clean App
-            </button>
-            <button
-              type="button"
-              onClick={() => setCaptureMode("framed-device")}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
-                captureMode === "framed-device"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-              }`}
-              title="Include device frame/status bar in capture"
-            >
-              With Frame
-            </button>
-          </div>
 
           {/* Primary Live Capture */}
           <button
@@ -1410,42 +1551,38 @@ export function WorkflowSimulator({
               }
             }}
             disabled={isCapturing || isSavingScreenshot}
-            className={`px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${
-              isAreaSelectionActive
+            className={`px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${isAreaSelectionActive
                 ? "bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400 shadow-emerald-500/20"
                 : "bg-indigo-600 hover:bg-indigo-500"
-            }`}
+              }`}
             title={isAreaSelectionActive ? "Capture the selected area from live screen" : "Capture full app screen (clean, full height including bottom navigation)"}
           >
             <Camera className="w-3.5 h-3.5" />
             <span>{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}</span>
           </button>
 
-          {/* Debug Mode Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsDebugMode(!isDebugMode)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer ${
-              isDebugMode 
-                ? "bg-orange-600 hover:bg-orange-500 text-white" 
-                : "bg-slate-600 hover:bg-slate-500 text-white"
-            }`}
-            title="Toggle debug mode for detailed logging"
-          >
-            <AlertCircle className="w-3.5 h-3.5" />
-            <span>Debug</span>
-          </button>
-
-          {/* Upload exact screenshot button */}
+          {/* Upload exact screenshot button (icon only beside capture) */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isSavingScreenshot}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50"
+            className="p-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg flex items-center justify-center transition shadow-xs cursor-pointer disabled:opacity-50"
             title="Upload exact screenshot image"
+            aria-label="Upload exact screenshot image"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Upload Screenshot</span>
+          </button>
+
+          {/* Collapse / Hide Total Header Arrow Button */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="p-1.5 text-xs font-semibold rounded-lg flex items-center gap-1 transition shadow-xs cursor-pointer bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white"
+            title="Hide Total Header (Fullscreen Canvas)"
+            aria-label="Hide Total Header"
+          >
+            <ChevronUp className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="hidden xl:inline text-[10px]">Hide Header</span>
           </button>
 
           <input
@@ -1457,9 +1594,10 @@ export function WorkflowSimulator({
           />
         </div>
       </header>
+      )}
 
-      {/* ================= OPTIONS PANEL: all secondary controls live here now ================= */}
-      {showOptions && (
+      {/* ================= OPTIONS PANEL: all secondary controls live here now (Hidden in Fullscreen) ================= */}
+      {!isFullscreen && showOptions && (
         <div className="border-b border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#14161f] px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs z-20 shrink-0 transition-colors animate-in slide-in-from-top-2 duration-150">
           {/* Device preset */}
           <div className="flex items-center gap-2">
@@ -1548,9 +1686,8 @@ export function WorkflowSimulator({
                 setZoomMode("fit")
                 triggerToast("Auto-fitted both screens to view")
               }}
-              className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
-                zoomMode === "fit" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-              }`}
+              className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${zoomMode === "fit" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                }`}
             >
               Fit
             </button>
@@ -1590,9 +1727,8 @@ export function WorkflowSimulator({
                   key={ratio}
                   type="button"
                   onClick={() => setSplitRatio(ratio)}
-                  className={`px-2 py-1 rounded transition cursor-pointer ${
-                    splitRatio === ratio ? "bg-slate-200 dark:bg-[#2b3040] text-slate-900 dark:text-white font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                  }`}
+                  className={`px-2 py-1 rounded transition cursor-pointer ${splitRatio === ratio ? "bg-slate-200 dark:bg-[#2b3040] text-slate-900 dark:text-white font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
                 >
                   {ratio}/{100 - ratio}
                 </button>
@@ -1600,9 +1736,8 @@ export function WorkflowSimulator({
               <button
                 type="button"
                 onClick={() => setIsSwapped(!isSwapped)}
-                className={`px-2 py-1 rounded transition flex items-center gap-1 border-l border-slate-300 dark:border-[#272b38] cursor-pointer ${
-                  isSwapped ? "text-indigo-600 dark:text-indigo-400 font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                }`}
+                className={`px-2 py-1 rounded transition flex items-center gap-1 border-l border-slate-300 dark:border-[#272b38] cursor-pointer ${isSwapped ? "text-indigo-600 dark:text-indigo-400 font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                  }`}
                 title="Swap left and right panels"
               >
                 <SplitSquareVertical className="w-3 h-3" />
@@ -1615,9 +1750,8 @@ export function WorkflowSimulator({
             type="button"
             onClick={() => setShowGrid(!showGrid)}
             aria-pressed={showGrid}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${
-              showGrid ? "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
-            }`}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showGrid ? "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
           >
             Redlines
           </button>
@@ -1631,6 +1765,78 @@ export function WorkflowSimulator({
             title="Optional server render snapshot via headless browser"
           >
             Server URL Snapshot
+          </button>
+
+          {/* Snip Area Selection Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!isLiveCanvas) setIsLiveCanvas(true)
+              setIsAreaSelectionActive((prev) => !prev)
+            }}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${isAreaSelectionActive
+                ? "bg-indigo-600 border-indigo-400 text-white shadow-indigo-500/25 ring-1 ring-indigo-400"
+                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
+            title={isAreaSelectionActive ? "Disable selection overlay" : "Enable selection area on live screen (drag & resize to crop)"}
+          >
+            <Crop className="w-3.5 h-3.5" />
+            <span>{isAreaSelectionActive ? "Disable Selection" : "Selection Area"}</span>
+          </button>
+
+          {/* Capture Mode Toggle: Clean App vs Framed */}
+          <div className="flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md p-0.5 shadow-xs transition-colors">
+            <span className="text-slate-500 dark:text-[#8e95a5] text-[11px] font-medium px-1.5">Capture:</span>
+            <button
+              type="button"
+              onClick={() => setCaptureMode("clean-app")}
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${captureMode === "clean-app"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                }`}
+              title="Capture clean web app screen (recommended: matches Figma spec, full screen including bottom navigation)"
+            >
+              Clean App
+            </button>
+            <button
+              type="button"
+              onClick={() => setCaptureMode("framed-device")}
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${captureMode === "framed-device"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                }`}
+              title="Include device frame/status bar in capture"
+            >
+              With Frame
+            </button>
+          </div>
+
+          {/* Debug Mode Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsDebugMode(!isDebugMode)}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${isDebugMode
+                ? "bg-orange-600 border-orange-500 text-white shadow-xs"
+                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
+            title="Toggle debug mode for detailed logging"
+          >
+            <AlertCircle className="w-3.5 h-3.5" />
+            <span>Debug</span>
+          </button>
+
+          {/* Captures Dock Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowCapturesDock((prev) => !prev)}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showCapturesDock
+                ? "bg-emerald-600 border-emerald-500 text-white shadow-xs"
+                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
+            title="Toggle Captures dock at bottom"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Captures ({capturedScreenshots.length})</span>
           </button>
 
           {compareMode !== "side-by-side" && (
@@ -1654,189 +1860,106 @@ export function WorkflowSimulator({
       )}
 
       {/* ================= MAIN WORKSPACE ================= */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         <main ref={containerRef} className="flex-1 flex relative overflow-hidden bg-slate-200/80 dark:bg-[#090a0e] transition-colors">
+
           <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
-              {/* PANEL A: FIGMA SPEC */}
-              <section
-                style={{ width: `${splitRatio}%` }}
-                className="h-full relative flex flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors"
-              >
-                <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-3 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#a259ff]" />
-                    <span className="font-semibold text-slate-900 dark:text-[#c5c9d5]">Figma Spec:</span>
-                    <span className="text-slate-600 dark:text-[#8e95a5] truncate max-w-[200px]">{currentWorkflow?.title || "Screen"}</span>
-                  </div>
-                  <div className="font-mono text-[10px] text-slate-500 dark:text-[#717888]">
-                    {viewportWidth}×{viewportHeight}px
-                  </div>
-                </div>
-
-                <div className={`flex-1 relative p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#0c0d12] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
-                  <DeviceFrame
-                    frameType="none"
-                    finish={frameFinish}
-                    width={viewportWidth}
-                    height={viewportHeight}
-                    scale={currentScale}
-                    showFrame={false}
-                    showStatusBar={false}
-                  >
-                    {showGrid && (
-                      <div className="absolute inset-0 pointer-events-none z-20 border border-indigo-500/30">
-                        <div className="absolute top-4 left-4 text-[9px] font-mono text-indigo-400/80 bg-indigo-950/70 px-1 rounded">padding: 32px</div>
-                        <div className="absolute top-0 bottom-0 left-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
-                        <div className="absolute top-0 bottom-0 right-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
-                      </div>
-                    )}
-                    {currentWorkflow?.designA ? (
-                      <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden relative">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={currentWorkflow.designA} alt="Figma spec design" className="w-full h-full object-contain select-none pointer-events-none" />
-                      </div>
-                    ) : (
-                      <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
-                    )}
-                  </DeviceFrame>
-                </div>
-              </section>
-
-              <div
-                onMouseDown={() => setIsDraggingSplit(true)}
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize split panels"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowLeft") setSplitRatio((r) => Math.max(20, r - 2))
-                  if (e.key === "ArrowRight") setSplitRatio((r) => Math.min(80, r + 2))
-                }}
-                className="w-2.5 bg-slate-200 dark:bg-[#14161f] hover:bg-indigo-600 focus-visible:bg-indigo-600 transition-colors cursor-col-resize flex items-center justify-center relative z-20 shrink-0 border-x border-slate-300 dark:border-[#1e222e] focus:outline-none"
-              >
-                <div className="h-8 w-1 bg-slate-400 dark:bg-[#373d50] rounded-full" />
-              </div>
-
-              {/* PANEL B: LIVE INTERACTIVE BROWSER */}
-              <section style={{ width: `${100 - splitRatio}%` }} className="h-full relative flex flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors">
-                {/* Sleek Browser Toolbar */}
-                <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors">
-                  {/* Navigation Buttons */}
-                  <div className="flex items-center gap-0.5">
+            {/* PANEL A: FIGMA SPEC */}
+            <section
+              style={{ width: `${splitRatio}%` }}
+              className="h-full relative flex flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors"
+            >
+              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {/* Dashboard Link */}
+                  {onNavigateView && (
                     <button
                       type="button"
-                      onClick={handleGoBack}
-                      disabled={navIndex === 0}
-                      className={`p-1 rounded transition ${
-                        navIndex === 0
-                          ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
-                          : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
-                      }`}
-                      title="Back"
+                      onClick={() => onNavigateView("dashboard")}
+                      className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
+                      title="Return to Dashboard"
                     >
-                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <FolderKanban className="w-3.5 h-3.5" />
                     </button>
+                  )}
+
+                  {/* Screen Switcher */}
+                  <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0">
                     <button
                       type="button"
-                      onClick={handleGoForward}
-                      disabled={navIndex >= navHistory.length - 1}
-                      className={`p-1 rounded transition ${
-                        navIndex >= navHistory.length - 1
-                          ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
-                          : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
-                      }`}
-                      title="Forward"
+                      onClick={handlePrevWorkflow}
+                      disabled={currentWorkflowIndex <= 0}
+                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      title="Previous screen (←)"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      <ChevronLeft className="w-3 h-3" />
                     </button>
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#a259ff] mx-0.5 shrink-0" />
+                    <span
+                      className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 px-1 max-w-[120px] sm:max-w-[160px] truncate"
+                      title={currentWorkflow?.title || "Screen"}
+                    >
+                      {currentWorkflow?.title || "Screen"}
+                    </span>
                     <button
                       type="button"
-                      onClick={handleRefresh}
-                      className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
-                      title="Reload Page"
+                      onClick={handleNextWorkflow}
+                      disabled={currentWorkflowIndex >= workflows.length - 1}
+                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      title="Next screen (→)"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
+                      <ChevronRight className="w-3 h-3" />
                     </button>
                   </div>
 
-                  {/* Address Bar Container */}
-                  <div className="flex-1 flex items-center bg-slate-50 dark:bg-[#090a0f] border border-slate-300 dark:border-[#222736] focus-within:border-indigo-500 rounded px-2 py-0.5 text-xs transition shadow-xs">
-                    <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400 mr-1.5 shrink-0" />
-                    <input
-                      type="text"
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          navigateTo(urlInput)
-                        }
-                      }}
-                      placeholder="Type port (e.g. 8081) or URL..."
-                      className="bg-transparent w-full text-slate-900 dark:text-[#e2e4ea] focus:outline-none font-mono text-[11px]"
-                    />
+                  {/* Duplicate Screen Button */}
+                  {currentWorkflow && (
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        navigateTo(urlInput)
-                      }}
-                      className="ml-1 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-700/50 rounded transition cursor-pointer"
+                      onClick={handleDuplicateScreen}
+                      disabled={isDuplicating}
+                      className="px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 flex items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                      title="Duplicate this screen"
                     >
-                      Go
+                      <CopyPlus className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                      <span>{isDuplicating ? "Duplicating…" : "Duplicate"}</span>
                     </button>
-                  </div>
+                  )}
 
-                  {/* Port Quick Switch */}
-                  <div className="hidden xl:flex items-center gap-1 font-mono text-[10px]">
-                    {["8082", "8081", "5173", "8080", "3001"].map((port) => (
-                      <button
-                        key={port}
-                        type="button"
-                        onClick={() => navigateTo(port)}
-                        className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${
-                          currentUrl.includes(`:${port}`)
-                            ? "bg-indigo-100 dark:bg-indigo-600/30 border-indigo-300 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-300 font-bold"
-                            : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                        }`}
-                      >
-                        :{port}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Copy Image to Clipboard */}
+                  {currentWorkflow?.designA && (
+                    <button
+                      type="button"
+                      onClick={handleCopyFigmaImage}
+                      className="p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white flex items-center transition cursor-pointer shadow-xs shrink-0"
+                      title="Copy Figma spec image to clipboard"
+                    >
+                      {copiedFigma ? (
+                        <Check className="w-3 h-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3 h-3 text-slate-500 dark:text-[#8e95a5]" />
+                      )}
+                    </button>
+                  )}
 
-                  {/* Open in new tab */}
-                  <a
-                    href={currentUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-1 text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer"
-                    title="Open live URL in new tab"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  <div className="h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
 
-                  {/* Auth Credentials Modal Trigger */}
+                  {/* Enable Frame Toggle */}
                   <button
                     type="button"
-                    onClick={() => setIsAuthModalOpen(true)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1 transition cursor-pointer shrink-0 ${
-                      authConfig.username || authConfig.cookie || authConfig.token
-                        ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
-                        : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    onClick={() => setShowDeviceFrame(!showDeviceFrame)}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                      showDeviceFrame
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                        : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
                     }`}
-                    title="Configure App Credentials for auto-login & screenshot capture"
+                    title="Toggle phone device frame"
                   >
-                    <Key className="w-3 h-3" />
-                    <span>Credentials</span>
-                    {(authConfig.username || authConfig.cookie || authConfig.token) && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    )}
+                    <Smartphone className="w-3 h-3" />
+                    <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
                   </button>
 
-                  {/* Live View vs App Screenshot Switch */}
+                  {/* Live Screen Toggle */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1845,89 +1968,296 @@ export function WorkflowSimulator({
                       if (typeof window !== "undefined") {
                         localStorage.setItem("simulator_is_live_mode", String(next))
                       }
-                      triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+                      triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
                     }}
-                    className={`px-2.5 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
                       isLiveCanvas
-                        ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
-                        : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
+                        ? "bg-purple-600 text-white border-purple-500 shadow-xs"
+                        : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
                     }`}
                     title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
                   >
-                    <Sparkles className="w-3 h-3" />
-                    <span>{isLiveCanvas ? "Live Iframe" : "App Screenshot"}</span>
+                    <Globe className="w-3 h-3" />
+                    <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
+                  </button>
+
+                  {/* Capture App Screen Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleLiveScreenCapture(false)}
+                    disabled={isCapturing || isSavingScreenshot}
+                    className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                    title="Capture App Screen"
+                  >
+                    <Camera className="w-3 h-3" />
                   </button>
                 </div>
 
-                <div
-                  onClick={handleBrowserCanvasClick}
-                  className={`flex-1 p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#07080b] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] relative select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"} ${isAddingAnnotation ? "cursor-crosshair" : "cursor-default"}`}
-                >
-                  <DeviceFrame
-                    frameType={currentFrameType}
-                    finish={frameFinish}
-                    width={viewportWidth}
-                    height={viewportHeight}
-                    scale={currentScale}
-                    showFrame={showDeviceFrame}
-                    showStatusBar={showDeviceStatusBar}
-                    screenRef={secondScreenRef}
-                  >
-                    {/* The Live Iframe is always kept alive in the layout tree */}
-                    <iframe
-                      ref={iframeRef}
-                      src={currentUrl}
-                      title="Live App Preview"
-                      className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
-                      style={
-                        isLiveCanvas
-                          ? {}
-                          : {
-                              position: "absolute",
-                              opacity: 0,
-                              pointerEvents: "none",
-                              zIndex: -1,
-                            }
-                      }
-                      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                      allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone"
-                    />
-
-                    {/* Area Selection Box Overlay for live screen */}
-                    {isLiveCanvas && (
-                      <AreaSelectionOverlay
-                        isActive={isAreaSelectionActive}
-                        containerWidth={viewportWidth}
-                        containerHeight={viewportHeight}
-                        scale={currentScale}
-                        selectionBoxRef={selectionBoxRef}
-                        onCapture={(box) => handleLiveScreenCapture(false, box)}
-                        onCaptureFullScreen={() => handleLiveScreenCapture(true)}
-                        onClose={() => setIsAreaSelectionActive(false)}
-                        isCapturing={isCapturing}
-                      />
-                    )}
-
-                    {/* The Saved App Screenshot View */}
-                    {!isLiveCanvas && (
-                      <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
-                        {currentWorkflow?.designB ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
-                            <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
-                          </>
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
-                            No screenshot saved. Click &quot;Capture Live Screen&quot; to capture and save a screenshot.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </DeviceFrame>
+                <div className="font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
+                  {viewportWidth}×{viewportHeight}px
                 </div>
-              </section>
+              </div>
+
+              <div className={`flex-1 relative p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#0c0d12] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
+                <DeviceFrame
+                  frameType="none"
+                  finish={frameFinish}
+                  width={viewportWidth}
+                  height={viewportHeight}
+                  scale={currentScale}
+                  showFrame={false}
+                  showStatusBar={false}
+                >
+                  {showGrid && (
+                    <div className="absolute inset-0 pointer-events-none z-20 border border-indigo-500/30">
+                      <div className="absolute top-4 left-4 text-[9px] font-mono text-indigo-400/80 bg-indigo-950/70 px-1 rounded">padding: 32px</div>
+                      <div className="absolute top-0 bottom-0 left-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                      <div className="absolute top-0 bottom-0 right-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                    </div>
+                  )}
+                  {currentWorkflow?.designA ? (
+                    <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={currentWorkflow.designA}
+                        alt="Figma spec design"
+                        className="w-full h-full object-contain select-none pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                        style={{ imageRendering: "-webkit-optimize-contrast" }}
+                      />
+                    </div>
+                  ) : (
+                    <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
+                  )}
+                </DeviceFrame>
+              </div>
+            </section>
+
+            <div
+              onMouseDown={() => setIsDraggingSplit(true)}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize split panels"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft") setSplitRatio((r) => Math.max(20, r - 2))
+                if (e.key === "ArrowRight") setSplitRatio((r) => Math.min(80, r + 2))
+              }}
+              className="w-2.5 bg-slate-200 dark:bg-[#14161f] hover:bg-indigo-600 focus-visible:bg-indigo-600 transition-colors cursor-col-resize flex items-center justify-center relative z-20 shrink-0 border-x border-slate-300 dark:border-[#1e222e] focus:outline-none"
+            >
+              <div className="h-8 w-1 bg-slate-400 dark:bg-[#373d50] rounded-full" />
             </div>
+
+            {/* PANEL B: LIVE INTERACTIVE BROWSER */}
+            <section style={{ width: `${100 - splitRatio}%` }} className="h-full relative flex flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors">
+              {/* Sleek Browser Toolbar */}
+              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors">
+                {/* Navigation Buttons */}
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={handleGoBack}
+                    disabled={navIndex === 0}
+                    className={`p-1 rounded transition ${navIndex === 0
+                        ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
+                        : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
+                      }`}
+                    title="Back"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGoForward}
+                    disabled={navIndex >= navHistory.length - 1}
+                    className={`p-1 rounded transition ${navIndex >= navHistory.length - 1
+                        ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
+                        : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
+                      }`}
+                    title="Forward"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+                    title="Reload Page"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Address Bar Container */}
+                <div className="flex-1 flex items-center bg-slate-50 dark:bg-[#090a0f] border border-slate-300 dark:border-[#222736] focus-within:border-indigo-500 rounded px-2 py-0.5 text-xs transition shadow-xs">
+                  <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400 mr-1.5 shrink-0" />
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        navigateTo(urlInput)
+                      }
+                    }}
+                    placeholder="Type port (e.g. 8081) or URL..."
+                    className="bg-transparent w-full text-slate-900 dark:text-[#e2e4ea] focus:outline-none font-mono text-[11px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      navigateTo(urlInput)
+                    }}
+                    className="ml-1 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-700/50 rounded transition cursor-pointer"
+                  >
+                    Go
+                  </button>
+                </div>
+
+                {/* Port Quick Switch */}
+                <div className="hidden xl:flex items-center gap-1 font-mono text-[10px]">
+                  {["8082", "8081", "5173", "8080", "3001"].map((port) => (
+                    <button
+                      key={port}
+                      type="button"
+                      onClick={() => navigateTo(port)}
+                      className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${currentUrl.includes(`:${port}`)
+                          ? "bg-indigo-100 dark:bg-indigo-600/30 border-indigo-300 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-300 font-bold"
+                          : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                    >
+                      :{port}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Open in new tab */}
+                <a
+                  href={currentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-1 text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer"
+                  title="Open live URL in new tab"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+
+                {/* Auth Credentials Modal Trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsAuthModalOpen(true)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1 transition cursor-pointer shrink-0 ${authConfig.username || authConfig.cookie || authConfig.token
+                      ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
+                      : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
+                  title="Configure App Credentials for auto-login & screenshot capture"
+                >
+                  <Key className="w-3 h-3" />
+                  <span>Credentials</span>
+                  {(authConfig.username || authConfig.cookie || authConfig.token) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  )}
+                </button>
+
+                {/* Live View vs App Screenshot Switch */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isLiveCanvas
+                    setIsLiveCanvas(next)
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("simulator_is_live_mode", String(next))
+                    }
+                    triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+                  }}
+                  className={`px-2.5 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${isLiveCanvas
+                      ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
+                      : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
+                    }`}
+                  title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>{isLiveCanvas ? "Live Iframe" : "App Screenshot"}</span>
+                </button>
+              </div>
+
+              <div
+                onClick={handleBrowserCanvasClick}
+                className={`flex-1 p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#07080b] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] relative select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"} ${isAddingAnnotation ? "cursor-crosshair" : "cursor-default"}`}
+              >
+                <DeviceFrame
+                  frameType={currentFrameType}
+                  finish={frameFinish}
+                  width={viewportWidth}
+                  height={viewportHeight}
+                  scale={currentScale}
+                  showFrame={showDeviceFrame}
+                  showStatusBar={showDeviceStatusBar}
+                  screenRef={secondScreenRef}
+                >
+                  {/* The Live Iframe is always kept alive in the layout tree */}
+                  <iframe
+                    ref={iframeRef}
+                    src={currentUrl}
+                    title="Live App Preview"
+                    className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
+                    style={
+                      isLiveCanvas
+                        ? {}
+                        : {
+                          position: "absolute",
+                          opacity: 0,
+                          pointerEvents: "none",
+                          zIndex: -1,
+                        }
+                    }
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                    allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone"
+                  />
+
+                  {/* Area Selection Box Overlay for live screen */}
+                  {isLiveCanvas && (
+                    <AreaSelectionOverlay
+                      isActive={isAreaSelectionActive}
+                      containerWidth={viewportWidth}
+                      containerHeight={viewportHeight}
+                      scale={currentScale}
+                      selectionBoxRef={selectionBoxRef}
+                      onCapture={(box) => handleLiveScreenCapture(false, box)}
+                      onCaptureFullScreen={() => handleLiveScreenCapture(true)}
+                      onClose={() => setIsAreaSelectionActive(false)}
+                      isCapturing={isCapturing}
+                    />
+                  )}
+
+                  {/* The Saved App Screenshot View */}
+                  {!isLiveCanvas && (
+                    <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
+                      {currentWorkflow?.designB ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={currentWorkflow.designB}
+                            alt="Saved app screenshot"
+                            className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                            style={{ imageRendering: "-webkit-optimize-contrast" }}
+                          />
+                          <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
+                        </>
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                          No screenshot saved. Click &quot;Capture Live Screen&quot; to capture and save a screenshot.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </DeviceFrame>
+              </div>
+            </section>
+          </div>
 
           {compareMode !== "side-by-side" && (
             <div className={`w-full h-full flex items-center justify-center p-4 bg-slate-200/50 dark:bg-[#090a0e] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
@@ -1943,7 +2273,12 @@ export function WorkflowSimulator({
                 <div className="absolute inset-0 z-10 select-none overflow-hidden bg-white dark:bg-[#0f1117] flex items-center justify-center">
                   {currentWorkflow?.designA ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={currentWorkflow.designA} alt="Figma spec" className="w-full h-full object-contain pointer-events-none" />
+                    <img
+                      src={currentWorkflow.designA}
+                      alt="Figma spec"
+                      className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                      style={{ imageRendering: "-webkit-optimize-contrast" }}
+                    />
                   ) : (
                     <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
                   )}
@@ -1958,7 +2293,12 @@ export function WorkflowSimulator({
                 >
                   {currentWorkflow?.designB ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={currentWorkflow.designB} alt="Saved app screenshot" className="w-full h-full object-contain pointer-events-none" />
+                    <img
+                      src={currentWorkflow.designB}
+                      alt="Saved app screenshot"
+                      className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                      style={{ imageRendering: "-webkit-optimize-contrast" }}
+                    />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
                       No screenshot saved. Upload the exact reference image.
@@ -2032,13 +2372,12 @@ export function WorkflowSimulator({
                           role="radio"
                           aria-checked={annotationDraft.severity === sev}
                           onClick={() => setAnnotationDraft({ ...annotationDraft, severity: sev })}
-                          className={`py-1 text-[11px] rounded font-medium border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
-                            annotationDraft.severity === sev
+                          className={`py-1 text-[11px] rounded font-medium border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${annotationDraft.severity === sev
                               ? sev === "Blocker" || sev === "High"
                                 ? "bg-rose-500/20 border-rose-500 text-rose-600 dark:text-rose-300 font-bold"
                                 : "bg-indigo-500/20 border-indigo-500 text-indigo-700 dark:text-indigo-300 font-bold"
                               : "bg-slate-50 dark:bg-[#10121a] border-slate-300 dark:border-[#252a3a] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                          }`}
+                            }`}
                         >
                           {sev}
                         </button>
@@ -2107,9 +2446,8 @@ export function WorkflowSimulator({
                           setAnnotations(annotations.map((a) => (a.id === item.id ? { ...a, resolved: !a.resolved } : a)))
                           triggerToast(item.resolved ? "Issue reopened" : "Issue marked as resolved")
                         }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                          item.resolved ? "bg-emerald-50 dark:bg-emerald-600/20 border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "bg-slate-100 hover:bg-slate-200 dark:bg-[#1e2230] dark:hover:bg-[#282e42] text-slate-800 dark:text-white"
-                        }`}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${item.resolved ? "bg-emerald-50 dark:bg-emerald-600/20 border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "bg-slate-100 hover:bg-slate-200 dark:bg-[#1e2230] dark:hover:bg-[#282e42] text-slate-800 dark:text-white"
+                          }`}
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         {item.resolved ? "Resolved" : "Mark Resolved"}
@@ -2134,46 +2472,92 @@ export function WorkflowSimulator({
         )}
       </div>
 
-      {/* ================= CAPTURES DOCK: always visible so the feature is discoverable ================= */}
-      <div className="h-20 border-t border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-4 flex items-center justify-between shrink-0 z-20 transition-colors">
-        <span className="text-xs font-semibold text-slate-600 dark:text-[#8e95a5] flex items-center gap-1.5 shrink-0">
-          <Camera className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-          Captures ({capturedScreenshots.length})
-        </span>
-        {capturedScreenshots.length === 0 ? (
-          <span className="text-[11px] text-slate-400 dark:text-[#565c6c] italic">Capture a screenshot to save it here for later comparison.</span>
-        ) : (
-          <div className="flex items-center gap-3 overflow-x-auto py-2">
-            {capturedScreenshots.map((snap) => (
-              <button
-                type="button"
-                key={snap.id}
-                onClick={() => {
-                  if (currentWorkflow) {
-                    onUpdateField?.(currentWorkflow.id, "designB", snap.url)
-                  }
-                  setCompareMode("overlay")
-                  triggerToast("Applied capture to App Screenshot & switched to Overlay")
-                }}
-                className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 dark:bg-[#171922] dark:hover:bg-[#202330] border border-slate-300 dark:border-[#262b3a] hover:border-indigo-500 rounded-lg cursor-pointer transition text-xs group focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 shadow-xs"
-                title="Apply as App Screenshot & compare in Overlay mode"
-              >
-                <div className="w-8 h-8 rounded bg-slate-200 dark:bg-[#0b0c10] border border-slate-300 dark:border-[#2b3040] flex items-center justify-center font-mono text-[10px] text-indigo-600 dark:text-indigo-400 group-hover:scale-105 transition overflow-hidden shrink-0">
-                  {snap.url.startsWith("data:") || snap.url.startsWith("http") ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={snap.url} alt="Snap" className="w-full h-full object-cover" />
-                  ) : (
-                    "IMG"
-                  )}
-                </div>
-                <div className="text-left">
-                  <div className="font-mono text-[11px] text-slate-900 dark:text-white font-medium">{snap.dimensions}</div>
-                  <div className="text-[10px] text-slate-500 dark:text-[#6b7280]">{snap.timestamp}</div>
-                </div>
-              </button>
-            ))}
+      {/* ================= CAPTURES DOCK: collapsible to maximize canvas vertical space ================= */}
+      {showCapturesDock ? (
+        <div className="h-20 border-t border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-4 flex items-center justify-between shrink-0 z-20 transition-colors animate-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-600 dark:text-[#8e95a5] flex items-center gap-1.5 shrink-0">
+              <Camera className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+              Captures ({capturedScreenshots.length})
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowCapturesDock(false)}
+              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+              title="Minimize Captures Dock"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
           </div>
-        )}
+          {capturedScreenshots.length === 0 ? (
+            <span className="text-[11px] text-slate-400 dark:text-[#565c6c] italic">Capture a screenshot to save it here for later comparison.</span>
+          ) : (
+            <div className="flex items-center gap-3 overflow-x-auto py-2">
+              {capturedScreenshots.map((snap) => (
+                <button
+                  type="button"
+                  key={snap.id}
+                  onClick={() => {
+                    if (currentWorkflow) {
+                      onUpdateField?.(currentWorkflow.id, "designB", snap.url)
+                    }
+                    setCompareMode("overlay")
+                    triggerToast("Applied capture to App Screenshot & switched to Overlay")
+                  }}
+                  className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 dark:bg-[#171922] dark:hover:bg-[#202330] border border-slate-300 dark:border-[#262b3a] hover:border-indigo-500 rounded-lg cursor-pointer transition text-xs group focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 shadow-xs"
+                  title="Apply as App Screenshot & compare in Overlay mode"
+                >
+                  <div className="w-8 h-8 rounded bg-slate-200 dark:bg-[#0b0c10] border border-slate-300 dark:border-[#2b3040] flex items-center justify-center font-mono text-[10px] text-indigo-600 dark:text-indigo-400 group-hover:scale-105 transition overflow-hidden shrink-0">
+                    {snap.url.startsWith("data:") || snap.url.startsWith("http") ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={snap.url} alt="Snap" className="w-full h-full object-cover" />
+                    ) : (
+                      "IMG"
+                    )}
+                  </div>
+                  <div className="text-left">
+                    <div className="font-mono text-[11px] text-slate-900 dark:text-white font-medium">{snap.dimensions}</div>
+                    <div className="text-[10px] text-slate-500 dark:text-[#6b7280]">{snap.timestamp}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Floating mini pill button at bottom-left taking 0px layout height so canvas has maximum space */
+        capturedScreenshots.length > 0 && (
+          <div className="absolute bottom-3 left-3 z-30 pointer-events-auto">
+            <button
+              type="button"
+              onClick={() => setShowCapturesDock(true)}
+              className="px-2.5 py-1 rounded-full bg-slate-900/80 hover:bg-slate-900 dark:bg-[#181a24]/90 dark:hover:bg-[#1f2230] text-white text-[11px] font-medium border border-slate-700/60 shadow-lg flex items-center gap-1.5 backdrop-blur-sm cursor-pointer transition"
+              title="Expand Captures Dock"
+            >
+              <Camera className="w-3 h-3 text-emerald-400" />
+              <span>Captures ({capturedScreenshots.length})</span>
+              <ChevronUp className="w-3 h-3 text-slate-400" />
+            </button>
+          </div>
+        )
+      )}
+
+      {/* Floating Fullscreen button below (Bottom-Right Corner) */}
+      <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 select-none">
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className={`px-3.5 py-2 rounded-xl shadow-2xl border transition-all cursor-pointer hover:scale-105 flex items-center gap-2 text-xs font-semibold backdrop-blur-md ${
+            isFullscreen
+              ? "bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-400 shadow-indigo-500/30"
+              : "bg-white/95 dark:bg-[#161822]/95 hover:bg-white dark:hover:bg-[#1f2330] text-slate-800 dark:text-slate-100 border-slate-300 dark:border-[#2b3040] shadow-slate-900/10 dark:shadow-black/50"
+          }`}
+          title={isFullscreen ? "Exit Fullscreen (Show Total Header - Esc)" : "Fullscreen (Hide Total Header)"}
+          aria-label="Toggle Fullscreen"
+        >
+          {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />}
+          <span>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
+        </button>
       </div>
 
       {/* ================= SCREEN INFO MODAL (Notes & Reason) ================= */}
@@ -2399,7 +2783,7 @@ export function WorkflowSimulator({
               Clear
             </button>
           </div>
-          
+
           <div className="grid grid-cols-2 gap-4 text-[11px]">
             <div>
               <div className="font-medium text-slate-600 dark:text-[#8e95a5] mb-1">Current State</div>
@@ -2411,7 +2795,7 @@ export function WorkflowSimulator({
                 <div>onUpdateField: <span className="font-mono">{onUpdateField ? "Available" : "Missing"}</span></div>
               </div>
             </div>
-            
+
             <div>
               <div className="font-medium text-slate-600 dark:text-[#8e95a5] mb-1">Recent Activity</div>
               <div className="space-y-1">
@@ -2475,33 +2859,30 @@ export function WorkflowSimulator({
               <button
                 type="button"
                 onClick={() => setAuthConfig(prev => ({ ...prev, type: "login" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
-                  authConfig.type === "login"
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "login"
                     ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
                     : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
-                }`}
+                  }`}
               >
                 Auto-Login (User/Pass)
               </button>
               <button
                 type="button"
                 onClick={() => setAuthConfig(prev => ({ ...prev, type: "cookie" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
-                  authConfig.type === "cookie"
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "cookie"
                     ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
                     : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
-                }`}
+                  }`}
               >
                 Session Cookie
               </button>
               <button
                 type="button"
                 onClick={() => setAuthConfig(prev => ({ ...prev, type: "token" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
-                  authConfig.type === "token"
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "token"
                     ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
                     : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
-                }`}
+                  }`}
               >
                 Bearer Token
               </button>
@@ -2806,9 +3187,8 @@ function AnnotationPins({
             aria-label={`Issue ${ann.id}: ${ann.title} (${ann.severity})`}
           >
             <div
-              className={`flex items-center justify-center font-mono font-bold text-[11px] px-2 py-1 rounded-full shadow-lg transition-transform hover:scale-110 ${
-                ann.resolved ? "bg-emerald-600 text-white" : styles.pin
-              } ${isSelected ? "ring-2 ring-white scale-110" : "ring-2 ring-black/20"}`}
+              className={`flex items-center justify-center font-mono font-bold text-[11px] px-2 py-1 rounded-full shadow-lg transition-transform hover:scale-110 ${ann.resolved ? "bg-emerald-600 text-white" : styles.pin
+                } ${isSelected ? "ring-2 ring-white scale-110" : "ring-2 ring-black/20"}`}
             >
               {String(ann.id).padStart(2, "0")}
             </div>

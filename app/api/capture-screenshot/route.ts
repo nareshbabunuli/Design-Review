@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
       })
 
       const page = await browser.newPage()
-      await page.setViewport({ width: Math.round(width), height: Math.round(height) })
+      await page.setViewport({ width: Math.round(width), height: Math.round(height), deviceScaleFactor: 2 })
 
       const hostname = new URL(targetUrl).hostname
 

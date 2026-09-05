@@ -261,6 +261,7 @@ export default function Page() {
   } | null>(null)
   const [isProcessingInvite, setIsProcessingInvite] = useState(false)
   const [isFramed, setIsFramed] = useState(false)
+  const [isSimulatorFullscreen, setIsSimulatorFullscreen] = useState(false)
 
   // Granular project permissions for current user on active project
   const [userPermissions, setUserPermissions] = useState<UserPermissions>({
@@ -329,7 +330,12 @@ export default function Page() {
       .then(({ data: { session } }: { data: { session: Session | null } }) => {
         if (!mounted) return
         if (session?.user) {
-          setUser({ id: session.user.id, email: session.user.email })
+          setUser((prev) => {
+            if (prev?.id === session.user.id && prev?.email === session.user.email) {
+              return prev
+            }
+            return { id: session.user.id, email: session.user.email }
+          })
         } else {
           setUser(null)
         }
@@ -352,7 +358,12 @@ export default function Page() {
         return
       }
       if (session?.user) {
-        setUser({ id: session.user.id, email: session.user.email })
+        setUser((prev) => {
+          if (prev?.id === session.user.id && prev?.email === session.user.email) {
+            return prev
+          }
+          return { id: session.user.id, email: session.user.email }
+        })
       } else {
         setUser(null)
       }
@@ -365,15 +376,20 @@ export default function Page() {
     }
   }, [supabase.auth])
 
+  const hasLoadedWorkspaceOnceRef = useRef(false)
+
   // Load user's projects and workflows
-  const loadWorkspace = useCallback(async (retryCount = 0) => {
+  const loadWorkspace = useCallback(async (retryCount = 0, isInitial = false) => {
     if (!user || !supabase) {
       setProjects([])
       setLoading(false)
+      hasLoadedWorkspaceOnceRef.current = false
       return
     }
 
-    setLoading(true)
+    if (isInitial || !hasLoadedWorkspaceOnceRef.current) {
+      setLoading(true)
+    }
     try {
       const { data: ps, error: pError } = await supabase
         .from("projects")
@@ -441,6 +457,7 @@ export default function Page() {
       console.error("Failed to load workspace:", err)
       return []
     } finally {
+      hasLoadedWorkspaceOnceRef.current = true
       setLoading(false)
     }
   }, [user, supabase])
@@ -581,21 +598,27 @@ export default function Page() {
     }
   }
 
-  // Fetch projects on auth change
+  const lastLoadedUserIdRef = useRef<string | null>(null)
+
+  // Fetch projects on auth change (only when user ID actually changes)
   useEffect(() => {
-    if (user) {
-      loadWorkspace()
+    if (user?.id) {
+      if (lastLoadedUserIdRef.current !== user.id) {
+        lastLoadedUserIdRef.current = user.id
+        loadWorkspace(0, true)
+      }
     } else {
+      lastLoadedUserIdRef.current = null
       setProjects([])
       setLoading(false)
     }
-  }, [user, loadWorkspace])
+  }, [user?.id, loadWorkspace])
 
   // Fetch granular permissions whenever active project changes
   useEffect(() => {
-    if (!user || !supabase || !activeProjectId) {
+    if (!user?.id || !supabase || !activeProjectId) {
       setUserPermissions({
-        authenticated: !!user,
+        authenticated: !!user?.id,
         isOwner: false,
         role: null,
         access: null,
@@ -613,7 +636,20 @@ export default function Page() {
         })
         if (cancelled) return
         if (!error && data) {
-          setUserPermissions(data as UserPermissions)
+          setUserPermissions((prev) => {
+            const next = data as UserPermissions
+            if (
+              prev.authenticated === next.authenticated &&
+              prev.isOwner === next.isOwner &&
+              prev.role === next.role &&
+              prev.access === next.access &&
+              prev.canComment === next.canComment &&
+              prev.canApprove === next.canApprove
+            ) {
+              return prev
+            }
+            return next
+          })
         }
       } catch (err) {
         console.error("Error fetching permissions:", err)
@@ -624,7 +660,7 @@ export default function Page() {
     return () => {
       cancelled = true
     }
-  }, [user, supabase, activeProjectId])
+  }, [user?.id, supabase, activeProjectId])
 
   // Supabase Realtime Subscription
   useEffect(() => {
@@ -1100,6 +1136,92 @@ export default function Page() {
       )
       setActiveProjectId(projectId)
       setActiveWorkflowId(w.id)
+    }
+  }
+
+  const duplicateWorkflow = async (workflowId: string) => {
+    if (!supabase || !user) {
+      alert("Please sign in to duplicate workflows.")
+      return
+    }
+
+    const currentProject = projects.find((p) => p.workflows.some((w) => w.id === workflowId))
+    const currentWf = currentProject?.workflows.find((w) => w.id === workflowId)
+    if (!currentProject || !currentWf) return
+
+    try {
+      const { data, error } = await supabase
+        .from("workflows")
+        .insert({
+          project_id: currentProject.id,
+          title: `${currentWf.title} (Copy)`,
+          design_a: currentWf.designA,
+          design_b: currentWf.designB,
+          figma_url: currentWf.figmaUrl,
+          our_notes: currentWf.ourNotes,
+          reason: currentWf.reason,
+          client_message: currentWf.clientMessage,
+          client_task_done: currentWf.clientTaskDone,
+          is_done: currentWf.isDone,
+        })
+        .select("*")
+        .single()
+
+      if (error) throw error
+
+      if (data) {
+        const newWf: Workflow = {
+          id: data.id,
+          projectId: data.project_id,
+          title: data.title,
+          designA: data.design_a,
+          designB: data.design_b,
+          figmaUrl: data.figma_url || null,
+          ourNotes: data.our_notes || "",
+          clientMessage: data.client_message || "",
+          clientTaskDone: data.client_task_done,
+          reason: data.reason || "",
+          isDone: data.is_done,
+          comments: [],
+          revisions: [],
+        }
+
+        update((list) =>
+          list.map((p) =>
+            p.id === currentProject.id
+              ? { ...p, workflows: [...p.workflows, newWf] }
+              : p
+          )
+        )
+        setActiveWorkflowId(newWf.id)
+      }
+    } catch (err: any) {
+      console.error("Error duplicating workflow:", err)
+      alert(`Error duplicating screen: ${err?.message || "Unknown error"}`)
+    }
+  }
+
+  const handleDeleteWorkflow = async (workflowId: string) => {
+    if (!confirm("Are you sure you want to delete this screen?")) return
+    const currentProject = projects.find((p) => p.workflows.some((w) => w.id === workflowId))
+    if (!currentProject) return
+
+    update((xs) =>
+      xs.map((p) =>
+        p.id === currentProject.id
+          ? {
+              ...p,
+              workflows: p.workflows.filter((w) => w.id !== workflowId),
+            }
+          : p
+      )
+    )
+    if (activeWorkflowId === workflowId) {
+      const remaining = currentProject.workflows.filter((w) => w.id !== workflowId)
+      setActiveWorkflowId(remaining[0]?.id || null)
+    }
+    if (supabase) {
+      await supabase.from("workflows").delete().eq("id", workflowId)
     }
   }
 
@@ -1750,6 +1872,8 @@ export default function Page() {
             activeWorkflowId={activeWorkflowId}
             editingId={editingId}
             isOwner={isOwner}
+            canEdit={canEdit}
+            userRole={userRole}
             onBackToDashboard={() => setViewMode("dashboard")}
             setEditingId={(id: EditingId) => setEditingId(id)}
             onSelectProject={handleSelectProject}
@@ -1762,6 +1886,10 @@ export default function Page() {
             }}
             onCreateProject={createProject}
             onCreateWorkflow={createWorkflow}
+            onDuplicateWorkflow={async (_projectId: string, workflowId: string, e: React.MouseEvent) => {
+              e.stopPropagation()
+              await duplicateWorkflow(workflowId)
+            }}
             onToggleExpand={(id: string) =>
               update((xs) => xs.map((p) => (p.id === id ? { ...p, isExpanded: !p.isExpanded } : p)))
             }
@@ -1770,21 +1898,9 @@ export default function Page() {
             onDuplicateProject={duplicateProject}
             userId={user?.id}
             onDeleteProject={handleDeleteOrLeaveProject}
-            onDeleteWorkflow={async (projectId: string, workflowId: string, e: React.MouseEvent) => {
+            onDeleteWorkflow={async (_projectId: string, workflowId: string, e: React.MouseEvent) => {
               e.stopPropagation()
-              if (!confirm("Are you sure you want to delete this workflow?")) return
-              update((xs) =>
-                xs.map((p) =>
-                  p.id === projectId
-                    ? {
-                        ...p,
-                        workflows: p.workflows.filter((w) => w.id !== workflowId),
-                      }
-                    : p
-                )
-              )
-              if (activeWorkflowId === workflowId) setActiveWorkflowId(null)
-              await supabase.from("workflows").delete().eq("id", workflowId)
+              await handleDeleteWorkflow(workflowId)
             }}
             onMoveWorkflowUp={(projectId: string, workflowId: string, e: React.MouseEvent) =>
               handleMoveWorkflow(projectId, workflowId, "up", e)
@@ -1814,7 +1930,9 @@ export default function Page() {
       {/* Main Workspace Area */}
       <main className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200 ${showReport ? "print:hidden" : ""}`}>
         {/* Workspace Top Header */}
-        <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200">
+        <header className={`h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200 ${
+          viewMode === "simulator" && isSimulatorFullscreen ? "hidden" : ""
+        }`}>
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-shrink">
             {/* Mobile Sidebar Hamburger Toggle */}
             {viewMode === "editor" && (
@@ -2048,7 +2166,7 @@ export default function Page() {
 
         {/* Workspace Body Area */}
         <div className={`flex-1 bg-slate-100 dark:bg-slate-950 transition-colors duration-200 ${viewMode === "simulator" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
-          {loading ? (
+          {loading && projects.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-slate-400" />
             </div>
@@ -2098,10 +2216,16 @@ export default function Page() {
                     canEdit={canEdit}
                     userRole={userRole}
                     onSelectWorkflow={(id) => setActiveWorkflowId(id)}
+                    onDuplicateWorkflow={duplicateWorkflow}
                     onUpdateField={updateWorkflowField}
                     onOpenPresentation={() => setShowReport(true)}
                     theme={theme}
                     onToggleTheme={toggleTheme}
+                    isFullscreen={isSimulatorFullscreen}
+                    onToggleFullscreen={(val?: boolean) =>
+                      setIsSimulatorFullscreen((prev) => (typeof val === "boolean" ? val : !prev))
+                    }
+                    onNavigateView={(mode) => setViewMode(mode)}
                   />
                 </div>
               )}
@@ -2121,6 +2245,8 @@ export default function Page() {
                     onSubmitRevision={submitFinalRevision}
                     onShowReport={() => setShowReport(true)}
                     onAddComment={addComment}
+                    onDuplicateWorkflow={duplicateWorkflow}
+                    onDeleteWorkflow={handleDeleteWorkflow}
                   />
                 ) : (
                   <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">

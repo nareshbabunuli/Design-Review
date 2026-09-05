@@ -24,6 +24,8 @@ import {
   X,
   Pencil,
   Check,
+  CopyPlus,
+  Trash2,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -42,6 +44,8 @@ type WorkflowEditorProps = {
   onSubmitRevision?: (workflowId: string, reason: string) => Promise<void>
   onShowReport: () => void
   onAddComment?: (body: string, reason?: string) => void
+  onDuplicateWorkflow?: (workflowId: string) => Promise<void> | void
+  onDeleteWorkflow?: (workflowId: string) => Promise<void> | void
 }
 
 type ImageUploadProps = {
@@ -320,6 +324,8 @@ export function WorkflowEditor({
   onSubmitRevision,
   onShowReport,
   onAddComment,
+  onDuplicateWorkflow,
+  onDeleteWorkflow,
 }: WorkflowEditorProps) {
   const supabase = createClient()
   const effectiveCanEdit = canEdit ?? isOwner
@@ -579,7 +585,31 @@ export function WorkflowEditor({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {effectiveCanEdit && onDuplicateWorkflow && (
+            <button
+              type="button"
+              onClick={() => onDuplicateWorkflow(workflow.id)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 transition-all shadow-xs cursor-pointer"
+              title="Duplicate this screen"
+            >
+              <CopyPlus className="h-4 w-4" />
+              <span>Duplicate</span>
+            </button>
+          )}
+
+          {effectiveCanEdit && onDeleteWorkflow && (
+            <button
+              type="button"
+              onClick={() => onDeleteWorkflow(workflow.id)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium border border-red-200 dark:border-red-950/60 bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 transition-all shadow-xs cursor-pointer"
+              title="Delete this screen"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Delete</span>
+            </button>
+          )}
+
           {effectiveCanEdit && (
             <button
               onClick={() => onUpdateField("isDone", !workflow.isDone)}

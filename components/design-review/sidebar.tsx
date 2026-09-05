@@ -16,6 +16,7 @@ import {
   Lock,
   Unlock,
   Copy,
+  CopyPlus,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -26,6 +27,8 @@ type SidebarProps = {
   editingId: EditingId
   userId?: string | null
   isOwner?: boolean
+  canEdit?: boolean
+  userRole?: "client" | "freelancer" | "owner" | "developer" | null
   onBackToDashboard?: () => void
   setEditingId: (id: EditingId) => void
   onCreateProject: (e?: React.MouseEvent) => void
@@ -33,6 +36,7 @@ type SidebarProps = {
   onToggleExpand: (projectId: string, e?: React.MouseEvent) => void
   onDeleteProject: (id: string, e: React.MouseEvent) => void
   onDeleteWorkflow: (projectId: string, workflowId: string, e: React.MouseEvent) => void
+  onDuplicateWorkflow?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onSelectProject: (projectId: string) => void
   onSelectWorkflow: (projectId: string, workflowId: string) => void
   onRenameProject: (projectId: string, title: string) => void
@@ -93,6 +97,8 @@ export function Sidebar({
   editingId,
   userId,
   isOwner = true,
+  canEdit = false,
+  userRole,
   onBackToDashboard,
   setEditingId,
   onCreateProject,
@@ -100,6 +106,7 @@ export function Sidebar({
   onToggleExpand,
   onDeleteProject,
   onDeleteWorkflow,
+  onDuplicateWorkflow,
   onSelectProject,
   onSelectWorkflow,
   onRenameProject,
@@ -151,6 +158,7 @@ export function Sidebar({
       <nav className="flex-1 overflow-y-auto min-h-0 p-3 space-y-1 custom-scrollbar">
         {(activeProjectId ? projects.filter((p) => p.id === activeProjectId) : projects.slice(0, 1)).map((project, pIdx) => {
           const isProjectOwner = Boolean(userId ? project.userId === userId || !project.userId : isOwner)
+          const canManageScreens = Boolean(isProjectOwner || canEdit || userRole === "freelancer" || userRole === "owner")
           const isProjectActive = activeProjectId === project.id
 
           return (
@@ -410,9 +418,9 @@ export function Sidebar({
                   return (
                     <div
                       key={workflow.id}
-                      draggable={!project.isOrderLocked && isProjectOwner && project.workflows.length > 1}
+                      draggable={!project.isOrderLocked && canManageScreens && project.workflows.length > 1}
                       onDragStart={(e) => {
-                        if (!project.isOrderLocked && isProjectOwner && project.workflows.length > 1) {
+                        if (!project.isOrderLocked && canManageScreens && project.workflows.length > 1) {
                           setDraggedWorkflow({ projectId: project.id, index: wIdx })
                           e.dataTransfer.effectAllowed = "move"
                         }
@@ -466,7 +474,7 @@ export function Sidebar({
                       }`}
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
-                        {isProjectOwner && project.workflows.length > 1 && !project.isOrderLocked && (
+                        {canManageScreens && project.workflows.length > 1 && !project.isOrderLocked && (
                           <span
                             className="text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors"
                             title="Drag to reorder screen"
@@ -506,8 +514,10 @@ export function Sidebar({
                         )}
                       </div>
 
-                      {isProjectOwner && (
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
+                      {canManageScreens && (
+                        <div className={`flex items-center gap-0.5 transition-opacity flex-shrink-0 ${
+                          isWorkflowActive ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                        }`}>
                           {/* Move Up/Down Buttons (Only available when unlocked) */}
                           {!project.isOrderLocked && (
                             <>
@@ -562,6 +572,22 @@ export function Sidebar({
                           >
                             <Edit2 className="h-3 w-3" />
                           </button>
+
+                          {/* Duplicate Screen Button */}
+                          {onDuplicateWorkflow && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onDuplicateWorkflow(project.id, workflow.id, e)
+                              }}
+                              className="p-1 rounded-md hover:bg-purple-100 dark:hover:bg-purple-950/60 text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 cursor-pointer"
+                              title="Duplicate screen"
+                              aria-label="Duplicate screen"
+                            >
+                              <CopyPlus className="h-3 w-3" />
+                            </button>
+                          )}
 
                           {/* Delete Button */}
                           <button
