@@ -1,3 +1,5 @@
+allowBuilds:
+  puppeteer: set this to true or false
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
