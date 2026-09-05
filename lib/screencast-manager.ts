@@ -133,8 +133,10 @@ export class ScreencastManager {
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-web-security",
-        "--disable-gpu",
         "--hide-scrollbars",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
       ],
     })
 
@@ -197,7 +199,7 @@ export class ScreencastManager {
     try {
       await cdp.send("Page.startScreencast", {
         format: "jpeg",
-        quality: 60,
+        quality: 50,
         maxWidth: Math.round(options.width),
         maxHeight: Math.round(options.height),
         everyNthFrame: 1,

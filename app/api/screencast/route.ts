@@ -43,8 +43,16 @@ export async function GET(req: NextRequest) {
 
       // 3. Subscribe to frames. If latestFrame is already cached in memory,
       // ScreencastManager immediately calls this callback with the frame!
+      let lastSent = 0
       const unsubscribe = ScreencastManager.subscribe((base64Frame: string) => {
         try {
+          const now = Date.now()
+          // Drop frames if stream buffer is full or arriving faster than ~30 FPS
+          // This eliminates bufferbloat lag so the client always sees the real-time frame!
+          if (now - lastSent < 32 || (controller.desiredSize !== null && controller.desiredSize <= 0)) {
+            return
+          }
+          lastSent = now
           const payload = `event: frame\ndata: ${base64Frame}\n\n`
           controller.enqueue(encoder.encode(payload))
         } catch (e) {

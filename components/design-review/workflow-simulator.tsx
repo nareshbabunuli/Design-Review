@@ -222,30 +222,15 @@ export function WorkflowSimulator({
   const [showDeviceStatusBar, setShowDeviceStatusBar] = useState<boolean>(true)
 
   // Live browser navigation
-  const iframeRef = useRef<HTMLIFrameElement>(null)
   const defaultUrl = useMemo(() => {
     return "http://localhost:8082"
   }, [])
 
   const [urlInput, setUrlInput] = useState<string>(defaultUrl)
   const [currentUrl, setCurrentUrl] = useState<string>(defaultUrl)
+  const [canvasReloadKey, setCanvasReloadKey] = useState<number>(0)
 
-  // Map local dev URLs to same-origin proxies to completely eliminate cross-origin restrictions
-  const resolvedIframeSrc = useMemo(() => {
-    if (!currentUrl) return "/expo-app"
-    if (currentUrl.includes(":8082") || currentUrl.includes("expo-app")) {
-      const path = currentUrl.replace(/^https?:\/\/[^/]+(:8082)?/, "").replace(/^\/expo-app/, "")
-      return `/expo-app${path || ""}`
-    }
-    if (currentUrl.includes(":8081")) {
-      const path = currentUrl.replace(/^https?:\/\/[^/]+(:8081)?/, "")
-      return `/proxy/8081${path || ""}`
-    }
-    return currentUrl
-  }, [currentUrl])
-
-  const [isLiveIframe, setIsLiveIframe] = useState<boolean>(() => !currentWorkflow?.designB)
-  const [simulatorMode, setSimulatorMode] = useState<"canvas" | "iframe">("iframe")
+  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => !currentWorkflow?.designB)
   const canvasScreencastRef = useRef<CanvasScreencastRef>(null)
   const [currentSession, setCurrentSession] = useState<any>(null)
   const [isSessionLoaded, setIsSessionLoaded] = useState<boolean>(false)
@@ -279,7 +264,7 @@ export function WorkflowSimulator({
   // Default to showing saved App Screenshot when designB is already saved
   useEffect(() => {
     if (currentWorkflow?.designB) {
-      setIsLiveIframe(false)
+      setIsLiveCanvas(false)
     }
   }, [currentWorkflow?.id, currentWorkflow?.designB])
 
@@ -327,16 +312,10 @@ export function WorkflowSimulator({
       }
 
       setUrlInput(target)
-      setIsLiveIframe(true)
+      setIsLiveCanvas(true)
 
       if (target === currentUrl) {
-        // Safe in-place reload via src without touching cross-origin contentWindow
-        if (iframeRef.current) {
-          iframeRef.current.src = "about:blank"
-          setTimeout(() => {
-            if (iframeRef.current) iframeRef.current.src = target
-          }, 40)
-        }
+        setCanvasReloadKey((k) => k + 1)
       } else {
         setCurrentUrl(target)
         setNavHistory((prev) => [...prev.slice(0, navIndex + 1), target])
@@ -367,15 +346,9 @@ export function WorkflowSimulator({
   }, [navIndex, navHistory, triggerToast])
 
   const handleRefresh = useCallback(() => {
-    if (iframeRef.current) {
-      const src = currentUrl
-      iframeRef.current.src = "about:blank"
-      setTimeout(() => {
-        if (iframeRef.current) iframeRef.current.src = src
-      }, 40)
-      triggerToast("Reloaded")
-    }
-  }, [currentUrl, triggerToast])
+    setCanvasReloadKey((k) => k + 1)
+    triggerToast("Reloaded canvas")
+  }, [triggerToast])
 
   const [showGrid, setShowGrid] = useState<boolean>(true)
   const [showOptions, setShowOptions] = useState<boolean>(false)
@@ -385,8 +358,6 @@ export function WorkflowSimulator({
   const [pendingScreenshot, setPendingScreenshot] = useState<File | null>(null)
   const [pendingScreenshotUrl, setPendingScreenshotUrl] = useState<string | null>(null)
   const [isSavingScreenshot, setIsSavingScreenshot] = useState<boolean>(false)
-  // Live frame capture: stores the already-uploaded public URL from the server API
-  const [pendingCaptureUrl, setPendingCaptureUrl] = useState<string | null>(null)
   const [isCapturing, setIsCapturing] = useState<boolean>(false)
 
   // Annotations
@@ -689,7 +660,7 @@ export function WorkflowSimulator({
       console.log("[DEBUG] Adding exact screenshot to capture history", newCapture)
       setCapturedScreenshots((prev) => [newCapture, ...prev])
 
-      setIsLiveIframe(false)
+      setIsLiveCanvas(false)
       triggerToast("Exact screenshot saved successfully.")
 
       if (pendingScreenshotUrl) {
@@ -744,7 +715,6 @@ export function WorkflowSimulator({
 
     setPendingScreenshot(null)
     setPendingScreenshotUrl(null)
-    setPendingCaptureUrl(null)
     
     console.log("[DEBUG] Cleared all pending screenshot state")
     triggerToast("Screenshot upload cancelled")
@@ -756,13 +726,13 @@ export function WorkflowSimulator({
       isCapturing,
       currentUrl,
       viewportWidth,
-      viewportHeight
+      viewportHeight,
     })
 
     if (!currentWorkflow || isCapturing) {
       console.warn("[DEBUG] handleCaptureLiveFrame early return", {
         hasCurrentWorkflow: !!currentWorkflow,
-        isCapturing
+        isCapturing,
       })
       return
     }
@@ -772,14 +742,14 @@ export function WorkflowSimulator({
 
     try {
       const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
+      let finalUrl: string | null = null
 
-      // 0. If in Canvas mode, capture directly from the Canvas element (Instant 0ms, zero CORS!)
-      if (simulatorMode === "canvas" && canvasScreencastRef.current) {
+      // 1. Capture directly from the Canvas element (Instant 0ms, zero CORS!)
+      if (canvasScreencastRef.current) {
         const dataUrl = canvasScreencastRef.current.getScreenshot()
         if (dataUrl && dataUrl.length > 1000) {
           console.log("[DEBUG] Instant Canvas screenshot captured!")
-          
+
           try {
             const resBlob = await fetch(dataUrl)
             const blob = await resBlob.blob()
@@ -795,254 +765,103 @@ export function WorkflowSimulator({
 
             if (!uploadError) {
               const { data: pubData } = supabase.storage.from("designs").getPublicUrl(filePath)
-              const finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
+              finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
               console.log("[DEBUG] Canvas screenshot uploaded:", finalUrl)
-              setPendingCaptureUrl(finalUrl)
             } else {
-              setPendingCaptureUrl(dataUrl)
+              console.warn("[DEBUG] Upload error, using preview dataUrl:", uploadError)
+              finalUrl = dataUrl
             }
           } catch (uploadErr) {
             console.warn("[DEBUG] Upload error, using preview dataUrl:", uploadErr)
-            setPendingCaptureUrl(dataUrl)
+            finalUrl = dataUrl
           }
-
-          triggerToast("Screenshot captured instantly from Canvas! Review and save.")
-          return
         }
       }
 
-      // 1. Try Direct Same-Origin Client Capture (Instant, 0-1s, preserves live authenticated screen)
-      if (iframeRef.current) {
-        try {
-          const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document
-          if (iframeDoc && iframeDoc.body) {
-            console.log("[DEBUG] Same-origin access to iframe body successful! Starting html2canvas capture...")
-            const html2canvas = (await import("html2canvas")).default
-            const canvas = await html2canvas(iframeDoc.body, {
-              useCORS: true,
-              allowTaint: true,
-              width: viewportWidth,
-              height: viewportHeight,
-              scale: window.devicePixelRatio || 2,
-              logging: false,
-            })
-            const dataUrl = canvas.toDataURL("image/png")
-            if (dataUrl && dataUrl.length > 1000) {
-              console.log("[DEBUG] In-screen browser capture succeeded via html2canvas!")
-              
-              // Upload to Supabase
-              const resBlob = await fetch(dataUrl)
-              const blob = await resBlob.blob()
-              const fileName = `${currentWorkflow.id}-designB-${Date.now()}.png`
-              const filePath = `workflows/${currentWorkflow.id}/${fileName}`
+      // 2. Fallback to server-side capture if Canvas was not ready
+      if (!finalUrl) {
+        console.log("[DEBUG] Running server-side capture fallback...")
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        const SCREENSHOT_TOKEN = "screenshot_bypass_dev_token_12345"
+        const captureUrl = currentUrl.includes("?")
+          ? `${currentUrl}&screenshot_token=${SCREENSHOT_TOKEN}`
+          : `${currentUrl}?screenshot_token=${SCREENSHOT_TOKEN}`
 
-              const { error: uploadError } = await supabase.storage
-                .from("designs")
-                .upload(filePath, blob, {
-                  upsert: true,
-                  contentType: "image/png",
-                })
-
-              if (!uploadError) {
-                const { data: pubData } = supabase.storage.from("designs").getPublicUrl(filePath)
-                const finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
-                console.log("[DEBUG] Client captured screenshot uploaded:", finalUrl)
-                setPendingCaptureUrl(finalUrl)
-                triggerToast("Screenshot captured from live frame! Review and save.")
-                return
-              } else {
-                console.warn("[DEBUG] Upload error from client capture, using preview dataUrl:", uploadError)
-                setPendingCaptureUrl(dataUrl)
-                triggerToast("Screenshot captured! Review and save.")
-                return
-              }
-            }
-          }
-        } catch (clientErr: any) {
-          console.warn("[DEBUG] Client-side capture fallback triggered:", clientErr?.message)
-        }
-      }
-
-      // 2. Fallback to server-side headless capture if client-side couldn't run
-      console.log("[DEBUG] Running server-side capture fallback...")
-      const SCREENSHOT_TOKEN = 'screenshot_bypass_dev_token_12345'
-      const captureUrl = currentUrl.includes('?') 
-        ? `${currentUrl}&screenshot_token=${SCREENSHOT_TOKEN}`
-        : `${currentUrl}?screenshot_token=${SCREENSHOT_TOKEN}`
-
-      console.log("[DEBUG] Making capture API request", {
-        originalUrl: currentUrl,
-        captureUrl: captureUrl,
-        width: viewportWidth,
-        height: viewportHeight,
-        workflowId: currentWorkflow.id,
-      })
-
-      const res = await fetch("/api/capture-screenshot", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token && {
-            Authorization: `Bearer ${session.access_token}`,
+        const res = await fetch("/api/capture-screenshot", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token && {
+              Authorization: `Bearer ${session.access_token}`,
+            }),
+          },
+          body: JSON.stringify({
+            url: captureUrl,
+            width: viewportWidth,
+            height: viewportHeight,
+            workflowId: currentWorkflow.id,
+            accessToken: session?.access_token,
+            refreshToken: session?.refresh_token,
+            session: session,
+            rawStorageKey: Object.keys(window.localStorage).find(
+              (k) => k.includes("auth-token") || k.includes("supabase")
+            ),
           }),
-        },
-        body: JSON.stringify({
-          url: captureUrl,
-          width: viewportWidth,
-          height: viewportHeight,
-          workflowId: currentWorkflow.id,
-          accessToken: session?.access_token,
-          refreshToken: session?.refresh_token,
-          session: session,
-          rawStorageKey: Object.keys(window.localStorage).find(k => k.includes('auth-token') || k.includes('supabase')),
-        }),
-      })
+        })
 
-      console.log("[DEBUG] Capture API response", {
-        status: res.status,
-        statusText: res.statusText,
-        ok: res.ok
-      })
+        const data = await res.json()
+        if (!res.ok || !data.publicUrl) {
+          const errorMsg = data.error || "Capture failed"
+          console.error("[DEBUG] Capture API failed", { data, error: errorMsg })
+          throw new Error(errorMsg)
+        }
 
-      const data = await res.json()
-      console.log("[DEBUG] Capture API data", data)
-
-      if (!res.ok || !data.publicUrl) {
-        const errorMsg = data.error || "Capture failed"
-        console.error("[DEBUG] Capture API failed", { data, error: errorMsg })
-        throw new Error(errorMsg)
+        finalUrl = `${data.publicUrl}?v=${Date.now()}`
       }
 
-      // Show the captured image in the confirmation modal before saving
-      const captureUrlWithCache = `${data.publicUrl}?v=${Date.now()}`
-      console.log("[DEBUG] Setting pending capture URL", captureUrlWithCache)
-      setPendingCaptureUrl(captureUrlWithCache)
-      
-      triggerToast("Screenshot captured! Review and save it.")
+      // 3. AUTOMATICALLY ADD SCREENSHOT TO WORKFLOW DESIGN B!
+      if (finalUrl && onUpdateField) {
+        console.log("[DEBUG] Automatically saving screenshot to designB", {
+          workflowId: currentWorkflow.id,
+          field: "designB",
+          value: finalUrl,
+        })
+
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+
+        const newCapture: CapturedScreenshot = {
+          id: `snap-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dimensions: `${viewportWidth} × ${viewportHeight}`,
+          url: finalUrl,
+          mode: compareMode,
+        }
+
+        console.log("[DEBUG] Adding new capture to history", newCapture)
+        setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+        // Automatically switch view to show the newly saved App Screenshot!
+        setIsLiveCanvas(false)
+        triggerToast("Screenshot automatically captured & added to Design B!")
+
+        setDebugInfo((prev) => ({
+          ...prev,
+          lastCapture: new Date().toISOString(),
+          lastSave: new Date().toISOString(),
+        }))
+      }
     } catch (err: any) {
       console.error("[DEBUG] Live frame capture failed:", err)
-      console.error("[DEBUG] Error details:", {
-        message: err?.message,
-        name: err?.name,
-        stack: err?.stack
-      })
-      
       const errorMsg = `Capture failed: ${err?.message || "Unknown error"}`
-      setDebugInfo(prev => ({
+      setDebugInfo((prev) => ({
         ...prev,
-        errors: [errorMsg, ...prev.errors.slice(0, 4)]
+        errors: [errorMsg, ...prev.errors.slice(0, 4)],
       }))
-      
       triggerToast(errorMsg)
     } finally {
-      console.log("[DEBUG] handleCaptureLiveFrame finished, setting isCapturing to false")
       setIsCapturing(false)
-    }
-  }
-
-  // Save the server-captured screenshot to designB
-  const saveCapturedScreenshot = async () => {
-    console.log("[DEBUG] saveCapturedScreenshot started", {
-      currentWorkflow: currentWorkflow?.id,
-      pendingCaptureUrl,
-      onUpdateFieldExists: !!onUpdateField
-    })
-
-    // Validate before proceeding
-    const validation = validateScreenshotSave(currentWorkflow, pendingCaptureUrl, "designB")
-    if (validation.issues.length > 0) {
-      console.error("[DEBUG] Save validation failed:", validation.issues)
-      triggerToast(`Cannot save: ${validation.issues.join(", ")}`)
-      return
-    }
-
-    if (!currentWorkflow || !pendingCaptureUrl) {
-      console.warn("[DEBUG] saveCapturedScreenshot early return", {
-        hasCurrentWorkflow: !!currentWorkflow,
-        hasPendingCaptureUrl: !!pendingCaptureUrl
-      })
-      return
-    }
-
-    setIsSavingScreenshot(true)
-
-    try {
-      console.log("[DEBUG] Calling onUpdateField with designB", {
-        workflowId: currentWorkflow.id,
-        field: "designB",
-        value: pendingCaptureUrl
-      })
-
-      // Add retry logic for critical operations
-      let retryCount = 0
-      const maxRetries = 3
-      let lastError: any = null
-
-      while (retryCount < maxRetries) {
-        try {
-          await onUpdateField?.(
-            currentWorkflow.id,
-            "designB",
-            pendingCaptureUrl
-          )
-          console.log("[DEBUG] onUpdateField completed successfully on attempt", retryCount + 1)
-          break // Success - exit retry loop
-        } catch (error) {
-          lastError = error
-          retryCount++
-          console.warn(`[DEBUG] onUpdateField attempt ${retryCount} failed:`, error)
-          
-          if (retryCount < maxRetries) {
-            console.log(`[DEBUG] Retrying in ${retryCount * 1000}ms...`)
-            await new Promise(resolve => setTimeout(resolve, retryCount * 1000))
-          }
-        }
-      }
-
-      // If all retries failed, throw the last error
-      if (retryCount >= maxRetries && lastError) {
-        console.error("[DEBUG] All retry attempts failed")
-        throw lastError
-      }
-
-      const newCapture: CapturedScreenshot = {
-        id: `snap-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        dimensions: `${viewportWidth} × ${viewportHeight}`,
-        url: pendingCaptureUrl,
-        mode: compareMode,
-      }
-      
-      console.log("[DEBUG] Adding new capture to history", newCapture)
-      setCapturedScreenshots((prev) => [newCapture, ...prev])
-
-      setIsLiveIframe(false)
-      triggerToast("Live frame screenshot saved successfully.")
-
-      setPendingCaptureUrl(null)
-      console.log("[DEBUG] saveCapturedScreenshot completed successfully")
-      setDebugInfo(prev => ({
-        ...prev,
-        lastSave: new Date().toISOString()
-      }))
-    } catch (error) {
-      console.error("[DEBUG] Save captured screenshot failed:", error)
-      console.error("[DEBUG] Save error details:", {
-        message: error instanceof Error ? error.message : String(error),
-        name: error instanceof Error ? error.name : "Unknown",
-        stack: error instanceof Error ? error.stack : undefined
-      })
-      
-      const errorMsg = `Screenshot save failed: ${error instanceof Error ? error.message : "Unknown error"}`
-      setDebugInfo(prev => ({
-        ...prev,
-        errors: [errorMsg, ...prev.errors.slice(0, 4)]
-      }))
-      
-      triggerToast(errorMsg)
-    } finally {
-      console.log("[DEBUG] saveCapturedScreenshot finished, setting isSavingScreenshot to false")
-      setIsSavingScreenshot(false)
     }
   }
 
@@ -1615,54 +1434,22 @@ export function WorkflowSimulator({
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
 
-                  {/* Mode Switcher: Iframe (Fast) vs Canvas (CDP) */}
-                  {isLiveIframe && (
-                    <div className="flex items-center p-0.5 bg-slate-100 dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded font-mono text-[10px] shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setSimulatorMode("iframe")}
-                        className={`px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 ${
-                          simulatorMode === "iframe"
-                            ? "bg-indigo-600 text-white font-bold shadow-xs"
-                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                        }`}
-                        title="Direct Native Iframe (0ms latency, native 60fps scrolling & typing)"
-                      >
-                        <Globe className="w-2.5 h-2.5" />
-                        Iframe (Fast)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSimulatorMode("canvas")}
-                        className={`px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 ${
-                          simulatorMode === "canvas"
-                            ? "bg-indigo-600 text-white font-bold shadow-xs"
-                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                        }`}
-                        title="Canvas Screencast (Headless Chrome stream via CDP)"
-                      >
-                        <Sparkles className="w-2.5 h-2.5" />
-                        Canvas
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Live Simulator vs App Screenshot Switch */}
+                  {/* Live Canvas vs App Screenshot Switch */}
                   <button
                     type="button"
                     onClick={() => {
-                      setIsLiveIframe(!isLiveIframe)
-                      triggerToast(isLiveIframe ? (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox") : "Showing Live Simulator")
+                      setIsLiveCanvas(!isLiveCanvas)
+                      triggerToast(isLiveCanvas ? (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox") : "Showing Live Canvas")
                     }}
                     className={`px-2.5 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${
-                      isLiveIframe
+                      isLiveCanvas
                         ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
                         : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
                     }`}
-                    title={isLiveIframe ? "Switch to App Screenshot preview" : "Switch to Live Simulator preview"}
+                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Canvas preview"}
                   >
-                    <Globe className="w-3 h-3" />
-                    <span>{isLiveIframe ? (simulatorMode === "canvas" ? "Canvas Live" : "Iframe Live") : "App Screenshot"}</span>
+                    <Sparkles className="w-3 h-3" />
+                    <span>{isLiveCanvas ? "Live Canvas" : "App Screenshot"}</span>
                   </button>
                 </div>
 
@@ -1680,31 +1467,21 @@ export function WorkflowSimulator({
                     showStatusBar={showDeviceStatusBar}
                     screenRef={secondScreenRef}
                   >
-                    {isLiveIframe ? (
-                      simulatorMode === "canvas" ? (
-                        isSessionLoaded ? (
-                          <CanvasScreencast
-                            ref={canvasScreencastRef}
-                            url={currentUrl}
-                            width={viewportWidth}
-                            height={viewportHeight}
-                            accessToken={currentSession?.access_token}
-                            refreshToken={currentSession?.refresh_token}
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-slate-900 flex items-center justify-center text-xs text-slate-400">
-                            Connecting...
-                          </div>
-                        )
-                      ) : (
-                        <iframe
-                          ref={iframeRef}
-                          src={resolvedIframeSrc}
-                          title="Live preview"
-                          className="w-full h-full border-0 bg-white"
-                          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; cross-origin-isolated; fullscreen; camera; microphone; geolocation"
+                    {isLiveCanvas ? (
+                      isSessionLoaded ? (
+                        <CanvasScreencast
+                          key={canvasReloadKey}
+                          ref={canvasScreencastRef}
+                          url={currentUrl}
+                          width={viewportWidth}
+                          height={viewportHeight}
+                          accessToken={currentSession?.access_token}
+                          refreshToken={currentSession?.refresh_token}
                         />
+                      ) : (
+                        <div className="w-full h-full bg-slate-900 flex items-center justify-center text-xs text-slate-400">
+                          Connecting...
+                        </div>
                       )
                     ) : currentWorkflow?.designB ? (
                       <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center relative overflow-hidden select-none">
@@ -1714,7 +1491,7 @@ export function WorkflowSimulator({
                       </div>
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
-                        No screenshot saved. Upload the exact reference image.
+                        No screenshot saved. Click &quot;Capture Live Frame&quot; to automatically capture and save from the live canvas.
                       </div>
                     )}
                   </DeviceFrame>
@@ -2138,25 +1915,20 @@ export function WorkflowSimulator({
         </div>
       )}
 
-      {/* ================= CONFIRM SCREENSHOT MODAL (Upload or Capture) ================= */}
-      {(pendingScreenshot && pendingScreenshotUrl) || pendingCaptureUrl ? (
+      {/* ================= CONFIRM SCREENSHOT MODAL (Manual File Upload Only) ================= */}
+      {pendingScreenshot && pendingScreenshotUrl ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6 animate-in fade-in duration-150">
           <div className="w-full max-w-md rounded-xl bg-slate-900 border border-slate-800 p-5 text-white shadow-2xl">
-            <h2 className="text-base font-semibold">
-              {pendingCaptureUrl ? "Confirm captured screenshot" : "Confirm exact screenshot"}
-            </h2>
+            <h2 className="text-base font-semibold">Confirm exact screenshot</h2>
 
             <p className="mt-1 text-xs text-slate-400">
-              {pendingCaptureUrl
-                ? "This screenshot was captured from the live frame. Check it before saving."
-                : "Check the image carefully before saving. This file will be uploaded unchanged."
-              }
+              Check the image carefully before saving. This file will be uploaded unchanged.
             </p>
 
             <div className="mt-4 overflow-hidden rounded-lg bg-black border border-slate-800 flex items-center justify-center max-h-[60vh]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={pendingCaptureUrl || pendingScreenshotUrl!}
+                src={pendingScreenshotUrl}
                 alt="Screenshot preview"
                 className="max-h-[60vh] w-full object-contain"
               />
@@ -2174,7 +1946,7 @@ export function WorkflowSimulator({
 
               <button
                 type="button"
-                onClick={pendingCaptureUrl ? saveCapturedScreenshot : saveExactScreenshot}
+                onClick={saveExactScreenshot}
                 disabled={isSavingScreenshot}
                 className="rounded-lg bg-lime-500 hover:bg-lime-400 px-4 py-2 text-xs font-bold text-black disabled:opacity-50 transition cursor-pointer flex items-center gap-1.5"
               >
@@ -2206,7 +1978,6 @@ export function WorkflowSimulator({
                 <div>Workflow: <span className="font-mono">{currentWorkflow?.id?.substring(0, 8)}...</span></div>
                 <div>Capturing: <span className="font-mono">{isCapturing ? "Yes" : "No"}</span></div>
                 <div>Saving: <span className="font-mono">{isSavingScreenshot ? "Yes" : "No"}</span></div>
-                <div>Pending Capture: <span className="font-mono">{pendingCaptureUrl ? "Yes" : "No"}</span></div>
                 <div>Pending Screenshot: <span className="font-mono">{pendingScreenshot ? "Yes" : "No"}</span></div>
                 <div>onUpdateField: <span className="font-mono">{onUpdateField ? "Available" : "Missing"}</span></div>
               </div>

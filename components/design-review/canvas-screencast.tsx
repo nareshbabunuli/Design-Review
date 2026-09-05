@@ -78,7 +78,7 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
         if (!base64) return
         latestBase64 = base64
 
-        // Drop intermediate frames if browser is currently rendering a frame
+        // Always render the absolute freshest frame and drop stale ones
         if (!isRendering) {
           isRendering = true
           requestAnimationFrame(async () => {
@@ -90,31 +90,17 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
               const ctx = canvas.getContext("2d")
               if (ctx) {
                 try {
-                  // Fast off-main-thread decode via ImageBitmap
-                  const binaryStr = atob(frameToDraw)
-                  const len = binaryStr.length
-                  const bytes = new Uint8Array(len)
-                  for (let i = 0; i < len; i++) {
-                    bytes[i] = binaryStr.charCodeAt(i)
-                  }
-                  const blob = new Blob([bytes], { type: "image/jpeg" })
-                  const bitmap = await createImageBitmap(blob)
-                  ctx.drawImage(bitmap, 0, 0, width, height)
-                  bitmap.close()
-                  frameCountRef.current += 1
-                  setHasFirstFrame(true)
-                } catch {
-                  // Fallback to Image element if createImageBitmap is unsupported
+                  // Fast native off-main-thread image decode via img.decode()
                   const img = new Image()
-                  img.onload = () => {
-                    if (canvasRef.current) {
-                      const fallbackCtx = canvasRef.current.getContext("2d")
-                      fallbackCtx?.drawImage(img, 0, 0, width, height)
-                      frameCountRef.current += 1
-                      setHasFirstFrame(true)
-                    }
-                  }
                   img.src = `data:image/jpeg;base64,${frameToDraw}`
+                  await img.decode()
+                  if (canvasRef.current) {
+                    ctx.drawImage(img, 0, 0, width, height)
+                    frameCountRef.current += 1
+                    setHasFirstFrame(true)
+                  }
+                } catch {
+                  // Fallback if decode interrupted by quick frame replacement
                 }
               }
             }
@@ -152,15 +138,27 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          keepalive: true,
         })
       } catch (e) {
         console.error("[CanvasScreencast] Failed to send input:", e)
       }
     }, [])
 
+    const [clickRipple, setClickRipple] = useState<{ x: number; y: number; id: number } | null>(null)
+    const rippleIdRef = useRef(0)
+
     const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
       canvasRef.current?.focus()
       const { x, y } = getCanvasCoordinates(e)
+
+      // Instant 0ms tactile feedback dot
+      const id = ++rippleIdRef.current
+      setClickRipple({ x, y, id })
+      setTimeout(() => {
+        setClickRipple((curr) => (curr?.id === id ? null : curr))
+      }, 300)
+
       sendInput({ type: "click", x, y, button: "left" })
     }
 
@@ -186,14 +184,30 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
       }
     }
 
-    // Throttle scroll wheel events to prevent flooding the server with hundreds of requests
+    // High-performance wheel scrolling: leading-edge immediate dispatch + batched trailing edge
     const wheelTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const accumulatedWheelRef = useRef<{ deltaX: number; deltaY: number; x: number; y: number } | null>(null)
+    const lastWheelSendRef = useRef<number>(0)
 
     const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
       e.preventDefault()
       const { x, y } = getCanvasCoordinates(e as any)
+      const now = Date.now()
 
+      // Leading-edge: send immediately if 50ms have passed since last dispatch
+      if (now - lastWheelSendRef.current > 50) {
+        lastWheelSendRef.current = now
+        sendInput({
+          type: "wheel",
+          x,
+          y,
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+        })
+        return
+      }
+
+      // Otherwise accumulate and batch for trailing edge
       if (!accumulatedWheelRef.current) {
         accumulatedWheelRef.current = { deltaX: e.deltaX, deltaY: e.deltaY, x, y }
       } else {
@@ -206,6 +220,7 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
       if (!wheelTimeoutRef.current) {
         wheelTimeoutRef.current = setTimeout(() => {
           if (accumulatedWheelRef.current) {
+            lastWheelSendRef.current = Date.now()
             sendInput({
               type: "wheel",
               ...accumulatedWheelRef.current,
@@ -213,7 +228,7 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
             accumulatedWheelRef.current = null
           }
           wheelTimeoutRef.current = null
-        }, 50) // Throttle to 20 updates/sec max
+        }, 35) // Batch at ~30Hz
       }
     }
 
@@ -232,6 +247,20 @@ export const CanvasScreencast = forwardRef<CanvasScreencastRef, CanvasScreencast
           title="Click to focus and type with keyboard (or switch to Iframe mode for 0ms native speed)"
           className="w-full h-full object-contain cursor-pointer outline-none focus:ring-1 focus:ring-indigo-500/50"
         />
+
+        {/* Instant 0ms Visual Tap Indicator */}
+        {clickRipple && (
+          <div
+            className="absolute rounded-full bg-indigo-400/40 border border-indigo-300/80 pointer-events-none animate-ping"
+            style={{
+              left: `${(clickRipple.x / width) * 100}%`,
+              top: `${(clickRipple.y / height) * 100}%`,
+              width: 20,
+              height: 20,
+              transform: "translate(-50%, -50%)",
+            }}
+          />
+        )}
 
         {/* Loading overlay before first frame arrives */}
         {!hasFirstFrame && (
