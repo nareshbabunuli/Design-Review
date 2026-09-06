@@ -285,11 +285,10 @@ export function WorkflowSimulator({
     }
   })
 
-  // Fullscreen, Copy Figma, and Captures Dock states
+  // Fullscreen, Copy Figma states
   const [internalFullscreen, setInternalFullscreen] = useState<boolean>(false)
   const isFullscreen = isFullscreenProp ?? internalFullscreen
   const [copiedFigma, setCopiedFigma] = useState<boolean>(false)
-  const [showCapturesDock, setShowCapturesDock] = useState<boolean>(false)
   const [showQuickDock, setShowQuickDock] = useState<boolean>(true)
 
   // Toast queue
@@ -1825,19 +1824,6 @@ export function WorkflowSimulator({
             <span>Debug</span>
           </button>
 
-          {/* Captures Dock Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowCapturesDock((prev) => !prev)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showCapturesDock
-                ? "bg-emerald-600 border-emerald-500 text-white shadow-xs"
-                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
-              }`}
-            title="Toggle Captures dock at bottom"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Captures ({capturedScreenshots.length})</span>
-          </button>
 
           {compareMode !== "side-by-side" && (
             <div className="flex items-center gap-2 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1 shadow-xs transition-colors">
@@ -1942,55 +1928,60 @@ export function WorkflowSimulator({
                     </button>
                   )}
 
-                  <div className="h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
+                  {/* Fullscreen-only controls (hidden in normal mode to prevent duplicate redundant buttons with top header) */}
+                  {isFullscreen && (
+                    <>
+                      <div className="h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
 
-                  {/* Enable Frame Toggle */}
-                  <button
-                    type="button"
-                    onClick={() => setShowDeviceFrame(!showDeviceFrame)}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                      showDeviceFrame
-                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
-                        : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
-                    }`}
-                    title="Toggle phone device frame"
-                  >
-                    <Smartphone className="w-3 h-3" />
-                    <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
-                  </button>
+                      {/* Enable Frame Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => setShowDeviceFrame(!showDeviceFrame)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                          showDeviceFrame
+                            ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                            : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
+                        }`}
+                        title="Toggle phone device frame"
+                      >
+                        <Smartphone className="w-3 h-3" />
+                        <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
+                      </button>
 
-                  {/* Live Screen Toggle */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !isLiveCanvas
-                      setIsLiveCanvas(next)
-                      if (typeof window !== "undefined") {
-                        localStorage.setItem("simulator_is_live_mode", String(next))
-                      }
-                      triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
-                    }}
-                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                      isLiveCanvas
-                        ? "bg-purple-600 text-white border-purple-500 shadow-xs"
-                        : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
-                    }`}
-                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
-                  >
-                    <Globe className="w-3 h-3" />
-                    <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
-                  </button>
+                      {/* Live Screen Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !isLiveCanvas
+                          setIsLiveCanvas(next)
+                          if (typeof window !== "undefined") {
+                            localStorage.setItem("simulator_is_live_mode", String(next))
+                          }
+                          triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
+                        }}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                          isLiveCanvas
+                            ? "bg-purple-600 text-white border-purple-500 shadow-xs"
+                            : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
+                        }`}
+                        title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
+                      >
+                        <Globe className="w-3 h-3" />
+                        <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
+                      </button>
 
-                  {/* Capture App Screen Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleLiveScreenCapture(false)}
-                    disabled={isCapturing || isSavingScreenshot}
-                    className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                    title="Capture App Screen"
-                  >
-                    <Camera className="w-3 h-3" />
-                  </button>
+                      {/* Capture App Screen Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleLiveScreenCapture(false)}
+                        disabled={isCapturing || isSavingScreenshot}
+                        className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                        title="Capture App Screen"
+                      >
+                        <Camera className="w-3 h-3" />
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 <div className="font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
@@ -2472,75 +2463,6 @@ export function WorkflowSimulator({
         )}
       </div>
 
-      {/* ================= CAPTURES DOCK: collapsible to maximize canvas vertical space ================= */}
-      {showCapturesDock ? (
-        <div className="h-20 border-t border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-4 flex items-center justify-between shrink-0 z-20 transition-colors animate-in slide-in-from-bottom-2 duration-150">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-600 dark:text-[#8e95a5] flex items-center gap-1.5 shrink-0">
-              <Camera className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-              Captures ({capturedScreenshots.length})
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowCapturesDock(false)}
-              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
-              title="Minimize Captures Dock"
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {capturedScreenshots.length === 0 ? (
-            <span className="text-[11px] text-slate-400 dark:text-[#565c6c] italic">Capture a screenshot to save it here for later comparison.</span>
-          ) : (
-            <div className="flex items-center gap-3 overflow-x-auto py-2">
-              {capturedScreenshots.map((snap) => (
-                <button
-                  type="button"
-                  key={snap.id}
-                  onClick={() => {
-                    if (currentWorkflow) {
-                      onUpdateField?.(currentWorkflow.id, "designB", snap.url)
-                    }
-                    setCompareMode("overlay")
-                    triggerToast("Applied capture to App Screenshot & switched to Overlay")
-                  }}
-                  className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 dark:bg-[#171922] dark:hover:bg-[#202330] border border-slate-300 dark:border-[#262b3a] hover:border-indigo-500 rounded-lg cursor-pointer transition text-xs group focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 shadow-xs"
-                  title="Apply as App Screenshot & compare in Overlay mode"
-                >
-                  <div className="w-8 h-8 rounded bg-slate-200 dark:bg-[#0b0c10] border border-slate-300 dark:border-[#2b3040] flex items-center justify-center font-mono text-[10px] text-indigo-600 dark:text-indigo-400 group-hover:scale-105 transition overflow-hidden shrink-0">
-                    {snap.url.startsWith("data:") || snap.url.startsWith("http") ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={snap.url} alt="Snap" className="w-full h-full object-cover" />
-                    ) : (
-                      "IMG"
-                    )}
-                  </div>
-                  <div className="text-left">
-                    <div className="font-mono text-[11px] text-slate-900 dark:text-white font-medium">{snap.dimensions}</div>
-                    <div className="text-[10px] text-slate-500 dark:text-[#6b7280]">{snap.timestamp}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        /* Floating mini pill button at bottom-left taking 0px layout height so canvas has maximum space */
-        capturedScreenshots.length > 0 && (
-          <div className="absolute bottom-3 left-3 z-30 pointer-events-auto">
-            <button
-              type="button"
-              onClick={() => setShowCapturesDock(true)}
-              className="px-2.5 py-1 rounded-full bg-slate-900/80 hover:bg-slate-900 dark:bg-[#181a24]/90 dark:hover:bg-[#1f2230] text-white text-[11px] font-medium border border-slate-700/60 shadow-lg flex items-center gap-1.5 backdrop-blur-sm cursor-pointer transition"
-              title="Expand Captures Dock"
-            >
-              <Camera className="w-3 h-3 text-emerald-400" />
-              <span>Captures ({capturedScreenshots.length})</span>
-              <ChevronUp className="w-3 h-3 text-slate-400" />
-            </button>
-          </div>
-        )
-      )}
 
       {/* Floating Fullscreen button below (Bottom-Right Corner) */}
       <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 select-none">

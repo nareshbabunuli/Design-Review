@@ -1078,11 +1078,20 @@ export default function Page() {
         workflows: newWorkflows,
       }
 
-      // Collapse other projects and expand the copied project in sidebar
-      update((xs) => [
-        ...xs.map((proj) => ({ ...proj, isExpanded: false })),
-        p,
-      ])
+      // Place duplicated project directly below/after source project card
+      const sourceIndex = projects.findIndex((proj) => proj.id === projectId)
+      const nextProjects = projects.map((proj) => ({ ...proj, isExpanded: false }))
+      const insertIndex = sourceIndex !== -1 ? sourceIndex + 1 : nextProjects.length
+      nextProjects.splice(insertIndex, 0, p)
+
+      try {
+        localStorage.setItem(
+          `project_order_${user?.id || "default"}`,
+          JSON.stringify(nextProjects.map((proj) => proj.id))
+        )
+      } catch (e) {}
+
+      update(() => nextProjects)
 
       setActiveProjectId(p.id)
       setActiveWorkflowId(newWorkflows.length > 0 ? newWorkflows[0].id : null)
@@ -1186,14 +1195,35 @@ export default function Page() {
           revisions: [],
         }
 
+        const currentIndex = currentProject.workflows.findIndex((w) => w.id === workflowId)
+        const updatedWorkflows = [...currentProject.workflows]
+        const insertIndex = currentIndex !== -1 ? currentIndex + 1 : updatedWorkflows.length
+        updatedWorkflows.splice(insertIndex, 0, newWf)
+
+        const newOrderIds = updatedWorkflows.map((w) => w.id)
+        try {
+          localStorage.setItem(`wf_order_${currentProject.id}`, JSON.stringify(newOrderIds))
+        } catch (e) {}
+
         update((list) =>
           list.map((p) =>
             p.id === currentProject.id
-              ? { ...p, workflows: [...p.workflows, newWf] }
+              ? { ...p, workflowOrder: newOrderIds, workflows: updatedWorkflows }
               : p
           )
         )
         setActiveWorkflowId(newWf.id)
+
+        if (supabase && newOrderIds.length > 0) {
+          try {
+            await supabase.rpc("update_project_workflow_order", {
+              p_project_id: currentProject.id,
+              p_workflow_order: newOrderIds,
+            })
+          } catch (err) {
+            console.error("Error updating project workflow order in DB:", err)
+          }
+        }
       }
     } catch (err: any) {
       console.error("Error duplicating workflow:", err)
