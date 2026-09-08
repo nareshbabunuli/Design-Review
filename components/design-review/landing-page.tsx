@@ -20,6 +20,10 @@ import {
   Lock,
   Code2,
   Globe,
+  Smartphone,
+  Monitor,
+  Laptop,
+  Send,
 } from "lucide-react"
 import { ThemeToggle } from "./theme-toggle"
 
@@ -43,79 +47,79 @@ interface LandingPageProps {
 
 const FEATURES = [
   {
-    icon: Layers,
+    icon: Smartphone,
     color: "blue",
-    title: "Multi-Project Dashboard",
+    title: "Interactive Device Simulator",
     description:
-      "Manage all your client projects in one organized hub. Grid or list view, instant search, and clean project cards.",
+      "Test live URLs & responsive screens inside Phone, Tablet, and Desktop frames side-by-side with your Figma specs.",
   },
   {
-    icon: Share2,
+    icon: Users,
     color: "purple",
-    title: "Secure Client Sharing",
+    title: "Developer → Admin → Client Flow",
     description:
-      "Generate view or edit invite links in seconds. No account needed for clients — just share and collaborate.",
+      "Structured collaboration chain: developers push updates, admins verify fidelity, and clients sign off with total clarity.",
   },
   {
     icon: MessageSquare,
     color: "violet",
-    title: "Client Feedback Loop",
+    title: "Conversational Feedback",
     description:
-      "Clients leave structured feedback directly on each workflow. Mark tasks as accepted and verified in real time.",
-  },
-  {
-    icon: FileText,
-    color: "indigo",
-    title: "Presentation Mode",
-    description:
-      "Beautiful slide-style review reports for every project. Present designs professionally to any client.",
+      "Easy chat-style notes and instant revisions right on the screen. No endless email threads or messy spreadsheets.",
   },
   {
     icon: Eye,
     color: "cyan",
-    title: "Live Design Comparison",
+    title: "Side-by-Side Comparison",
     description:
-      "Side-by-side before/after comparisons. Upload Figma exports, screenshots, or mockups with full-res lightbox.",
+      "Compare Figma designs directly against live URLs and screenshot revisions with synchronized views and lightboxes.",
   },
   {
     icon: CheckCircle,
     color: "emerald",
-    title: "Approval Tracking",
+    title: "1-Click Approvals & Audit",
     description:
-      "Track which workflows have been reviewed, approved, and signed off — all in one transparent workflow.",
+      "Keep track of every sign-off. Mark workflows verified, track outstanding items, and export professional review summaries.",
+  },
+  {
+    icon: Share2,
+    color: "indigo",
+    title: "Zero-Friction Client Sharing",
+    description:
+      "Generate secure invite links in seconds. Clients test in the simulator and leave feedback without creating accounts.",
   },
 ]
 
 const STEPS = [
   {
     step: "01",
-    title: "Create Your Project",
+    title: "Develop & Simulate",
     description:
-      "Set up a project for each client engagement. Add as many workflow stages as you need — branding, UI, landing pages, and more.",
-    icon: FolderKanban,
+      "Developers import Figma screens, paste live preview URLs, and verify responsiveness across device simulator frames.",
+    icon: Smartphone,
     color: "blue",
   },
   {
     step: "02",
-    title: "Upload Designs & Notes",
+    title: "Admin Review & QA",
     description:
-      "Upload before/after screenshots, add your designer notes, and explain the reasoning behind every creative decision.",
+      "Admins inspect implementation against Figma specs, add internal notes, and prepare a polished client presentation.",
     icon: Layers,
     color: "purple",
   },
   {
     step: "03",
-    title: "Share With Your Client",
+    title: "Client Chat & Feedback",
     description:
-      "Generate a secure invite link and share it. Clients can view the presentation or leave direct feedback — no login required.",
-    icon: Share2,
+      "Clients interact with live frames, leave conversational notes, and ask questions with zero friction or logins required.",
+    icon: MessageSquare,
     color: "violet",
   },
   {
     step: "04",
-    title: "Get Approved & Move On",
+    title: "Instant Sign-Off",
     description:
-      "Clients accept and verify workflows. Track approvals in real time. Export a polished PDF report for your records.",
+      "One-click verification and approvals. Real-time status updates and exportable summaries keep everyone on the same page.",
     icon: CheckCircle,
     color: "emerald",
   },
@@ -221,22 +225,25 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
 
           {/* Badge */}
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-8">
-            <Sparkles className="h-3.5 w-3.5" />
-            Free &amp; Open Source &middot; Built for Freelancers
+            <Sparkles className="h-3.5 w-3.5 text-blue-500" />
+            <span>Interactive Device Simulator &middot; Developer &rarr; Admin &rarr; Client</span>
           </div>
 
           {/* Headline */}
           <h1 className="text-5xl md:text-7xl font-black tracking-tight text-slate-900 dark:text-white leading-[1.05] mb-6">
-            Design Review,{" "}
+            From Code to Client,{" "}
             <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-              Done Right
+              in One Conversation
             </span>
           </h1>
 
           {/* Subheadline */}
           <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10">
-            A professional workflow tracker for freelance designers. Upload designs, share with clients,
-            collect structured feedback, and get approvals — all in one beautiful tool.
+            Interactive device simulator meets seamless collaboration. Keep{" "}
+            <strong className="text-slate-900 dark:text-slate-100 font-semibold">
+              Developer &rarr; Admin &rarr; Client
+            </strong>{" "}
+            aligned with live preview frames, chat-style feedback, and instant sign-offs.
           </p>
 
           {/* CTAs */}
@@ -249,7 +256,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
               Start Free — No Credit Card
             </button>
             <a
-              href="https://github.com"
+              href="https://github.com/nareshbabunuli/Design-Review"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 rounded-2xl border border-slate-300 dark:border-white/10 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 px-8 py-4 text-base font-semibold text-slate-700 dark:text-slate-300 transition-all hover:-translate-y-0.5 active:scale-95"
@@ -262,77 +269,169 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           {/* Stats Row */}
           <div className="flex flex-wrap items-center justify-center gap-8 text-sm">
             {[
-              { icon: Users, label: "Built for Freelancers" },
-              { icon: Shield, label: "Open Source License" },
-              { icon: Zap, label: "Real-time Collaboration" },
-              { icon: Star, label: "Free Forever" },
+              { icon: Smartphone, label: "Interactive Device Simulator" },
+              { icon: Users, label: "Dev → Admin → Client Chain" },
+              { icon: MessageSquare, label: "Easy Conversational Feedback" },
+              { icon: CheckCircle, label: "1-Click Approvals" },
             ].map(({ icon: Icon, label }) => (
-              <div key={label} className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+              <div key={label} className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                 <Icon className="h-4 w-4 text-blue-500" />
-                <span>{label}</span>
+                <span className="font-medium">{label}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* App Preview Card */}
+        {/* App Preview Card: Interactive Simulator + Conversational Flow Mockup */}
         <div className="mx-auto mt-16 max-w-5xl">
-          <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/60 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/40 overflow-hidden">
+          <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/40 overflow-hidden text-left">
             {/* Fake browser chrome */}
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-slate-900/80">
-              <div className="h-3 w-3 rounded-full bg-red-400" />
-              <div className="h-3 w-3 rounded-full bg-amber-400" />
-              <div className="h-3 w-3 rounded-full bg-emerald-400" />
-              <div className="flex-1 mx-4 rounded-lg bg-slate-200 dark:bg-slate-800 px-3 py-1 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                designhub.app/dashboard
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/90">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-red-400" />
+                <div className="h-3 w-3 rounded-full bg-amber-400" />
+                <div className="h-3 w-3 rounded-full bg-emerald-400" />
+                <div className="hidden sm:block ml-3 rounded-lg bg-slate-200 dark:bg-slate-800 px-3 py-1 text-xs text-slate-500 dark:text-slate-400 font-mono">
+                  designhub.app/simulator/review
+                </div>
+              </div>
+
+              {/* Simulator Device Switcher Mockup */}
+              <div className="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 p-1 rounded-xl">
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 text-xs font-semibold text-blue-600 dark:text-blue-400 shadow-sm">
+                  <Smartphone className="h-3.5 w-3.5" />
+                  <span>Mobile</span>
+                </div>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400">
+                  <Laptop className="h-3.5 w-3.5" />
+                  <span>Tablet</span>
+                </div>
+                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400">
+                  <Monitor className="h-3.5 w-3.5" />
+                  <span>Desktop</span>
+                </div>
+              </div>
+
+              {/* Role chain badge */}
+              <div className="hidden md:flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 px-2.5 py-1 rounded-full">
+                <span className="text-blue-600 dark:text-blue-400 font-bold">Dev</span>
+                <span>&rarr;</span>
+                <span className="text-purple-600 dark:text-purple-400 font-bold">Admin</span>
+                <span>&rarr;</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Client</span>
               </div>
             </div>
-            {/* Preview Content */}
-            <div className="p-6 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-950 min-h-[300px] flex flex-col gap-4">
-              {/* Dashboard header mock */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center">
-                    <FolderKanban className="h-4 w-4 text-white" />
+
+            {/* Preview Content: Simulator on Left, Chat on Right */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 bg-slate-50/50 dark:bg-slate-950/60 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-white/10">
+              {/* Left: Device Simulator Preview */}
+              <div className="lg:col-span-7 p-5 sm:p-6 flex flex-col items-center justify-center bg-gradient-to-b from-slate-100/60 to-slate-200/40 dark:from-slate-900/40 dark:to-slate-950/80">
+                <div className="w-full flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Live Simulator Frame</span>
+                    <span className="text-[11px] text-slate-400 font-mono">375 × 812</span>
                   </div>
-                  <div>
-                    <div className="text-sm font-bold text-slate-900 dark:text-white">Design Review</div>
-                    <div className="text-xs text-slate-500">3 Active Projects</div>
+                  <div className="inline-flex rounded-lg bg-slate-200 dark:bg-slate-800 p-0.5 text-[11px] font-semibold">
+                    <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-xs">Live URL</span>
+                    <span className="px-2 py-0.5 text-slate-500">Figma Spec</span>
                   </div>
                 </div>
-                <div className="h-7 w-20 rounded-lg bg-blue-600 flex items-center justify-center">
-                  <span className="text-white text-xs font-medium">+ New</span>
+
+                {/* Phone Mockup Frame */}
+                <div className="w-full max-w-[280px] rounded-3xl border-4 border-slate-800 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden">
+                  <div className="h-5 bg-slate-800 dark:bg-slate-700 flex items-center justify-center">
+                    <div className="h-2 w-16 rounded-full bg-slate-950" />
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="h-4 w-20 rounded bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-5 w-5 rounded-full bg-blue-500/20" />
+                    </div>
+                    <div className="h-24 rounded-xl bg-gradient-to-tr from-blue-500/20 to-purple-500/20 border border-blue-500/20 p-3 flex flex-col justify-end">
+                      <div className="text-[11px] font-bold text-slate-800 dark:text-white">Mobile Checkout v2</div>
+                      <div className="text-[9px] text-slate-500">Zero scroll friction</div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="h-2.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
+                      <div className="h-2.5 w-3/4 rounded bg-slate-100 dark:bg-slate-800" />
+                    </div>
+                    <div className="pt-2">
+                      <div className="h-7 w-full rounded-lg bg-blue-600 flex items-center justify-center text-[11px] font-bold text-white shadow-md shadow-blue-500/30">
+                        Confirm &amp; Sign Off
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              {/* Project cards mock */}
-              <div className="grid grid-cols-3 gap-4 flex-1">
-                {[
-                  { name: "Brand Redesign", color: "blue", progress: 80 },
-                  { name: "Mobile App UI", color: "purple", progress: 45 },
-                  { name: "E-commerce Site", color: "emerald", progress: 100 },
-                ].map((p, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-800/50 p-4 flex flex-col gap-3"
-                  >
-                    <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700">
-                      <div
-                        className={`h-full rounded-full bg-gradient-to-r ${p.color === "blue"
-                            ? "from-blue-500 to-blue-600"
-                            : p.color === "purple"
-                              ? "from-purple-500 to-purple-600"
-                              : "from-emerald-500 to-emerald-600"
-                          }`}
-                        style={{ width: `${p.progress}%` }}
-                      />
+
+              {/* Right: Conversational Feedback Feed (Developer -> Admin -> Client) */}
+              <div className="lg:col-span-5 p-5 sm:p-6 flex flex-col justify-between space-y-4 bg-white dark:bg-slate-900/60">
+                <div>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-white/5">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-purple-500" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                        Conversational Review
+                      </span>
                     </div>
-                    <div className="text-sm font-semibold text-slate-800 dark:text-white">{p.name}</div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">{p.progress}% complete</span>
-                      {p.progress === 100 && <CheckCircle className="h-4 w-4 text-emerald-500" />}
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">
+                      Ready to Approve
+                    </span>
+                  </div>
+
+                  {/* 3 Messages showcasing Developer -> Admin -> Client */}
+                  <div className="mt-4 space-y-3 text-xs">
+                    {/* Dev message */}
+                    <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-blue-700 dark:text-blue-300">Developer (Alex)</span>
+                        <span className="text-[10px] text-slate-400">10:15 AM</span>
+                      </div>
+                      <p className="text-slate-700 dark:text-slate-300">
+                        Pushed responsive fix for mobile &amp; tablet frames. Tested on simulator.
+                      </p>
+                    </div>
+
+                    {/* Admin message */}
+                    <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/40 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-purple-700 dark:text-purple-300">Admin (Sarah)</span>
+                        <span className="text-[10px] text-slate-400">10:22 AM</span>
+                      </div>
+                      <p className="text-slate-700 dark:text-slate-300">
+                        Checked Figma spec comparison. Pixel-perfect! Generated client review link.
+                      </p>
+                    </div>
+
+                    {/* Client message */}
+                    <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                          Client (David) <CheckCircle className="h-3 w-3 text-emerald-500" />
+                        </span>
+                        <span className="text-[10px] text-slate-400">10:30 AM</span>
+                      </div>
+                      <p className="text-slate-700 dark:text-slate-300 font-medium">
+                        Tested live frame on phone mode. Looks super clean and responsive. Approved!
+                      </p>
                     </div>
                   </div>
-                ))}
+                </div>
+
+                {/* Chat input mock */}
+                <div className="pt-2">
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800/80 px-3 py-2">
+                    <input
+                      disabled
+                      placeholder="Type conversational feedback..."
+                      className="bg-transparent text-xs text-slate-400 w-full outline-hidden cursor-default"
+                    />
+                    <div className="h-6 w-6 rounded-lg bg-blue-600 flex items-center justify-center text-white shrink-0">
+                      <Send className="h-3 w-3" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -359,14 +458,13 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
               Everything You Need
             </div>
             <h2 className="text-4xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
-              The complete design{" "}
+              Everything for{" "}
               <span className="bg-gradient-to-r from-purple-600 to-violet-600 bg-clip-text text-transparent">
-                review workflow
+                code-to-client handoffs
               </span>
             </h2>
             <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-lg">
-              Stop sending files over email. Stop chasing clients for feedback. Design Review gives you a professional,
-              structured process from start to approval.
+              No endless email threads. Test in interactive device frames, keep Developers, Admins, and Clients aligned, and approve designs in clicks.
             </p>
           </div>
 
@@ -550,11 +648,11 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           <h2 className="text-4xl md:text-6xl font-black text-slate-900 dark:text-white tracking-tight mb-5">
             Ready to level up your{" "}
             <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-              client workflow?
+              client approvals?
             </span>
           </h2>
           <p className="text-slate-600 dark:text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-            Join freelancers who use Design Review to present their work professionally and get client approvals faster.
+            Give developers, admins, and clients a single place to simulate, chat, and sign off on designs.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
