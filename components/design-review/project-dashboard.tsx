@@ -125,14 +125,14 @@ export function ProjectDashboard({
           <div className="relative z-10 max-w-2xl space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 px-3 py-1 text-xs font-medium text-purple-300">
               <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-              <span>Developer &rarr; Admin &rarr; Client Workflow</span>
+              <span>Interactive Simulator &middot; Developer &amp; Client Review</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              Simulate, compare &amp; review designs in one place
+              Simulate, compare &amp; review designs with clients
             </h1>
             <p className="text-sm text-zinc-400 leading-relaxed">
               Test live preview URLs in device simulator frames, compare with Figma specs side-by-side,
-              and collaborate with easy conversational feedback.
+              and get client feedback and approvals in one place.
             </p>
           </div>
 

@@ -56,70 +56,70 @@ const FEATURES = [
   {
     icon: Users,
     color: "purple",
-    title: "Developer → Admin → Client Flow",
+    title: "Developer & Client Collaboration",
     description:
-      "Structured collaboration chain: developers push updates, admins verify fidelity, and clients sign off with total clarity.",
+      "Developers add designs, simulator previews, and developer notes. Clients inspect, test, and provide direct feedback.",
   },
   {
     icon: MessageSquare,
     color: "violet",
-    title: "Conversational Feedback",
+    title: "Client Feedback & Notes",
     description:
-      "Easy chat-style notes and instant revisions right on the screen. No endless email threads or messy spreadsheets.",
+      "Structured client messages and developer notes right on the screen. No endless email threads or lost comments.",
   },
   {
     icon: Eye,
     color: "cyan",
-    title: "Side-by-Side Comparison",
+    title: "Side-by-Side Spec Comparison",
     description:
-      "Compare Figma designs directly against live URLs and screenshot revisions with synchronized views and lightboxes.",
+      "Compare Figma designs directly against live app frames or screenshots with Side-by-Side, Overlay, and Difference modes.",
   },
   {
     icon: CheckCircle,
     color: "emerald",
-    title: "1-Click Approvals & Audit",
+    title: "1-Click Accept & Verify",
     description:
-      "Keep track of every sign-off. Mark workflows verified, track outstanding items, and export professional review summaries.",
+      "Clients verify and approve workflows with a single click. Track completed screens and export presentation reports.",
   },
   {
     icon: Share2,
     color: "indigo",
     title: "Zero-Friction Client Sharing",
     description:
-      "Generate secure invite links in seconds. Clients test in the simulator and leave feedback without creating accounts.",
+      "Generate secure invite links with custom view, comment, or edit permissions. No client login required.",
   },
 ]
 
 const STEPS = [
   {
     step: "01",
-    title: "Develop & Simulate",
+    title: "Import Designs & Live URLs",
     description:
-      "Developers import Figma screens, paste live preview URLs, and verify responsiveness across device simulator frames.",
+      "Upload Figma designs, app screenshots, and set live app URLs to preview inside responsive simulator frames.",
     icon: Smartphone,
     color: "blue",
   },
   {
     step: "02",
-    title: "Admin Review & QA",
+    title: "Add Developer Notes",
     description:
-      "Admins inspect implementation against Figma specs, add internal notes, and prepare a polished client presentation.",
+      "Detail design structure, technical constraints, and revision reasons so clients understand every change.",
     icon: Layers,
     color: "purple",
   },
   {
     step: "03",
-    title: "Client Chat & Feedback",
+    title: "Share With Your Client",
     description:
-      "Clients interact with live frames, leave conversational notes, and ask questions with zero friction or logins required.",
+      "Generate a secure link. Clients test the live simulator frame, leave feedback messages, and review notes.",
     icon: MessageSquare,
     color: "violet",
   },
   {
     step: "04",
-    title: "Instant Sign-Off",
+    title: "Accept & Verify",
     description:
-      "One-click verification and approvals. Real-time status updates and exportable summaries keep everyone on the same page.",
+      "Clients approve workflows with 1-click verification. Track completed tasks and export polished reports.",
     icon: CheckCircle,
     color: "emerald",
   },
@@ -226,24 +226,21 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           {/* Badge */}
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-8">
             <Sparkles className="h-3.5 w-3.5 text-blue-500" />
-            <span>Interactive Device Simulator &middot; Developer &rarr; Admin &rarr; Client</span>
+            <span>Interactive Device Simulator &middot; Developer &amp; Client Review</span>
           </div>
 
           {/* Headline */}
           <h1 className="text-5xl md:text-7xl font-black tracking-tight text-slate-900 dark:text-white leading-[1.05] mb-6">
-            From Code to Client,{" "}
+            Design Review with{" "}
             <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-              in One Conversation
+              Live Device Simulator
             </span>
           </h1>
 
           {/* Subheadline */}
           <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10">
-            Interactive device simulator meets seamless collaboration. Keep{" "}
-            <strong className="text-slate-900 dark:text-slate-100 font-semibold">
-              Developer &rarr; Admin &rarr; Client
-            </strong>{" "}
-            aligned with live preview frames, chat-style feedback, and instant sign-offs.
+            Test live preview URLs in responsive device frames, compare against Figma specs side-by-side,
+            and collaborate with clients through structured developer notes and 1-click approvals.
           </p>
 
           {/* CTAs */}
@@ -269,10 +266,10 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           {/* Stats Row */}
           <div className="flex flex-wrap items-center justify-center gap-8 text-sm">
             {[
-              { icon: Smartphone, label: "Interactive Device Simulator" },
-              { icon: Users, label: "Dev → Admin → Client Chain" },
-              { icon: MessageSquare, label: "Easy Conversational Feedback" },
-              { icon: CheckCircle, label: "1-Click Approvals" },
+              { icon: Smartphone, label: "Live Device Simulator" },
+              { icon: Eye, label: "Figma vs Live Comparison" },
+              { icon: Users, label: "Developer & Client Review" },
+              { icon: CheckCircle, label: "1-Click Accept & Verify" },
             ].map(({ icon: Icon, label }) => (
               <div key={label} className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                 <Icon className="h-4 w-4 text-blue-500" />
@@ -282,7 +279,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           </div>
         </div>
 
-        {/* App Preview Card: Interactive Simulator + Conversational Flow Mockup */}
+        {/* App Preview Card: Interactive Simulator + Developer & Client Review Mockup */}
         <div className="mx-auto mt-16 max-w-5xl">
           <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/40 overflow-hidden text-left">
             {/* Fake browser chrome */}
@@ -292,7 +289,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                 <div className="h-3 w-3 rounded-full bg-amber-400" />
                 <div className="h-3 w-3 rounded-full bg-emerald-400" />
                 <div className="hidden sm:block ml-3 rounded-lg bg-slate-200 dark:bg-slate-800 px-3 py-1 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                  designhub.app/simulator/review
+                  designhub.app/simulator
                 </div>
               </div>
 
@@ -312,17 +309,15 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                 </div>
               </div>
 
-              {/* Role chain badge */}
-              <div className="hidden md:flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 px-2.5 py-1 rounded-full">
-                <span className="text-blue-600 dark:text-blue-400 font-bold">Dev</span>
-                <span>&rarr;</span>
-                <span className="text-purple-600 dark:text-purple-400 font-bold">Admin</span>
-                <span>&rarr;</span>
-                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Client</span>
+              {/* Role badge */}
+              <div className="hidden md:flex items-center gap-2 text-xs font-medium bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 px-2.5 py-1 rounded-full">
+                <span className="text-blue-600 dark:text-blue-400 font-bold">Developer</span>
+                <span className="text-slate-400">&harr;</span>
+                <span className="text-purple-600 dark:text-purple-400 font-bold">Client</span>
               </div>
             </div>
 
-            {/* Preview Content: Simulator on Left, Chat on Right */}
+            {/* Preview Content: Simulator on Left, Review on Right */}
             <div className="grid grid-cols-1 lg:grid-cols-12 bg-slate-50/50 dark:bg-slate-950/60 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-white/10">
               {/* Left: Device Simulator Preview */}
               <div className="lg:col-span-7 p-5 sm:p-6 flex flex-col items-center justify-center bg-gradient-to-b from-slate-100/60 to-slate-200/40 dark:from-slate-900/40 dark:to-slate-950/80">
@@ -349,8 +344,8 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                       <div className="h-5 w-5 rounded-full bg-blue-500/20" />
                     </div>
                     <div className="h-24 rounded-xl bg-gradient-to-tr from-blue-500/20 to-purple-500/20 border border-blue-500/20 p-3 flex flex-col justify-end">
-                      <div className="text-[11px] font-bold text-slate-800 dark:text-white">Mobile Checkout v2</div>
-                      <div className="text-[9px] text-slate-500">Zero scroll friction</div>
+                      <div className="text-[11px] font-bold text-slate-800 dark:text-white">Live App Preview</div>
+                      <div className="text-[9px] text-slate-500 font-mono">http://localhost:8081</div>
                     </div>
                     <div className="space-y-1.5">
                       <div className="h-2.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
@@ -358,79 +353,69 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                     </div>
                     <div className="pt-2">
                       <div className="h-7 w-full rounded-lg bg-blue-600 flex items-center justify-center text-[11px] font-bold text-white shadow-md shadow-blue-500/30">
-                        Confirm &amp; Sign Off
+                        Side-by-Side with Figma
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Right: Conversational Feedback Feed (Developer -> Admin -> Client) */}
+              {/* Right: Developer Notes & Client Review (Matches real workflow) */}
               <div className="lg:col-span-5 p-5 sm:p-6 flex flex-col justify-between space-y-4 bg-white dark:bg-slate-900/60">
                 <div>
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-white/5">
                     <div className="flex items-center gap-2">
-                      <MessageSquare className="h-4 w-4 text-purple-500" />
+                      <FileText className="h-4 w-4 text-blue-500" />
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                        Conversational Review
+                        Review &amp; Sign-Off
                       </span>
                     </div>
-                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">
-                      Ready to Approve
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle className="h-3 w-3" /> Accept &amp; Verify
                     </span>
                   </div>
 
-                  {/* 3 Messages showcasing Developer -> Admin -> Client */}
+                  {/* Sections matching real app */}
                   <div className="mt-4 space-y-3 text-xs">
-                    {/* Dev message */}
+                    {/* Developer Notes */}
                     <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-blue-700 dark:text-blue-300">Developer (Alex)</span>
-                        <span className="text-[10px] text-slate-400">10:15 AM</span>
+                        <span className="font-bold text-blue-700 dark:text-blue-300">Developer Notes</span>
+                        <span className="text-[10px] text-blue-500 font-semibold">Submitted</span>
                       </div>
                       <p className="text-slate-700 dark:text-slate-300">
-                        Pushed responsive fix for mobile &amp; tablet frames. Tested on simulator.
+                        Updated mobile layout breakpoints and verified pixel parity against Figma spec in simulator.
                       </p>
                     </div>
 
-                    {/* Admin message */}
+                    {/* Client Message */}
                     <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/40 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-purple-700 dark:text-purple-300">Admin (Sarah)</span>
-                        <span className="text-[10px] text-slate-400">10:22 AM</span>
+                        <span className="font-bold text-purple-700 dark:text-purple-300">Client&apos;s Message</span>
+                        <span className="text-[10px] text-purple-500 font-semibold">From Client</span>
                       </div>
                       <p className="text-slate-700 dark:text-slate-300">
-                        Checked Figma spec comparison. Pixel-perfect! Generated client review link.
+                        Tested responsive frame on mobile. Spacing and transitions look great!
                       </p>
                     </div>
 
-                    {/* Client message */}
-                    <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 space-y-1">
+                    {/* Reason for Final Changes */}
+                    <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
-                          Client (David) <CheckCircle className="h-3 w-3 text-emerald-500" />
-                        </span>
-                        <span className="text-[10px] text-slate-400">10:30 AM</span>
+                        <span className="font-bold text-amber-800 dark:text-amber-400">Reason for Final Changes</span>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-500 font-semibold">Explanation</span>
                       </div>
-                      <p className="text-slate-700 dark:text-slate-300 font-medium">
-                        Tested live frame on phone mode. Looks super clean and responsive. Approved!
+                      <p className="text-slate-700 dark:text-slate-300">
+                        Adjusted CTA padding and fixed horizontal scroll on 375px screens in response to feedback.
                       </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Chat input mock */}
-                <div className="pt-2">
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-800/80 px-3 py-2">
-                    <input
-                      disabled
-                      placeholder="Type conversational feedback..."
-                      className="bg-transparent text-xs text-slate-400 w-full outline-hidden cursor-default"
-                    />
-                    <div className="h-6 w-6 rounded-lg bg-blue-600 flex items-center justify-center text-white shrink-0">
-                      <Send className="h-3 w-3" />
-                    </div>
-                  </div>
+                {/* Status Bar */}
+                <div className="pt-2 border-t border-slate-100 dark:border-white/5 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span>Status: Completed &amp; Verified</span>
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Ready for Production</span>
                 </div>
               </div>
             </div>
@@ -464,7 +449,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
               </span>
             </h2>
             <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-lg">
-              No endless email threads. Test in interactive device frames, keep Developers, Admins, and Clients aligned, and approve designs in clicks.
+              No endless email threads. Test in interactive device frames, document developer notes, and get client approvals in clicks.
             </p>
           </div>
 
@@ -652,7 +637,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
             </span>
           </h2>
           <p className="text-slate-600 dark:text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-            Give developers, admins, and clients a single place to simulate, chat, and sign off on designs.
+            Give developers and clients a single place to simulate, review, and sign off on designs.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
