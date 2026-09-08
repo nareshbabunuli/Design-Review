@@ -24,6 +24,8 @@ import {
   Monitor,
   Laptop,
   Send,
+  Maximize2,
+  X,
 } from "lucide-react"
 import { ThemeToggle } from "./theme-toggle"
 
@@ -44,6 +46,53 @@ interface LandingPageProps {
   theme?: "light" | "dark"
   onToggleTheme?: () => void
 }
+
+const PRODUCT_PREVIEWS = [
+  {
+    id: "simulator",
+    title: "Device Simulator",
+    badge: "Figma vs Live Frame",
+    url: "designhub.app/simulator",
+    src: "/screenshots/simulator-preview.png",
+    alt: "Device simulator with live URL on phone frame side-by-side with Figma spec",
+    description: "Run live web URLs in responsive device frames side-by-side with your Figma design specs. Includes Side-by-Side, Overlay, and Difference modes.",
+    icon: Smartphone,
+    color: "blue",
+  },
+  {
+    id: "editor",
+    title: "Workflow Editor",
+    badge: "Figma & App Screenshots",
+    url: "designhub.app/editor/screen-1",
+    src: "/screenshots/editor-preview.png",
+    alt: "Workflow editor showing Figma design upload, app screenshot, developer notes, and client message",
+    description: "Upload Figma exports, paste app screenshots, provide developer notes, and manage screen approval states.",
+    icon: Layers,
+    color: "purple",
+  },
+  {
+    id: "revisions",
+    title: "Notes & Revisions",
+    badge: "Developer Explanations",
+    url: "designhub.app/revisions",
+    src: "/screenshots/revisions-preview.png",
+    alt: "Developer notes and mandatory revision explanation for client feedback",
+    description: "Submit developer notes, read client feedback, and document mandatory reasons for final revisions.",
+    icon: MessageSquare,
+    color: "amber",
+  },
+  {
+    id: "dashboard",
+    title: "Project Dashboard",
+    badge: "Multi-Project Management",
+    url: "designhub.app/dashboard",
+    src: "/screenshots/dashboard-preview.png",
+    alt: "Project dashboard showing active projects and access control",
+    description: "Organize client projects, track completion progress, manage team access, and launch presentation reports.",
+    icon: FolderKanban,
+    color: "emerald",
+  },
+]
 
 const FEATURES = [
   {
@@ -132,6 +181,7 @@ const colorMap: Record<string, string> = {
   indigo: "from-indigo-500 to-indigo-600 shadow-indigo-500/30",
   cyan: "from-cyan-500 to-cyan-600 shadow-cyan-500/30",
   emerald: "from-emerald-500 to-emerald-600 shadow-emerald-500/30",
+  amber: "from-amber-500 to-amber-600 shadow-amber-500/30",
 }
 
 const bgPillMap: Record<string, string> = {
@@ -141,10 +191,13 @@ const bgPillMap: Record<string, string> = {
   indigo: "bg-indigo-100 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300",
   cyan: "bg-cyan-100 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300",
   emerald: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300",
+  amber: "bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300",
 }
 
 export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: LandingPageProps) {
   const [scrolled, setScrolled] = useState(false)
+  const [previewTab, setPreviewTab] = useState<string>("simulator")
+  const [lightboxImg, setLightboxImg] = useState<{ src: string; title: string; desc?: string } | null>(null)
   const heroRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -279,158 +332,207 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           </div>
         </div>
 
-        {/* App Preview Card: Interactive Simulator + Developer & Client Review Mockup */}
+        {/* App Preview Card: Interactive Real Screenshot Viewer with Switchable Views */}
         <div className="mx-auto mt-16 max-w-5xl">
-          <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/40 overflow-hidden text-left">
-            {/* Fake browser chrome */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/90">
-              <div className="flex items-center gap-2">
-                <div className="h-3 w-3 rounded-full bg-red-400" />
-                <div className="h-3 w-3 rounded-full bg-amber-400" />
-                <div className="h-3 w-3 rounded-full bg-emerald-400" />
-                <div className="hidden sm:block ml-3 rounded-lg bg-slate-200 dark:bg-slate-800 px-3 py-1 text-xs text-slate-500 dark:text-slate-400 font-mono">
-                  designhub.app/simulator
-                </div>
-              </div>
+          {(() => {
+            const currentPreview = PRODUCT_PREVIEWS.find((p) => p.id === previewTab) || PRODUCT_PREVIEWS[0]
+            const CurrentIcon = currentPreview.icon
 
-              {/* Simulator Device Switcher Mockup */}
-              <div className="flex items-center gap-1.5 bg-slate-200 dark:bg-slate-800 p-1 rounded-xl">
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-700 text-xs font-semibold text-blue-600 dark:text-blue-400 shadow-sm">
-                  <Smartphone className="h-3.5 w-3.5" />
-                  <span>Mobile</span>
-                </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400">
-                  <Laptop className="h-3.5 w-3.5" />
-                  <span>Tablet</span>
-                </div>
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400">
-                  <Monitor className="h-3.5 w-3.5" />
-                  <span>Desktop</span>
-                </div>
-              </div>
-
-              {/* Role badge */}
-              <div className="hidden md:flex items-center gap-2 text-xs font-medium bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 px-2.5 py-1 rounded-full">
-                <span className="text-blue-600 dark:text-blue-400 font-bold">Developer</span>
-                <span className="text-slate-400">&harr;</span>
-                <span className="text-purple-600 dark:text-purple-400 font-bold">Client</span>
-              </div>
-            </div>
-
-            {/* Preview Content: Simulator on Left, Review on Right */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 bg-slate-50/50 dark:bg-slate-950/60 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-white/10">
-              {/* Left: Device Simulator Preview */}
-              <div className="lg:col-span-7 p-5 sm:p-6 flex flex-col items-center justify-center bg-gradient-to-b from-slate-100/60 to-slate-200/40 dark:from-slate-900/40 dark:to-slate-950/80">
-                <div className="w-full flex items-center justify-between mb-4">
+            return (
+              <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/90 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/50 overflow-hidden text-left">
+                {/* Fake browser chrome */}
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/95">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Live Simulator Frame</span>
-                    <span className="text-[11px] text-slate-400 font-mono">375 × 812</span>
+                    <div className="h-3 w-3 rounded-full bg-red-400" />
+                    <div className="h-3 w-3 rounded-full bg-amber-400" />
+                    <div className="h-3 w-3 rounded-full bg-emerald-400" />
+                    <div className="hidden sm:block ml-2 rounded-lg bg-slate-200/70 dark:bg-slate-800/70 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 font-mono">
+                      {currentPreview.url}
+                    </div>
                   </div>
-                  <div className="inline-flex rounded-lg bg-slate-200 dark:bg-slate-800 p-0.5 text-[11px] font-semibold">
-                    <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-xs">Live URL</span>
-                    <span className="px-2 py-0.5 text-slate-500">Figma Spec</span>
+
+                  {/* View Selector Tabs */}
+                  <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-800/80 p-1 rounded-xl overflow-x-auto max-w-full">
+                    {PRODUCT_PREVIEWS.map((p) => {
+                      const Icon = p.icon
+                      const active = previewTab === p.id
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setPreviewTab(p.id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
+                            active
+                              ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
+                              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          <span>{p.title}</span>
+                        </button>
+                      )
+                    })}
                   </div>
+
+                  {/* Expand Action */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLightboxImg({
+                        src: currentPreview.src,
+                        title: currentPreview.title,
+                        desc: currentPreview.description,
+                      })
+                    }
+                    className="hidden sm:flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
+                    title="View full resolution"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    <span>Enlarge</span>
+                  </button>
                 </div>
 
-                {/* Phone Mockup Frame */}
-                <div className="w-full max-w-[280px] rounded-3xl border-4 border-slate-800 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden">
-                  <div className="h-5 bg-slate-800 dark:bg-slate-700 flex items-center justify-center">
-                    <div className="h-2 w-16 rounded-full bg-slate-950" />
-                  </div>
-                  <div className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="h-4 w-20 rounded bg-slate-200 dark:bg-slate-700" />
-                      <div className="h-5 w-5 rounded-full bg-blue-500/20" />
-                    </div>
-                    <div className="h-24 rounded-xl bg-gradient-to-tr from-blue-500/20 to-purple-500/20 border border-blue-500/20 p-3 flex flex-col justify-end">
-                      <div className="text-[11px] font-bold text-slate-800 dark:text-white">Live App Preview</div>
-                      <div className="text-[9px] text-slate-500 font-mono">http://localhost:8081</div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="h-2.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
-                      <div className="h-2.5 w-3/4 rounded bg-slate-100 dark:bg-slate-800" />
-                    </div>
-                    <div className="pt-2">
-                      <div className="h-7 w-full rounded-lg bg-blue-600 flex items-center justify-center text-[11px] font-bold text-white shadow-md shadow-blue-500/30">
-                        Side-by-Side with Figma
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                {/* Preview Image Body */}
+                <div
+                  className="relative group cursor-pointer bg-slate-950 overflow-hidden"
+                  onClick={() =>
+                    setLightboxImg({
+                      src: currentPreview.src,
+                      title: currentPreview.title,
+                      desc: currentPreview.description,
+                    })
+                  }
+                >
+                  <img
+                    src={currentPreview.src}
+                    alt={currentPreview.alt}
+                    className="w-full h-auto max-h-[540px] object-cover object-top transition-transform duration-500 group-hover:scale-[1.01]"
+                  />
 
-              {/* Right: Developer Notes & Client Review (Matches real workflow) */}
-              <div className="lg:col-span-5 p-5 sm:p-6 flex flex-col justify-between space-y-4 bg-white dark:bg-slate-900/60">
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-white/5">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-blue-500" />
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                        Review &amp; Sign-Off
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <CheckCircle className="h-3 w-3" /> Accept &amp; Verify
+                  {/* Hover hint */}
+                  <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                    <span className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-lg">
+                      <Maximize2 className="h-3.5 w-3.5" />
+                      Click to expand full resolution
                     </span>
                   </div>
+                </div>
 
-                  {/* Sections matching real app */}
-                  <div className="mt-4 space-y-3 text-xs">
-                    {/* Developer Notes */}
-                    <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-blue-700 dark:text-blue-300">Developer Notes</span>
-                        <span className="text-[10px] text-blue-500 font-semibold">Submitted</span>
-                      </div>
-                      <p className="text-slate-700 dark:text-slate-300">
-                        Updated mobile layout breakpoints and verified pixel parity against Figma spec in simulator.
-                      </p>
-                    </div>
-
-                    {/* Client Message */}
-                    <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/40 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-purple-700 dark:text-purple-300">Client&apos;s Message</span>
-                        <span className="text-[10px] text-purple-500 font-semibold">From Client</span>
-                      </div>
-                      <p className="text-slate-700 dark:text-slate-300">
-                        Tested responsive frame on mobile. Spacing and transitions look great!
-                      </p>
-                    </div>
-
-                    {/* Reason for Final Changes */}
-                    <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-amber-800 dark:text-amber-400">Reason for Final Changes</span>
-                        <span className="text-[10px] text-amber-600 dark:text-amber-500 font-semibold">Explanation</span>
-                      </div>
-                      <p className="text-slate-700 dark:text-slate-300">
-                        Adjusted CTA padding and fixed horizontal scroll on 375px screens in response to feedback.
-                      </p>
-                    </div>
+                {/* Caption Footer */}
+                <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-900/90 border-t border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    <span className="font-bold text-slate-800 dark:text-white">{currentPreview.title}:</span>
+                    <span className="text-slate-600 dark:text-slate-300">{currentPreview.description}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${bgPillMap[currentPreview.color]}`}>
+                      {currentPreview.badge}
+                    </span>
                   </div>
                 </div>
-
-                {/* Status Bar */}
-                <div className="pt-2 border-t border-slate-100 dark:border-white/5 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span>Status: Completed &amp; Verified</span>
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Ready for Production</span>
-                </div>
               </div>
-            </div>
-          </div>
+            )
+          })()}
         </div>
 
         {/* Scroll cue */}
         <div className="flex justify-center mt-10">
           <a
-            href="#features"
+            href="#screenshots"
             className="flex flex-col items-center gap-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors animate-bounce"
           >
-            <span className="text-xs font-medium">Explore Features</span>
+            <span className="text-xs font-medium">View All Screens</span>
             <ChevronDown className="h-4 w-4" />
           </a>
+        </div>
+      </section>
+
+      {/* ─── REAL APPLICATION SCREENSHOTS GALLERY ─── */}
+      <section id="screenshots" className="relative py-20 px-6 bg-slate-50/70 dark:bg-slate-950/40 border-y border-slate-200/60 dark:border-white/5">
+        <div className="mx-auto max-w-7xl">
+          <div className="text-center mb-14">
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-4">
+              <Eye className="h-3.5 w-3.5" />
+              Real Interface Walkthrough
+            </div>
+            <h2 className="text-3xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
+              See the app in{" "}
+              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
+                action
+              </span>
+            </h2>
+            <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-base sm:text-lg">
+              Explore the real screens: from live interactive device frames to structured developer notes, revision reasons, and 1-click client verification.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {PRODUCT_PREVIEWS.map((item) => {
+              const Icon = item.icon
+              return (
+                <div
+                  key={item.id}
+                  className="group rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/70 p-4 sm:p-5 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/5 transition-all duration-300 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-3.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400">
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">{item.badge}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLightboxImg({
+                            src: item.src,
+                            title: item.title,
+                            desc: item.description,
+                          })
+                        }
+                        className="text-xs text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                      >
+                        <span>Enlarge</span>
+                        <Maximize2 className="h-3 w-3" />
+                      </button>
+                    </div>
+
+                    <div
+                      onClick={() =>
+                        setLightboxImg({
+                          src: item.src,
+                          title: item.title,
+                          desc: item.description,
+                        })
+                      }
+                      className="relative rounded-xl overflow-hidden border border-slate-200/80 dark:border-white/10 bg-slate-950 aspect-[16/10] cursor-pointer group-hover:border-blue-400/40 transition-colors"
+                    >
+                      <img
+                        src={item.src}
+                        alt={item.alt}
+                        className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
+                      />
+                      <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-md">
+                          <Maximize2 className="h-3 w-3" />
+                          Click to enlarge
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {item.description}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
         </div>
       </section>
 
@@ -681,6 +783,43 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
           </div>
         </div>
       </footer>
+
+      {/* ─── LIGHTBOX MODAL ─── */}
+      {lightboxImg && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6"
+          onClick={() => setLightboxImg(null)}
+        >
+          <div
+            className="relative max-w-5xl w-full bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-slate-950/90 text-white">
+              <div>
+                <h4 className="text-sm font-bold text-white">{lightboxImg.title}</h4>
+                {lightboxImg.desc && <p className="text-xs text-slate-400">{lightboxImg.desc}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLightboxImg(null)}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Close modal"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-3 sm:p-5 bg-slate-950 flex items-center justify-center max-h-[80vh] overflow-auto">
+              <img
+                src={lightboxImg.src}
+                alt={lightboxImg.title}
+                className="max-h-[75vh] w-auto max-w-full rounded-lg object-contain shadow-2xl border border-white/5"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
