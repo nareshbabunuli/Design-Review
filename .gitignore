@@ -26,5 +26,6 @@ pnpm-debug.log*
 .vercel
 .idea
 .vscode
+.claude/
 *.tsbuildinfo
 .chrome-profile/

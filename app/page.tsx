@@ -252,6 +252,18 @@ export default function Page() {
       document.removeEventListener("keydown", handleKeyDown)
     }
   }, [isProfileMenuOpen])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsMobileSidebarOpen(false)
+      }
+    }
+    if (isMobileSidebarOpen) {
+      window.addEventListener("keydown", handleKeyDown)
+    }
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [isMobileSidebarOpen])
   const [inviteToken, setInviteToken] = useState<string | null>(null)
   const [inviteModalData, setInviteModalData] = useState<{
     token: string
@@ -1889,10 +1901,12 @@ export default function Page() {
         />
       )}
 
-      {/* Sidebar - Only shown in editor mode for the active project */}
-      {viewMode === "editor" && (
+      {/* Sidebar - Shown in editor mode, or as mobile drawer in editor & simulator mode */}
+      {(viewMode === "editor" || (viewMode === "simulator" && isMobileSidebarOpen)) && (
         <div
-          className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
+          className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out ${
+            viewMode === "editor" ? "lg:static lg:translate-x-0" : "lg:hidden"
+          } ${
             isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
           } ${showReport ? "print:hidden" : ""}`}
         >
@@ -1904,18 +1918,24 @@ export default function Page() {
             isOwner={isOwner}
             canEdit={canEdit}
             userRole={userRole}
-            onBackToDashboard={() => setViewMode("dashboard")}
+            onCloseMobile={() => setIsMobileSidebarOpen(false)}
+            onBackToDashboard={() => {
+              setIsMobileSidebarOpen(false)
+              setViewMode("dashboard")
+            }}
             setEditingId={(id: EditingId) => setEditingId(id)}
             onSelectProject={handleSelectProject}
             onSelectWorkflow={(projectId: string, workflowId: string) => {
               setActiveProjectId(projectId)
               setActiveWorkflowId(workflowId)
               update((xs) => xs.map((p) => ({ ...p, isExpanded: p.id === projectId ? true : p.isExpanded })))
-              setViewMode("editor")
               setIsMobileSidebarOpen(false)
             }}
             onCreateProject={createProject}
-            onCreateWorkflow={createWorkflow}
+            onCreateWorkflow={(projectId, e) => {
+              createWorkflow(projectId, e)
+              setIsMobileSidebarOpen(false)
+            }}
             onDuplicateWorkflow={async (_projectId: string, workflowId: string, e: React.MouseEvent) => {
               e.stopPropagation()
               await duplicateWorkflow(workflowId)
@@ -1963,9 +1983,9 @@ export default function Page() {
         <header className={`h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200 ${
           viewMode === "simulator" && isSimulatorFullscreen ? "hidden" : ""
         }`}>
-          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-shrink">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-shrink-0">
             {/* Mobile Sidebar Hamburger Toggle */}
-            {viewMode === "editor" && (
+            {(viewMode === "editor" || viewMode === "simulator") && (
               <button
                 type="button"
                 onClick={() => setIsMobileSidebarOpen(true)}
@@ -1988,7 +2008,18 @@ export default function Page() {
                 </button>
               </div>
             ) : activeProject ? (
-              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 flex-shrink-0">
+              <>
+              <select
+                value={viewMode}
+                onChange={(e) => setViewMode(e.target.value as "dashboard" | "editor" | "simulator")}
+                className="sm:hidden h-8 max-w-[105px] rounded-lg border border-slate-200 bg-slate-100 px-2 text-xs font-semibold text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                aria-label="Switch workspace view"
+              >
+                <option value="dashboard">Dashboard</option>
+                <option value="editor">Editor</option>
+                <option value="simulator">Simulator</option>
+              </select>
+              <div className="hidden sm:flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setViewMode("dashboard")}
@@ -2020,6 +2051,7 @@ export default function Page() {
                   <span>Simulator</span>
                 </button>
               </div>
+              </>
             ) : null}
 
             {/* Active Project Title & Role Indicator (Editor & Simulator Mode) */}
@@ -2195,7 +2227,7 @@ export default function Page() {
         </header>
 
         {/* Workspace Body Area */}
-        <div className={`flex-1 bg-slate-100 dark:bg-slate-950 transition-colors duration-200 ${viewMode === "simulator" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
+        <div className={`flex-1 bg-slate-100 dark:bg-slate-950 transition-colors duration-200 ${viewMode === "simulator" ? "overflow-hidden flex flex-col" : "overflow-y-auto overflow-x-hidden"}`}>
           {loading && projects.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-slate-400" />

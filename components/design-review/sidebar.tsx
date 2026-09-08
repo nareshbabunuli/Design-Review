@@ -17,6 +17,7 @@ import {
   Unlock,
   Copy,
   CopyPlus,
+  X,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -29,6 +30,7 @@ type SidebarProps = {
   isOwner?: boolean
   canEdit?: boolean
   userRole?: "client" | "freelancer" | "owner" | "developer" | null
+  onCloseMobile?: () => void
   onBackToDashboard?: () => void
   setEditingId: (id: EditingId) => void
   onCreateProject: (e?: React.MouseEvent) => void
@@ -99,6 +101,7 @@ export function Sidebar({
   isOwner = true,
   canEdit = false,
   userRole,
+  onCloseMobile,
   onBackToDashboard,
   setEditingId,
   onCreateProject,
@@ -126,33 +129,46 @@ export function Sidebar({
   const [dragOverProjectIndex, setDragOverProjectIndex] = useState<number | null>(null)
 
   return (
-    <aside className="w-80 h-full max-h-screen flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col min-h-0 shadow-sm z-10 print:hidden transition-colors select-none overflow-hidden">
-      <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900 transition-colors">
+    <aside className="w-72 sm:w-80 max-w-[85vw] h-full max-h-screen flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col min-h-0 shadow-xl lg:shadow-none z-50 lg:z-10 print:hidden transition-colors select-none overflow-hidden">
+      <div className="p-3.5 sm:p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900 transition-colors">
         {onBackToDashboard ? (
           <button
             type="button"
             onClick={onBackToDashboard}
-            className="flex items-center gap-2 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-semibold text-sm transition-colors group cursor-pointer"
+            className="flex items-center gap-2 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-semibold text-sm transition-colors group cursor-pointer min-w-0"
             title="Return to Projects Dashboard"
           >
-            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 text-slate-500 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
-            <span>All Projects</span>
+            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 text-slate-500 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 shrink-0" />
+            <span className="truncate">All Projects</span>
           </button>
         ) : (
-          <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-bold text-base">
-            <FolderKanban className="text-blue-600 dark:text-blue-400 h-5 w-5" />
-            <span>Projects</span>
+          <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-bold text-base min-w-0">
+            <FolderKanban className="text-blue-600 dark:text-blue-400 h-5 w-5 shrink-0" />
+            <span className="truncate">Projects</span>
           </div>
         )}
-        <button
-          type="button"
-          onClick={(e) => onCreateProject(e)}
-          className="p-1.5 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-transparent dark:border-blue-900 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900 transition-colors cursor-pointer"
-          title="Create new project"
-          aria-label="Create new project"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={(e) => onCreateProject(e)}
+            className="p-1.5 bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-transparent dark:border-blue-900 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900 transition-colors cursor-pointer"
+            title="Create new project"
+            aria-label="Create new project"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          {onCloseMobile && (
+            <button
+              type="button"
+              onClick={onCloseMobile}
+              className="lg:hidden p-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer ml-0.5"
+              title="Close sidebar"
+              aria-label="Close sidebar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto min-h-0 p-3 space-y-1 custom-scrollbar">
@@ -249,7 +265,7 @@ export function Sidebar({
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                   {/* Project Move Up/Down when multiple projects exist */}
                   {projects.length > 1 && (
-                    <>
+                    <div className="hidden sm:flex items-center gap-0.5">
                       <button
                         type="button"
                         disabled={pIdx === 0}
@@ -284,7 +300,7 @@ export function Sidebar({
                       >
                         <ChevronDown className="h-3.5 w-3.5" />
                       </button>
-                    </>
+                    </div>
                   )}
 
                   <button
@@ -315,7 +331,7 @@ export function Sidebar({
                         e.stopPropagation()
                         onDuplicateProject(project.id, e)
                       }}
-                      className="p-1.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-emerald-500 cursor-pointer"
+                      className="hidden sm:inline-flex p-1.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-emerald-500 cursor-pointer"
                       title="Duplicate project"
                       aria-label="Duplicate project"
                     >
@@ -370,7 +386,7 @@ export function Sidebar({
 
             {/* Workflows (screens / files) */}
             {project.isExpanded && (
-              <div className="ml-5 pl-2 border-l-2 border-slate-100 dark:border-slate-800 mt-1 space-y-0.5">
+              <div className="ml-3 sm:ml-5 pl-1.5 sm:pl-2 border-l-2 border-slate-100 dark:border-slate-800 mt-1 space-y-0.5">
                 {project.workflows.length > 1 && (
                   <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium select-none">
                     <span className="uppercase tracking-wider font-semibold text-[9px] text-slate-400 dark:text-slate-500">
@@ -418,15 +434,19 @@ export function Sidebar({
                   return (
                     <div
                       key={workflow.id}
-                      draggable={!project.isOrderLocked && canManageScreens && project.workflows.length > 1}
+                      draggable={canManageScreens && !project.isOrderLocked}
                       onDragStart={(e) => {
-                        if (!project.isOrderLocked && canManageScreens && project.workflows.length > 1) {
+                        if (canManageScreens && !project.isOrderLocked) {
                           setDraggedWorkflow({ projectId: project.id, index: wIdx })
                           e.dataTransfer.effectAllowed = "move"
                         }
                       }}
+                      onDragEnd={() => {
+                        setDraggedWorkflow(null)
+                        setDragOverWorkflow(null)
+                      }}
                       onDragOver={(e) => {
-                        if (!project.isOrderLocked && draggedWorkflow && draggedWorkflow.projectId === project.id) {
+                        if (draggedWorkflow && draggedWorkflow.projectId === project.id && !project.isOrderLocked) {
                           e.preventDefault()
                           e.stopPropagation()
                           setDragOverWorkflow({ projectId: project.id, index: wIdx })
@@ -442,10 +462,10 @@ export function Sidebar({
                       }}
                       onDrop={(e) => {
                         if (
-                          !project.isOrderLocked &&
                           draggedWorkflow &&
                           draggedWorkflow.projectId === project.id &&
-                          onReorderWorkflows
+                          onReorderWorkflows &&
+                          !project.isOrderLocked
                         ) {
                           e.preventDefault()
                           e.stopPropagation()
@@ -454,29 +474,21 @@ export function Sidebar({
                           setDragOverWorkflow(null)
                         }
                       }}
-                      onDragEnd={() => {
-                        setDraggedWorkflow(null)
-                        setDragOverWorkflow(null)
-                      }}
                       onClick={() => onSelectWorkflow(project.id, workflow.id)}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation()
-                        setEditingId(`workflow-${workflow.id}`)
-                      }}
                       className={`group flex items-center justify-between w-full p-2 rounded-lg cursor-pointer transition-all ${
-                        isDraggingThis ? "opacity-40 scale-95" : ""
-                      } ${
-                        isDragOverThis
+                        isDraggingThis
+                          ? "opacity-40"
+                          : isDragOverThis
                           ? "ring-2 ring-blue-500 bg-blue-100/60 dark:bg-blue-950/80"
                           : isWorkflowActive
                           ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold shadow-xs"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900/60 hover:text-slate-900 dark:hover:text-slate-200"
                       }`}
                     >
-                      <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0 overflow-hidden">
                         {canManageScreens && project.workflows.length > 1 && !project.isOrderLocked && (
                           <span
-                            className="text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors"
+                            className="hidden sm:inline-flex text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors shrink-0"
                             title="Drag to reorder screen"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -518,9 +530,9 @@ export function Sidebar({
                         <div className={`flex items-center gap-0.5 transition-opacity flex-shrink-0 ${
                           isWorkflowActive ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
                         }`}>
-                          {/* Move Up/Down Buttons (Only available when unlocked) */}
+                          {/* Move Up/Down Buttons (Only available when unlocked and on sm+ screens) */}
                           {!project.isOrderLocked && (
-                            <>
+                            <div className="hidden sm:flex items-center gap-0.5">
                               <button
                                 type="button"
                                 disabled={wIdx === 0}
@@ -556,7 +568,7 @@ export function Sidebar({
                               >
                                 <ChevronDown className="h-3.5 w-3.5" />
                               </button>
-                            </>
+                            </div>
                           )}
 
                           {/* Rename Button */}

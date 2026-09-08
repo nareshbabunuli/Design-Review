@@ -143,24 +143,24 @@ export function ProjectDashboard({
 
         {/* Filter Tabs & View Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-zinc-800/80 pb-4">
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-900 rounded-xl p-1">
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-900 rounded-xl p-1 overflow-x-auto max-w-full">
             {([
-              { key: "all", label: `All Projects`, count: projects.length },
-              { key: "mine", label: "My Projects", count: projects.filter(p => userId ? p.userId === userId : true).length },
-              { key: "shared", label: "Shared with me", count: projects.filter(p => userId ? p.userId !== userId : 0).length },
+              { key: "all", label: "All", count: projects.length },
+              { key: "mine", label: "Mine", count: projects.filter(p => userId ? p.userId === userId : true).length },
+              { key: "shared", label: "Shared", count: projects.filter(p => userId ? p.userId !== userId : 0).length },
             ] as { key: "all" | "mine" | "shared"; label: string; count: number }[]).map(({ key, label, count }) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => setActiveTab(key)}
-                className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3.5 py-1.5 text-xs font-medium transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === key
                     ? "bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-sm border border-slate-200/80 dark:border-zinc-700/80"
                     : "text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white"
                 }`}
               >
-                {label}
-                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                <span>{label}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold shrink-0 ${
                   activeTab === key
                     ? "bg-blue-600 text-white"
                     : "bg-slate-200 dark:bg-zinc-700 text-slate-500 dark:text-zinc-400"

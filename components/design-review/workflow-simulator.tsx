@@ -142,11 +142,11 @@ function ToolbarButton({
       onClick={onClick}
       title={title}
       aria-pressed={active}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${active
+      className={`px-2 sm:px-2.5 py-1 rounded text-[10px] sm:text-[11px] font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400 ${active
           ? variant === "primary"
-            ? "bg-indigo-600 text-white shadow-sm font-semibold"
-            : "bg-indigo-50 border border-indigo-200 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/40 dark:text-indigo-300 font-semibold"
-          : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] hover:bg-slate-200/80 dark:hover:bg-[#202430] border border-transparent"
+            ? "bg-indigo-600 text-white border border-indigo-600"
+            : "bg-indigo-50 border border-indigo-200 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/40 dark:text-indigo-300"
+          : "text-slate-500 dark:text-[#8e95a5] hover:text-slate-700 dark:hover:text-[#e2e4ea] border border-slate-200 dark:border-[#272b38] hover:border-slate-300 dark:hover:border-[#3b4254] bg-transparent"
         }`}
     >
       {children}
@@ -237,6 +237,7 @@ export function WorkflowSimulator({
   const containerRef = useRef<HTMLDivElement>(null)
 
   const [compareMode, setCompareMode] = useState<"side-by-side" | "overlay" | "difference">("side-by-side")
+  const [mobileComparePane, setMobileComparePane] = useState<"both" | "design" | "live">("both")
   const [overlayOpacity, setOverlayOpacity] = useState<number>(50)
 
   // Viewport / device state
@@ -1394,63 +1395,82 @@ export function WorkflowSimulator({
     <div className="flex flex-col h-full w-full bg-slate-100 dark:bg-[#0b0c10] text-slate-800 dark:text-[#e2e4ea] select-none font-sans overflow-hidden transition-colors duration-150 relative">
       {/* ================= TOP HEADER: identity + primary mode switch only (Hidden in Fullscreen) ================= */}
       {!isFullscreen && (
-        <header className="h-14 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-4 flex items-center justify-between gap-3 z-20 shrink-0 transition-colors">
-        <div className="flex items-center gap-2 text-xs min-w-0">
-          <span className="text-slate-500 dark:text-[#8e95a5] font-medium shrink-0">Design</span>
-          <select
-            value={activeWorkflowId}
-            onChange={(e) => handleSelectWorkflow(e.target.value)}
-            className="bg-slate-50 dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1.5 text-xs text-slate-800 dark:text-[#d1d5db] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 font-medium cursor-pointer max-w-[220px] truncate shadow-xs transition-colors"
-          >
-            {workflows.map((wf, idx) => (
-              <option key={wf.id} value={wf.id}>
-                Screen {idx + 1}: {wf.title} {wf.clientTaskDone ? "✓" : ""}
-              </option>
-            ))}
-          </select>
+        <header className="min-h-12 h-auto border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 z-20 shrink-0 transition-colors overflow-visible">
+        
+        {/* Left: workflow selector and navigation - Hidden on mobile */}
+        <div className="hidden md:flex items-center gap-1.5 sm:gap-2 order-0 shrink-0">
+          {/* Back to dashboard button */}
+          {onNavigateView && (
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && onNavigateView) {
+                  onNavigateView("dashboard")
+                }
+              }}
+              className="p-1.5 rounded-lg text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+              title="Back to dashboard"
+              aria-label="Back to dashboard"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
 
-          {/* Info Button */}
-          <button
-            type="button"
-            onClick={() => setShowInfoModal(true)}
-            title="Screen Info: Notes & Reason"
-            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border border-slate-300 dark:border-[#272b38] hover:border-indigo-500/50 text-slate-700 dark:text-[#d1d5db] hover:text-slate-900 dark:hover:text-white font-medium transition-colors cursor-pointer shrink-0 shadow-xs"
-          >
-            <span>Info</span>
-            {(currentWorkflow?.ourNotes || currentWorkflow?.reason) && (
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400" title="Notes or Reason available" />
-            )}
-          </button>
+          {/* Workflow selector dropdown */}
+          <div className="relative">
+            <select
+              value={activeWorkflowId}
+              onChange={(e) => handleSelectWorkflow(e.target.value)}
+              className="appearance-none bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-3 py-1.5 pr-8 text-xs sm:text-sm font-medium text-slate-800 dark:text-[#d1d5db] cursor-pointer hover:bg-slate-50 dark:hover:bg-[#202430] transition shadow-xs max-w-[140px] sm:max-w-[200px]"
+              aria-label="Select workflow"
+            >
+              {workflows.map((wf, idx) => (
+                <option key={wf.id} value={wf.id}>
+                  {wf.title || `Screen ${idx + 1}`}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 dark:text-[#6b7280] pointer-events-none" />
+          </div>
 
-          {/* Prev / Next Screen navigation arrows */}
-          <div className="flex items-center gap-0.5 shrink-0 bg-slate-50 dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md p-0.5 shadow-xs transition-colors">
+          {/* Workflow navigation arrows - Hidden on mobile */}
+          <div className="hidden sm:flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md overflow-hidden shadow-xs">
             <button
               type="button"
               onClick={handlePrevWorkflow}
-              disabled={currentWorkflowIndex <= 0}
-              title="Previous screen (←)"
-              aria-label="Previous screen"
-              className="p-1 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] hover:bg-slate-200/80 dark:hover:bg-[#202430] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:cursor-not-allowed transition-colors"
+              disabled={currentWorkflowIndex === 0}
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Previous workflow"
+              aria-label="Previous workflow"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
+            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
             <button
               type="button"
               onClick={handleNextWorkflow}
               disabled={currentWorkflowIndex >= workflows.length - 1}
-              title="Next screen (→)"
-              aria-label="Next screen"
-              className="p-1 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] hover:bg-slate-200/80 dark:hover:bg-[#202430] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:cursor-not-allowed transition-colors"
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Next workflow"
+              aria-label="Next workflow"
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Theme toggle - Hidden on mobile */}
+          {onToggleTheme && (
+            <div className="hidden sm:block">
+              <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            </div>
+          )}
         </div>
 
         {/* Center: primary comparison mode */}
-        <div className="flex items-center bg-slate-100 dark:bg-[#181a22] p-1 rounded-lg border border-slate-300 dark:border-[#272b38] gap-1 shrink-0 transition-colors" role="tablist" aria-label="Comparison mode">
+        <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-0.5 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
           <ToolbarButton active={compareMode === "side-by-side"} onClick={() => setCompareMode("side-by-side")} title="Compare designs side by side" variant="primary">
-            Side by Side
+            <span className="sm:hidden">Side</span>
+            <span className="hidden sm:inline">Side by Side</span>
           </ToolbarButton>
           <ToolbarButton
             active={compareMode === "overlay"}
@@ -1472,30 +1492,78 @@ export function WorkflowSimulator({
             title="Highlight pixel differences"
             variant="primary"
           >
-            Difference
+            <span className="sm:hidden">Diff</span>
+            <span className="hidden sm:inline">Difference</span>
           </ToolbarButton>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Enable Frame toggle with checkbox */}
-          <label
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showDeviceFrame
-                ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-600/20 dark:border-indigo-500/60 dark:text-indigo-300 ring-1 ring-indigo-500/20"
-                : "bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] shadow-xs"
-              }`}
-            title="Enable or disable phone device frame"
-          >
-            <input
-              type="checkbox"
-              checked={showDeviceFrame}
-              onChange={(e) => setShowDeviceFrame(e.target.checked)}
-              className="w-3.5 h-3.5 rounded accent-indigo-600 cursor-pointer border-slate-300 dark:border-[#272b38] bg-white dark:bg-[#0d0e14]"
-              aria-label="Toggle enable frame"
-            />
-            <span>Enable Frame: {showDeviceFrame ? "Yes" : "No"}</span>
-          </label>
-
-          {/* Live View vs App Screenshot Switch (Side-by-side with Enable Frame) */}
+          
+          {/* Browser Navigation & Mode Toggle */}
+          <div className="flex items-center gap-0.5 bg-transparent">
+            {/* Back Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (navIndex > 0) handleGoBack()
+              }}
+              disabled={navIndex === 0}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Back"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Forward Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (navIndex < navHistory.length - 1) handleGoForward()
+              }}
+              disabled={navIndex >= navHistory.length - 1}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Forward"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Reload Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (iframeRef.current) {
+                  iframeRef.current.src = currentUrl
+                }
+              }}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Reload"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Mode Toggle: Screenshot/URL */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isLiveCanvas
+                setIsLiveCanvas(next)
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("simulator_is_live_mode", String(next))
+                }
+                triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+              }}
+              className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
+                  ? "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
+                  : "text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                }`}
+              title={isLiveCanvas ? "Switch to Screenshot view" : "Switch to Live URL view"}
+            >
+              {isLiveCanvas ? (
+                <Globe className="w-3.5 h-3.5" />
+              ) : (
+                <Camera className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+          
+          {/* Live/Screenshot Toggle Icon */}
           <button
             type="button"
             onClick={() => {
@@ -1504,21 +1572,94 @@ export function WorkflowSimulator({
               if (typeof window !== "undefined") {
                 localStorage.setItem("simulator_is_live_mode", String(next))
               }
-              triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
+              triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
             }}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition cursor-pointer select-none shadow-xs ${isLiveCanvas
-                ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
-                : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
+            className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
+                ? "text-purple-600 dark:text-purple-400"
+                : "text-emerald-600 dark:text-emerald-400"
               }`}
             title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
           >
-            <Globe className="w-3.5 h-3.5" />
-            <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
+            <Sparkles className="w-3.5 h-3.5" />
           </button>
+        </div>
+
+        <div className="hidden md:flex w-full sm:w-auto items-center justify-start sm:justify-end gap-1.5 sm:gap-2 shrink-0 order-2 ml-0 sm:ml-auto flex-wrap">
+
+          {/* Browser Navigation & Mode Toggle - With Border */}
+          <div className="flex items-center gap-0.5 bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-lg p-0.5 shadow-xs transition-colors">
+            {/* Back Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (navIndex > 0) handleGoBack()
+              }}
+              disabled={navIndex === 0}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Back"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            
+            {/* Forward Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (navIndex < navHistory.length - 1) handleGoForward()
+              }}
+              disabled={navIndex >= navHistory.length - 1}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Forward"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+            
+            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
+            
+            {/* Reload Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (iframeRef.current) {
+                  iframeRef.current.src = currentUrl
+                }
+              }}
+              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
+              title="Reload"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            
+            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
+            
+            {/* Mode Toggle: Screenshot/URL */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isLiveCanvas
+                setIsLiveCanvas(next)
+                if (typeof window !== "undefined") {
+                  localStorage.setItem("simulator_is_live_mode", String(next))
+                }
+                triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+              }}
+              className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
+                  ? "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
+                  : "text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                }`}
+              title={isLiveCanvas ? "Switch to Screenshot view" : "Switch to Live URL view"}
+            >
+              {isLiveCanvas ? (
+                <Globe className="w-3.5 h-3.5" />
+              ) : (
+                <Camera className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
 
           {/* Options toggle with checkbox */}
           <label
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showOptions
+            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showOptions
                 ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-600/20 dark:border-indigo-500/60 dark:text-indigo-300 ring-1 ring-indigo-500/20"
                 : "bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] shadow-xs"
               }`}
@@ -1550,14 +1691,14 @@ export function WorkflowSimulator({
               }
             }}
             disabled={isCapturing || isSavingScreenshot}
-            className={`px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${isAreaSelectionActive
+            className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${isAreaSelectionActive
                 ? "bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400 shadow-emerald-500/20"
                 : "bg-indigo-600 hover:bg-indigo-500"
               }`}
             title={isAreaSelectionActive ? "Capture the selected area from live screen" : "Capture full app screen (clean, full height including bottom navigation)"}
           >
             <Camera className="w-3.5 h-3.5" />
-            <span>{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}</span>
+            <span className="hidden md:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}</span>
           </button>
 
           {/* Upload exact screenshot button (icon only beside capture) */}
@@ -1597,10 +1738,10 @@ export function WorkflowSimulator({
 
       {/* ================= OPTIONS PANEL: all secondary controls live here now (Hidden in Fullscreen) ================= */}
       {!isFullscreen && showOptions && (
-        <div className="border-b border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#14161f] px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs z-20 shrink-0 transition-colors animate-in slide-in-from-top-2 duration-150">
+        <div className="border-b border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#14161f] px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-nowrap sm:flex-wrap items-center gap-x-2 sm:gap-x-5 gap-y-1 text-xs z-20 shrink-0 transition-colors overflow-x-auto sm:overflow-visible custom-scrollbar">
           {/* Device preset */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-600 dark:text-[#8e95a5] text-[11px] font-medium">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="hidden sm:inline text-slate-600 dark:text-[#8e95a5] text-[11px] font-medium">
               Device
             </span>
             <select
@@ -1614,7 +1755,7 @@ export function WorkflowSimulator({
                   if (p) handlePresetSelect(p)
                 }
               }}
-              className="bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1 text-xs text-slate-800 dark:text-[#d1d5db] font-medium cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 max-w-[260px] shadow-xs transition-colors"
+              className="bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs text-slate-800 dark:text-[#d1d5db] font-medium cursor-pointer max-w-[220px] sm:max-w-[260px] shadow-xs transition-colors"
             >
               {(
                 [
@@ -1755,17 +1896,6 @@ export function WorkflowSimulator({
             Redlines
           </button>
 
-          {/* Server Snapshot option */}
-          <button
-            type="button"
-            onClick={() => handleCaptureLiveFrame()}
-            disabled={isCapturing}
-            className="px-2.5 py-1 rounded border border-slate-300 dark:border-[#272b38] bg-white dark:bg-[#1b1e29] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white transition text-[11px] font-medium cursor-pointer"
-            title="Optional server render snapshot via headless browser"
-          >
-            Server URL Snapshot
-          </button>
-
           {/* Snip Area Selection Toggle */}
           <button
             type="button"
@@ -1782,48 +1912,6 @@ export function WorkflowSimulator({
             <Crop className="w-3.5 h-3.5" />
             <span>{isAreaSelectionActive ? "Disable Selection" : "Selection Area"}</span>
           </button>
-
-          {/* Capture Mode Toggle: Clean App vs Framed */}
-          <div className="flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md p-0.5 shadow-xs transition-colors">
-            <span className="text-slate-500 dark:text-[#8e95a5] text-[11px] font-medium px-1.5">Capture:</span>
-            <button
-              type="button"
-              onClick={() => setCaptureMode("clean-app")}
-              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${captureMode === "clean-app"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                }`}
-              title="Capture clean web app screen (recommended: matches Figma spec, full screen including bottom navigation)"
-            >
-              Clean App
-            </button>
-            <button
-              type="button"
-              onClick={() => setCaptureMode("framed-device")}
-              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${captureMode === "framed-device"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                }`}
-              title="Include device frame/status bar in capture"
-            >
-              With Frame
-            </button>
-          </div>
-
-          {/* Debug Mode Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsDebugMode(!isDebugMode)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${isDebugMode
-                ? "bg-orange-600 border-orange-500 text-white shadow-xs"
-                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
-              }`}
-            title="Toggle debug mode for detailed logging"
-          >
-            <AlertCircle className="w-3.5 h-3.5" />
-            <span>Debug</span>
-          </button>
-
 
           {compareMode !== "side-by-side" && (
             <div className="flex items-center gap-2 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1 shadow-xs transition-colors">
@@ -1852,8 +1940,8 @@ export function WorkflowSimulator({
           <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
             {/* PANEL A: FIGMA SPEC */}
             <section
-              style={{ width: `${splitRatio}%` }}
-              className="h-full relative flex flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors"
+              style={{ width: mobileComparePane === "design" ? "100%" : `${splitRatio}%` }}
+              className={`${mobileComparePane === "live" ? "hidden sm:flex" : "flex"} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
             >
               <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1861,8 +1949,12 @@ export function WorkflowSimulator({
                   {onNavigateView && (
                     <button
                       type="button"
-                      onClick={() => onNavigateView("dashboard")}
-                      className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
+                      onClick={() => {
+                        if (typeof window !== "undefined" && onNavigateView) {
+                          onNavigateView("dashboard")
+                        }
+                      }}
+                        className="hidden sm:block p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
                       title="Return to Dashboard"
                     >
                       <FolderKanban className="w-3.5 h-3.5" />
@@ -1904,7 +1996,7 @@ export function WorkflowSimulator({
                       type="button"
                       onClick={handleDuplicateScreen}
                       disabled={isDuplicating}
-                      className="px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 flex items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                      className="hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
                       title="Duplicate this screen"
                     >
                       <CopyPlus className="w-3 h-3 text-purple-600 dark:text-purple-400" />
@@ -1917,7 +2009,7 @@ export function WorkflowSimulator({
                     <button
                       type="button"
                       onClick={handleCopyFigmaImage}
-                      className="p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white flex items-center transition cursor-pointer shadow-xs shrink-0"
+                      className="hidden sm:flex p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white items-center transition cursor-pointer shadow-xs shrink-0"
                       title="Copy Figma spec image to clipboard"
                     >
                       {copiedFigma ? (
@@ -1928,63 +2020,60 @@ export function WorkflowSimulator({
                     </button>
                   )}
 
-                  {/* Fullscreen-only controls (hidden in normal mode to prevent duplicate redundant buttons with top header) */}
+                  <div className="hidden sm:block h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
+
+                  {/* Enable Frame Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowDeviceFrame(!showDeviceFrame)}
+                    className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                      showDeviceFrame
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                        : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
+                    }`}
+                    title="Toggle phone device frame"
+                  >
+                    <Smartphone className="w-3 h-3" />
+                    <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
+                  </button>
+
+                  {/* Live Screen Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isLiveCanvas
+                      setIsLiveCanvas(next)
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("simulator_is_live_mode", String(next))
+                      }
+                      triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
+                    }}
+                    className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                      isLiveCanvas
+                        ? "bg-purple-600 text-white border-purple-500 shadow-xs"
+                        : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
+                    }`}
+                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
+                  >
+                    <Globe className="w-3 h-3" />
+                    <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
+                  </button>
+
+                  {/* Capture button in Panel A shows only in fullscreen mode (main header has capture in normal mode) */}
                   {isFullscreen && (
-                    <>
-                      <div className="h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
-
-                      {/* Enable Frame Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => setShowDeviceFrame(!showDeviceFrame)}
-                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                          showDeviceFrame
-                            ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
-                            : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
-                        }`}
-                        title="Toggle phone device frame"
-                      >
-                        <Smartphone className="w-3 h-3" />
-                        <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
-                      </button>
-
-                      {/* Live Screen Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = !isLiveCanvas
-                          setIsLiveCanvas(next)
-                          if (typeof window !== "undefined") {
-                            localStorage.setItem("simulator_is_live_mode", String(next))
-                          }
-                          triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
-                        }}
-                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                          isLiveCanvas
-                            ? "bg-purple-600 text-white border-purple-500 shadow-xs"
-                            : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
-                        }`}
-                        title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
-                      >
-                        <Globe className="w-3 h-3" />
-                        <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
-                      </button>
-
-                      {/* Capture App Screen Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleLiveScreenCapture(false)}
-                        disabled={isCapturing || isSavingScreenshot}
-                        className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                        title="Capture App Screen"
-                      >
-                        <Camera className="w-3 h-3" />
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={() => handleLiveScreenCapture(false)}
+                      disabled={isCapturing || isSavingScreenshot}
+                      className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                      title="Capture App Screen"
+                    >
+                      <Camera className="w-3 h-3" />
+                    </button>
                   )}
                 </div>
 
-                <div className="font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
+                <div className="hidden sm:block font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
                   {viewportWidth}×{viewportHeight}px
                 </div>
               </div>
@@ -2039,11 +2128,14 @@ export function WorkflowSimulator({
             </div>
 
             {/* PANEL B: LIVE INTERACTIVE BROWSER */}
-            <section style={{ width: `${100 - splitRatio}%` }} className="h-full relative flex flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors">
+            <section
+              style={{ width: mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
+              className={`${mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
+            >
               {/* Sleek Browser Toolbar */}
-              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors">
+              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors overflow-x-auto custom-scrollbar">
                 {/* Navigation Buttons */}
-                <div className="flex items-center gap-0.5">
+                <div className="hidden sm:flex items-center gap-0.5">
                   <button
                     type="button"
                     onClick={handleGoBack}
@@ -2079,7 +2171,7 @@ export function WorkflowSimulator({
                 </div>
 
                 {/* Address Bar Container */}
-                <div className="flex-1 flex items-center bg-slate-50 dark:bg-[#090a0f] border border-slate-300 dark:border-[#222736] focus-within:border-indigo-500 rounded px-2 py-0.5 text-xs transition shadow-xs">
+                <div className="flex-1 min-w-[120px] flex items-center bg-slate-50 dark:bg-[#090a0f] border border-slate-300 dark:border-[#222736] focus-within:border-indigo-500 rounded px-2 py-0.5 text-xs transition shadow-xs">
                   <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400 mr-1.5 shrink-0" />
                   <input
                     type="text"
@@ -2130,7 +2222,7 @@ export function WorkflowSimulator({
                   href={currentUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="p-1 text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer"
+                  className="hidden sm:block p-1 text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer"
                   title="Open live URL in new tab"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
@@ -2140,7 +2232,7 @@ export function WorkflowSimulator({
                 <button
                   type="button"
                   onClick={() => setIsAuthModalOpen(true)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1 transition cursor-pointer shrink-0 ${authConfig.username || authConfig.cookie || authConfig.token
+                  className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-medium border items-center gap-1 transition cursor-pointer shrink-0 ${authConfig.username || authConfig.cookie || authConfig.token
                       ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
                       : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
                     }`}
@@ -2151,27 +2243,6 @@ export function WorkflowSimulator({
                   {(authConfig.username || authConfig.cookie || authConfig.token) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   )}
-                </button>
-
-                {/* Live View vs App Screenshot Switch */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isLiveCanvas
-                    setIsLiveCanvas(next)
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem("simulator_is_live_mode", String(next))
-                    }
-                    triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
-                  }}
-                  className={`px-2.5 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1.5 transition cursor-pointer shrink-0 ${isLiveCanvas
-                      ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60"
-                      : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/70"
-                    }`}
-                  title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
-                >
-                  <Sparkles className="w-3 h-3" />
-                  <span>{isLiveCanvas ? "Live Iframe" : "App Screenshot"}</span>
                 </button>
               </div>
 
