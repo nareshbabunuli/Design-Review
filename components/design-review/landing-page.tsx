@@ -327,12 +327,6 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
 
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
             <a
-              href="#simulator"
-              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
-            >
-              Simulator
-            </a>
-            <a
               href="#features"
               className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
             >
@@ -477,89 +471,6 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
         </Reveal>
       </section>
 
-      {/* ─── REAL APPLICATION SCREENSHOTS GALLERY ─── */}
-      <section id="simulator" className="py-28 px-6 relative z-10 border-t border-slate-200/40 dark:border-white/5 bg-slate-50/40 dark:bg-white/[0.01]">
-        <div className="mx-auto max-w-6xl">
-          <Reveal direction="up">
-            <div className="text-center mb-16">
-              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-4 shadow-sm">
-                <Eye className="h-3.5 w-3.5 text-[#0071e3]" />
-                Actual Interface Screenshots
-              </div>
-              <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
-                See the app in action
-              </h2>
-              <p className="text-slate-500 dark:text-slate-400 max-w-2xl mx-auto text-base sm:text-lg">
-                Explore each real view: live device simulator, workflow spec comparison, developer notes, and client sign-offs.
-              </p>
-            </div>
-          </Reveal>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {PRODUCT_PREVIEWS.map((item, i) => {
-              const Icon = item.icon
-              return (
-                <Reveal key={item.id} delay={i * 100} direction="up">
-                  <div className="group flex flex-col p-6 rounded-[24px] glass-panel transition-all duration-500 hover:shadow-xl hover:-translate-y-1">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 dark:bg-white/5 text-[#0071e3] shadow-inner">
-                          <Icon className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-semibold tracking-tight">{item.title}</h3>
-                          <span className="text-xs text-slate-400 font-medium">{item.badge}</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLightboxImg({
-                            src: item.src,
-                            title: item.title,
-                            desc: item.description,
-                          })
-                        }
-                        className="text-xs text-[#0071e3] font-medium flex items-center gap-1 hover:underline cursor-pointer"
-                      >
-                        <span>Enlarge</span>
-                        <Maximize2 className="h-3 w-3" />
-                      </button>
-                    </div>
-
-                    <div
-                      onClick={() =>
-                        setLightboxImg({
-                          src: item.src,
-                          title: item.title,
-                          desc: item.description,
-                        })
-                      }
-                      className="relative rounded-2xl overflow-hidden border border-slate-200/60 dark:border-white/10 aspect-[16/10] bg-slate-950 cursor-pointer shadow-inner"
-                    >
-                      <img
-                        src={item.src}
-                        alt={item.title}
-                        className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
-                      />
-                      <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-md">
-                          <Maximize2 className="h-3 w-3" /> Click to enlarge
-                        </span>
-                      </div>
-                    </div>
-
-                    <p className="mt-4 text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
-                      {item.description}
-                    </p>
-                  </div>
-                </Reveal>
-              )
-            })}
-          </div>
-        </div>
-      </section>
-
       {/* ─── FEATURES ─── */}
       <section id="features" className="py-28 px-6 relative z-10">
         <div className="mx-auto max-w-6xl">
@@ -669,7 +580,12 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
             >
               GitHub
             </a>
-            <a href="#simulator" className="hover:text-slate-900 dark:hover:text-white transition-colors duration-300">
+            <a
+              href="https://github.com/nareshbabunuli/Design-Review"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-slate-900 dark:hover:text-white transition-colors duration-300"
+            >
               License (MIT)
             </a>
           </div>
