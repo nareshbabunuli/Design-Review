@@ -1,33 +1,22 @@
 "use client"
 
-import React, { useEffect, useRef, useState } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import {
   FolderKanban,
   ArrowRight,
   Layers,
   Share2,
   MessageSquare,
-  FileText,
   Eye,
   CheckCircle,
   Users,
   Sparkles,
-  Zap,
-  Shield,
-  Star,
-  Play,
-  ChevronDown,
-  Lock,
-  Code2,
-  Globe,
   Smartphone,
-  Monitor,
-  Laptop,
-  Send,
+  Moon,
+  Sun,
   Maximize2,
   X,
 } from "lucide-react"
-import { ThemeToggle } from "./theme-toggle"
 
 function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -41,164 +30,243 @@ function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
   )
 }
 
-interface LandingPageProps {
-  onGetStarted: () => void
-  theme?: "light" | "dark"
-  onToggleTheme?: () => void
+function useIntersectionObserver(options = { threshold: 0.1, triggerOnce: true }) {
+  const [isVisible, setIsVisible] = useState(false)
+  const domRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true)
+          if (options.triggerOnce && domRef.current) {
+            observer.unobserve(domRef.current)
+          }
+        } else if (!options.triggerOnce) {
+          setIsVisible(false)
+        }
+      })
+    }, options)
+
+    const currentRef = domRef.current
+    if (currentRef) observer.observe(currentRef)
+
+    return () => {
+      if (currentRef) observer.unobserve(currentRef)
+    }
+  }, [options.threshold, options.triggerOnce])
+
+  return [domRef, isVisible] as const
 }
 
-const PRODUCT_PREVIEWS = [
+const Reveal = ({
+  children,
+  className = "",
+  delay = 0,
+  direction = "up",
+}: {
+  children: React.ReactNode
+  className?: string
+  delay?: number
+  direction?: "up" | "down" | "left" | "right"
+}) => {
+  const [ref, isVisible] = useIntersectionObserver()
+
+  const getDirectionClass = () => {
+    if (direction === "up") return "translate-y-8"
+    if (direction === "down") return "-translate-y-8"
+    if (direction === "left") return "translate-x-8"
+    if (direction === "right") return "-translate-x-8"
+    return "translate-y-4"
+  }
+
+  return (
+    <div
+      ref={ref}
+      style={{ transitionDelay: `${delay}ms` }}
+      className={`transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        isVisible ? "opacity-100 translate-y-0 translate-x-0" : `opacity-0 ${getDirectionClass()}`
+      } ${className}`}
+    >
+      {children}
+    </div>
+  )
+}
+
+export const PRODUCT_PREVIEWS = [
   {
     id: "simulator",
     title: "Device Simulator",
     badge: "Figma vs Live Frame",
     url: "designhub.app/simulator",
     src: "/screenshots/simulator-preview.png",
-    alt: "Device simulator with live URL on phone frame side-by-side with Figma spec",
-    description: "Run live web URLs in responsive device frames side-by-side with your Figma design specs. Includes Side-by-Side, Overlay, and Difference modes.",
+    description: "Run live web URLs in responsive device frames side-by-side with your Figma design specs.",
     icon: Smartphone,
-    color: "blue",
   },
   {
     id: "editor",
     title: "Workflow Editor",
-    badge: "Figma & App Screenshots",
-    url: "designhub.app/editor/screen-1",
+    badge: "Screens & Spec Notes",
+    url: "designhub.app/editor",
     src: "/screenshots/editor-preview.png",
-    alt: "Workflow editor showing Figma design upload, app screenshot, developer notes, and client message",
-    description: "Upload Figma exports, paste app screenshots, provide developer notes, and manage screen approval states.",
+    description: "Upload Figma exports, paste app screenshots, provide developer notes, and manage screen states.",
     icon: Layers,
-    color: "purple",
   },
   {
     id: "revisions",
     title: "Notes & Revisions",
-    badge: "Developer Explanations",
+    badge: "Direct Feedback",
     url: "designhub.app/revisions",
     src: "/screenshots/revisions-preview.png",
-    alt: "Developer notes and mandatory revision explanation for client feedback",
-    description: "Submit developer notes, read client feedback, and document mandatory reasons for final revisions.",
+    description: "Submit developer notes, read client feedback, and document reasons for final revisions.",
     icon: MessageSquare,
-    color: "amber",
   },
   {
     id: "dashboard",
     title: "Project Dashboard",
-    badge: "Multi-Project Management",
+    badge: "Multi-Project Hub",
     url: "designhub.app/dashboard",
     src: "/screenshots/dashboard-preview.png",
-    alt: "Project dashboard showing active projects and access control",
     description: "Organize client projects, track completion progress, manage team access, and launch presentation reports.",
     icon: FolderKanban,
-    color: "emerald",
   },
 ]
 
 const FEATURES = [
   {
     icon: Smartphone,
-    color: "blue",
-    title: "Interactive Device Simulator",
-    description:
-      "Test live URLs & responsive screens inside Phone, Tablet, and Desktop frames side-by-side with your Figma specs.",
+    title: "Interactive Simulator",
+    description: "Test live URLs inside Phone, Tablet, and Desktop frames side-by-side with Figma specs.",
   },
   {
     icon: Users,
-    color: "purple",
-    title: "Developer & Client Collaboration",
-    description:
-      "Developers add designs, simulator previews, and developer notes. Clients inspect, test, and provide direct feedback.",
+    title: "Client Collaboration",
+    description: "Developers add designs and notes. Clients inspect, test, and provide direct feedback.",
   },
   {
     icon: MessageSquare,
-    color: "violet",
-    title: "Client Feedback & Notes",
-    description:
-      "Structured client messages and developer notes right on the screen. No endless email threads or lost comments.",
+    title: "Structured Notes",
+    description: "Client messages and developer notes right on the screen. No endless email threads.",
   },
   {
     icon: Eye,
-    color: "cyan",
-    title: "Side-by-Side Spec Comparison",
-    description:
-      "Compare Figma designs directly against live app frames or screenshots with Side-by-Side, Overlay, and Difference modes.",
+    title: "Spec Comparison",
+    description: "Compare Figma designs directly against live app frames with Difference modes.",
   },
   {
     icon: CheckCircle,
-    color: "emerald",
-    title: "1-Click Accept & Verify",
-    description:
-      "Clients verify and approve workflows with a single click. Track completed screens and export presentation reports.",
+    title: "1-Click Sign-off",
+    description: "Clients verify and approve workflows with a single click. Export presentation reports.",
   },
   {
     icon: Share2,
-    color: "indigo",
-    title: "Zero-Friction Client Sharing",
-    description:
-      "Generate secure invite links with custom view, comment, or edit permissions. No client login required.",
+    title: "Frictionless Sharing",
+    description: "Generate secure invite links with custom view or edit permissions. No login required.",
   },
 ]
 
 const STEPS = [
-  {
-    step: "01",
-    title: "Import Designs & Live URLs",
-    description:
-      "Upload Figma designs, app screenshots, and set live app URLs to preview inside responsive simulator frames.",
-    icon: Smartphone,
-    color: "blue",
-  },
-  {
-    step: "02",
-    title: "Add Developer Notes",
-    description:
-      "Detail design structure, technical constraints, and revision reasons so clients understand every change.",
-    icon: Layers,
-    color: "purple",
-  },
-  {
-    step: "03",
-    title: "Share With Your Client",
-    description:
-      "Generate a secure link. Clients test the live simulator frame, leave feedback messages, and review notes.",
-    icon: MessageSquare,
-    color: "violet",
-  },
-  {
-    step: "04",
-    title: "Accept & Verify",
-    description:
-      "Clients approve workflows with 1-click verification. Track completed tasks and export polished reports.",
-    icon: CheckCircle,
-    color: "emerald",
-  },
+  { step: "1", title: "Import Designs", description: "Upload Figma designs and set live app URLs." },
+  { step: "2", title: "Add Context", description: "Detail technical constraints and design structure." },
+  { step: "3", title: "Share Link", description: "Clients test the live simulator and leave feedback." },
+  { step: "4", title: "Get Approved", description: "Clients approve workflows with 1-click verification." },
 ]
 
-const colorMap: Record<string, string> = {
-  blue: "from-blue-500 to-blue-600 shadow-blue-500/30",
-  purple: "from-purple-500 to-purple-600 shadow-purple-500/30",
-  violet: "from-violet-500 to-violet-600 shadow-violet-500/30",
-  indigo: "from-indigo-500 to-indigo-600 shadow-indigo-500/30",
-  cyan: "from-cyan-500 to-cyan-600 shadow-cyan-500/30",
-  emerald: "from-emerald-500 to-emerald-600 shadow-emerald-500/30",
-  amber: "from-amber-500 to-amber-600 shadow-amber-500/30",
+const PrimaryButton = ({
+  children,
+  onClick,
+  className = "",
+  icon: Icon,
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  className?: string
+  icon?: React.ComponentType<{ className?: string }>
+}) => (
+  <button
+    onClick={onClick}
+    className={`group relative flex items-center justify-center gap-2 rounded-full bg-[#1d1d1f] dark:bg-[#f5f5f7] px-6 py-3.5 text-sm font-medium text-white dark:text-[#1d1d1f] shadow-lg transition-all duration-300 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] overflow-hidden cursor-pointer ${className}`}
+  >
+    <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 dark:via-black/10 to-transparent group-hover:animate-shimmer transition-transform" />
+    {Icon && <Icon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />}
+    <span className="relative z-10">{children}</span>
+  </button>
+)
+
+const SecondaryButton = ({
+  children,
+  onClick,
+  className = "",
+  icon: Icon,
+  href,
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  className?: string
+  icon?: React.ComponentType<{ className?: string }>
+  href?: string
+}) => {
+  const baseClass = `group relative flex items-center justify-center gap-2 rounded-full bg-white dark:bg-[#1c1c1e] border border-slate-200 dark:border-white/10 px-6 py-3.5 text-sm font-medium text-slate-800 dark:text-white shadow-sm transition-all duration-300 hover:bg-slate-50 dark:hover:bg-[#2c2c2e] hover:shadow-md active:scale-[0.98] cursor-pointer ${className}`
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className={baseClass}>
+        {Icon && <Icon className="h-4 w-4 transition-transform group-hover:scale-110" />}
+        <span className="relative z-10">{children}</span>
+      </a>
+    )
+  }
+  return (
+    <button onClick={onClick} className={baseClass}>
+      {Icon && <Icon className="h-4 w-4 transition-transform group-hover:scale-110" />}
+      <span className="relative z-10">{children}</span>
+    </button>
+  )
 }
 
-const bgPillMap: Record<string, string> = {
-  blue: "bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300",
-  purple: "bg-purple-100 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300",
-  violet: "bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300",
-  indigo: "bg-indigo-100 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300",
-  cyan: "bg-cyan-100 dark:bg-cyan-950/50 text-cyan-700 dark:text-cyan-300",
-  emerald: "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300",
-  amber: "bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300",
+const SegmentedControl = ({
+  tabs,
+  activeId,
+  onChange,
+}: {
+  tabs: typeof PRODUCT_PREVIEWS
+  activeId: string
+  onChange: (id: string) => void
+}) => (
+  <div className="flex w-fit items-center gap-1 rounded-full bg-slate-100/80 dark:bg-white/5 p-1 backdrop-blur-md shadow-inner border border-slate-200/50 dark:border-white/5 overflow-x-auto no-scrollbar">
+    {tabs.map((tab) => {
+      const active = activeId === tab.id
+      const Icon = tab.icon
+      return (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onChange(tab.id)}
+          className={`relative flex items-center gap-2 rounded-full px-4 sm:px-5 py-2 text-xs sm:text-sm font-medium transition-all duration-500 ease-out whitespace-nowrap cursor-pointer ${
+            active
+              ? "text-slate-900 dark:text-white shadow-sm bg-white dark:bg-white/10 border border-slate-200/50 dark:border-white/10 scale-100"
+              : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border border-transparent scale-95 hover:scale-100"
+          }`}
+        >
+          {Icon && <Icon className={`h-4 w-4 transition-colors duration-300 ${active ? "text-[#0071e3]" : ""}`} />}
+          <span className="relative z-10">{tab.title}</span>
+        </button>
+      )
+    })}
+  </div>
+)
+
+interface LandingPageProps {
+  onGetStarted: () => void
+  theme?: "light" | "dark"
+  onToggleTheme?: () => void
 }
 
-export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: LandingPageProps) {
+export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: LandingPageProps) {
   const [scrolled, setScrolled] = useState(false)
-  const [previewTab, setPreviewTab] = useState<string>("simulator")
+  const [previewTab, setPreviewTab] = useState("simulator")
+  const [activeImage, setActiveImage] = useState(PRODUCT_PREVIEWS[0].src)
+  const [isImageTransitioning, setIsImageTransitioning] = useState(false)
   const [lightboxImg, setLightboxImg] = useState<{ src: string; title: string; desc?: string } | null>(null)
-  const heroRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
@@ -206,284 +274,241 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
     return () => window.removeEventListener("scroll", onScroll)
   }, [])
 
-  return (
-    <div className="min-h-screen bg-white dark:bg-[#0a0a0f] text-slate-900 dark:text-white overflow-x-hidden overflow-y-auto transition-colors duration-300">
+  // Smooth crossfade for image swapping
+  const handleTabChange = (id: string) => {
+    if (id === previewTab) return
+    setIsImageTransitioning(true)
+    setPreviewTab(id)
+    setTimeout(() => {
+      const newImage = PRODUCT_PREVIEWS.find((p) => p.id === id)?.src || PRODUCT_PREVIEWS[0].src
+      setActiveImage(newImage)
+      setIsImageTransitioning(false)
+    }, 250)
+  }
 
-      {/* Ambient background blobs */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
-        <div className="absolute -top-40 -left-40 h-[600px] w-[600px] rounded-full bg-blue-500/10 dark:bg-blue-500/5 blur-[120px]" />
-        <div className="absolute top-1/3 -right-40 h-[500px] w-[500px] rounded-full bg-purple-500/10 dark:bg-purple-500/5 blur-[120px]" />
-        <div className="absolute bottom-0 left-1/3 h-[400px] w-[400px] rounded-full bg-violet-500/10 dark:bg-violet-500/5 blur-[120px]" />
+  const currentPreview = PRODUCT_PREVIEWS.find((p) => p.id === previewTab) || PRODUCT_PREVIEWS[0]
+
+  return (
+    <div className="relative font-sans text-slate-900 dark:text-white min-h-screen bg-[#fbfbfd] dark:bg-[#000000] overflow-x-hidden transition-colors duration-500 ease-in-out">
+      {/* Background Animated Blobs */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-[#0071e3]/10 dark:bg-[#0071e3]/20 blur-[100px] animate-blob" />
+        <div
+          className="absolute top-[20%] right-[-10%] w-[40%] h-[60%] rounded-full bg-purple-500/5 dark:bg-purple-500/10 blur-[120px] animate-blob"
+          style={{ animationDelay: "2s" }}
+        />
+        <div
+          className="absolute bottom-[-20%] left-[20%] w-[60%] h-[50%] rounded-full bg-cyan-500/10 dark:bg-cyan-500/15 blur-[100px] animate-blob"
+          style={{ animationDelay: "4s" }}
+        />
       </div>
 
       {/* ─── NAVBAR ─── */}
       <header
-        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled
-            ? "bg-white/80 dark:bg-[#0a0a0f]/80 backdrop-blur-xl border-b border-slate-200/80 dark:border-white/5 shadow-sm"
-            : "bg-transparent"
-          }`}
+        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
+          scrolled
+            ? "glass-panel border-b-slate-200/50 dark:border-b-white/10 shadow-sm py-3"
+            : "bg-transparent border-b-transparent py-5"
+        }`}
       >
-        <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
-          {/* Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-lg shadow-blue-500/30">
-              <FolderKanban className="h-5 w-5 text-white" />
+        <div className="mx-auto max-w-6xl px-6 flex items-center justify-between">
+          <div
+            onClick={onGetStarted}
+            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+          >
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#0071e3] text-white shadow-md animate-float"
+              style={{ animationDuration: "8s" }}
+            >
+              <FolderKanban className="h-4 w-4" />
             </div>
-            <div>
-              <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight block leading-tight">
-                Design Review
-              </span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">For Freelancers</span>
-            </div>
+            <span className="font-semibold tracking-tight text-lg">DesignReview</span>
           </div>
 
-          {/* Nav Links */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-            <a href="#features" className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
+          <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
+            <a
+              href="#simulator"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
+            >
+              Simulator
+            </a>
+            <a
+              href="#features"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
+            >
               Features
             </a>
-            <a href="#how-it-works" className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
-              How it works
-            </a>
-            <a href="#open-source" className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors">
-              Open Source
+            <a
+              href="#workflow"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
+            >
+              Workflow
             </a>
             <a
               href="https://github.com/nareshbabunuli/Design-Review"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+              className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300 group"
             >
-              <GithubIcon className="h-4 w-4" />
-              <span>GitHub</span>
+              <GithubIcon className="h-4 w-4 group-hover:scale-110 transition-transform" /> GitHub
             </a>
           </nav>
 
-          {/* Right Actions */}
-          <div className="flex items-center gap-3">
-            <ThemeToggle theme={theme} onToggle={onToggleTheme ?? (() => { })} />
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onToggleTheme}
+              className="p-2.5 rounded-full hover:bg-slate-200/50 dark:hover:bg-white/10 text-slate-500 dark:text-slate-400 transition-all duration-300 hover:scale-110 active:scale-95 cursor-pointer"
+              aria-label="Toggle Theme"
+            >
+              {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            </button>
             <button
               onClick={onGetStarted}
-              className="hidden sm:flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all active:scale-95"
+              className="hidden sm:block rounded-full bg-[#1d1d1f] dark:bg-white px-5 py-2.5 text-sm font-medium text-white dark:text-[#1d1d1f] hover:scale-105 hover:shadow-lg transition-all duration-300 active:scale-95 cursor-pointer"
             >
-              Get Started <ArrowRight className="h-3.5 w-3.5" />
+              Get Started
             </button>
           </div>
         </div>
       </header>
 
-      {/* ─── HERO ─── */}
-      <section ref={heroRef} className="relative pt-28 pb-20 px-6">
-        <div className="mx-auto max-w-5xl text-center">
+      {/* ─── HERO SECTION ─── */}
+      <section className="relative z-10 pt-36 sm:pt-40 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-start overflow-hidden">
+        <div className="mx-auto max-w-4xl text-center">
+          <Reveal delay={100}>
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-8 shadow-sm hover:scale-105 transition-transform duration-300 cursor-default">
+              <Sparkles className="h-3.5 w-3.5 text-[#0071e3]" />
+              Interactive Simulator for Modern Teams
+            </div>
+          </Reveal>
 
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-8">
-            <Sparkles className="h-3.5 w-3.5 text-blue-500" />
-            <span>Interactive Device Simulator &middot; Developer &amp; Client Review</span>
-          </div>
+          <Reveal delay={200}>
+            <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] font-semibold tracking-tight leading-[1.08] mb-6 text-slate-900 dark:text-white">
+              Design review with <br className="hidden sm:block" />
+              <span className="text-gradient-shimmer animate-shimmer">Live Device Simulator</span>
+            </h1>
+          </Reveal>
 
-          {/* Headline */}
-          <h1 className="text-5xl md:text-7xl font-black tracking-tight text-slate-900 dark:text-white leading-[1.05] mb-6">
-            Design Review with{" "}
-            <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-              Live Device Simulator
-            </span>
-          </h1>
+          <Reveal delay={300}>
+            <p className="text-base md:text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10 font-medium">
+              Test live preview URLs in responsive device frames, compare against Figma specs side-by-side, and collaborate with structured notes and 1-click approvals.
+            </p>
+          </Reveal>
 
-          {/* Subheadline */}
-          <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10">
-            Test live preview URLs in responsive device frames, compare against Figma specs side-by-side,
-            and collaborate with clients through structured developer notes and 1-click approvals.
-          </p>
-
-          {/* CTAs */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-            <button
-              onClick={onGetStarted}
-              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-8 py-4 text-base font-bold text-white shadow-2xl shadow-blue-500/40 transition-all hover:-translate-y-0.5 active:scale-95"
-            >
-              <Play className="h-4 w-4" />
-              Start Free — No Credit Card
-            </button>
-            <a
-              href="https://github.com/nareshbabunuli/Design-Review"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 rounded-2xl border border-slate-300 dark:border-white/10 bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 px-8 py-4 text-base font-semibold text-slate-700 dark:text-slate-300 transition-all hover:-translate-y-0.5 active:scale-95"
-            >
-              <GithubIcon className="h-4 w-4" />
-              View on GitHub
-            </a>
-          </div>
-
-          {/* Stats Row */}
-          <div className="flex flex-wrap items-center justify-center gap-8 text-sm">
-            {[
-              { icon: Smartphone, label: "Live Device Simulator" },
-              { icon: Eye, label: "Figma vs Live Comparison" },
-              { icon: Users, label: "Developer & Client Review" },
-              { icon: CheckCircle, label: "1-Click Accept & Verify" },
-            ].map(({ icon: Icon, label }) => (
-              <div key={label} className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-                <Icon className="h-4 w-4 text-blue-500" />
-                <span className="font-medium">{label}</span>
-              </div>
-            ))}
-          </div>
+          <Reveal delay={400}>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+              <PrimaryButton onClick={onGetStarted}>Start Free — No Credit Card</PrimaryButton>
+              <SecondaryButton href="https://github.com/nareshbabunuli/Design-Review" icon={GithubIcon}>
+                View on GitHub
+              </SecondaryButton>
+            </div>
+          </Reveal>
         </div>
 
-        {/* App Preview Card: Interactive Real Screenshot Viewer with Switchable Views */}
-        <div className="mx-auto mt-16 max-w-5xl">
-          {(() => {
-            const currentPreview = PRODUCT_PREVIEWS.find((p) => p.id === previewTab) || PRODUCT_PREVIEWS[0]
-            const CurrentIcon = currentPreview.icon
+        {/* ─── HERO MOCKUP ─── */}
+        <Reveal delay={500} className="w-full max-w-5xl mx-auto relative z-20">
+          {/* Segmented Control Centered above mockup */}
+          <div className="flex justify-center mb-6">
+            <SegmentedControl tabs={PRODUCT_PREVIEWS} activeId={previewTab} onChange={handleTabChange} />
+          </div>
 
-            return (
-              <div className="relative rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/90 backdrop-blur shadow-2xl shadow-slate-900/20 dark:shadow-black/50 overflow-hidden text-left">
-                {/* Fake browser chrome */}
-                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/95">
-                  <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded-full bg-red-400" />
-                    <div className="h-3 w-3 rounded-full bg-amber-400" />
-                    <div className="h-3 w-3 rounded-full bg-emerald-400" />
-                    <div className="hidden sm:block ml-2 rounded-lg bg-slate-200/70 dark:bg-slate-800/70 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 font-mono">
-                      {currentPreview.url}
-                    </div>
-                  </div>
+          {/* Clean, shadow-lifted browser window mockup */}
+          <div className="rounded-[24px] border border-slate-200/60 dark:border-white/10 glass-panel shadow-2xl overflow-hidden transition-all duration-700 hover:shadow-[0_20px_60px_-15px_rgba(0,113,227,0.18)] group relative">
+            {/* Ambient glow behind mockup */}
+            <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent dark:from-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none z-10" />
 
-                  {/* View Selector Tabs */}
-                  <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-800/80 p-1 rounded-xl overflow-x-auto max-w-full">
-                    {PRODUCT_PREVIEWS.map((p) => {
-                      const Icon = p.icon
-                      const active = previewTab === p.id
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => setPreviewTab(p.id)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
-                            active
-                              ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
-                              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                          }`}
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                          <span>{p.title}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {/* Expand Action */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLightboxImg({
-                        src: currentPreview.src,
-                        title: currentPreview.title,
-                        desc: currentPreview.description,
-                      })
-                    }
-                    className="hidden sm:flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
-                    title="View full resolution"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    <span>Enlarge</span>
-                  </button>
-                </div>
-
-                {/* Preview Image Body */}
-                <div
-                  className="relative group cursor-pointer bg-slate-950 overflow-hidden"
-                  onClick={() =>
-                    setLightboxImg({
-                      src: currentPreview.src,
-                      title: currentPreview.title,
-                      desc: currentPreview.description,
-                    })
-                  }
-                >
-                  <img
-                    src={currentPreview.src}
-                    alt={currentPreview.alt}
-                    className="w-full h-auto max-h-[540px] object-cover object-top transition-transform duration-500 group-hover:scale-[1.01]"
-                  />
-
-                  {/* Hover hint */}
-                  <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                    <span className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-lg">
-                      <Maximize2 className="h-3.5 w-3.5" />
-                      Click to expand full resolution
-                    </span>
-                  </div>
-                </div>
-
-                {/* Caption Footer */}
-                <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-900/90 border-t border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                    <span className="font-bold text-slate-800 dark:text-white">{currentPreview.title}:</span>
-                    <span className="text-slate-600 dark:text-slate-300">{currentPreview.description}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${bgPillMap[currentPreview.color]}`}>
-                      {currentPreview.badge}
-                    </span>
-                  </div>
+            {/* Chrome Bar */}
+            <div className="flex items-center gap-2 px-6 py-4 border-b border-slate-200/60 dark:border-white/10 bg-slate-50/80 dark:bg-[#1c1c1e]/80 backdrop-blur-md relative z-20">
+              <div className="flex gap-2">
+                <div className="h-3 w-3 rounded-full bg-[#ff5f56] shadow-sm hover:scale-110 transition-transform" />
+                <div className="h-3 w-3 rounded-full bg-[#ffbd2e] shadow-sm hover:scale-110 transition-transform" />
+                <div className="h-3 w-3 rounded-full bg-[#27c93f] shadow-sm hover:scale-110 transition-transform" />
+              </div>
+              <div className="ml-4 flex-1 flex justify-center">
+                <div className="w-full max-w-md bg-white/60 dark:bg-black/40 border border-slate-200/50 dark:border-white/5 rounded-md px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center justify-center shadow-inner transition-colors">
+                  {currentPreview.url}
                 </div>
               </div>
-            )
-          })()}
-        </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setLightboxImg({
+                    src: activeImage,
+                    title: currentPreview.title,
+                    desc: currentPreview.description,
+                  })
+                }
+                className="hidden sm:flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
+                title="Expand screenshot"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                <span>Enlarge</span>
+              </button>
+            </div>
 
-        {/* Scroll cue */}
-        <div className="flex justify-center mt-10">
-          <a
-            href="#screenshots"
-            className="flex flex-col items-center gap-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors animate-bounce"
-          >
-            <span className="text-xs font-medium">View All Screens</span>
-            <ChevronDown className="h-4 w-4" />
-          </a>
-        </div>
+            {/* Image Content with crossfade */}
+            <div
+              className="relative bg-slate-100 dark:bg-[#0a0a0c] aspect-[16/10] sm:aspect-[16/9] overflow-hidden cursor-pointer"
+              onClick={() =>
+                setLightboxImg({
+                  src: activeImage,
+                  title: currentPreview.title,
+                  desc: currentPreview.description,
+                })
+              }
+            >
+              <img
+                src={activeImage}
+                alt={currentPreview.title}
+                className={`w-full h-full object-cover object-top transition-all duration-500 ${
+                  isImageTransitioning ? "opacity-0 scale-[1.02] blur-sm" : "opacity-100 scale-100 blur-0"
+                } group-hover:scale-[1.01]`}
+              />
+
+              {/* Subdued overlay metadata badge */}
+              <div className="absolute bottom-6 left-6 flex items-center gap-2 glass-panel px-4 py-2 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-2 group-hover:translate-y-0 z-20">
+                <div className="h-2 w-2 rounded-full bg-[#0071e3] shadow-[0_0_8px_rgba(0,113,227,0.8)] animate-pulse" />
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  {currentPreview.badge}
+                </span>
+              </div>
+            </div>
+          </div>
+        </Reveal>
       </section>
 
       {/* ─── REAL APPLICATION SCREENSHOTS GALLERY ─── */}
-      <section id="screenshots" className="relative py-20 px-6 bg-slate-50/70 dark:bg-slate-950/40 border-y border-slate-200/60 dark:border-white/5">
-        <div className="mx-auto max-w-7xl">
-          <div className="text-center mb-14">
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-4">
-              <Eye className="h-3.5 w-3.5" />
-              Real Interface Walkthrough
+      <section id="simulator" className="py-28 px-6 relative z-10 border-t border-slate-200/40 dark:border-white/5 bg-slate-50/40 dark:bg-white/[0.01]">
+        <div className="mx-auto max-w-6xl">
+          <Reveal direction="up">
+            <div className="text-center mb-16">
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-4 shadow-sm">
+                <Eye className="h-3.5 w-3.5 text-[#0071e3]" />
+                Actual Interface Screenshots
+              </div>
+              <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
+                See the app in action
+              </h2>
+              <p className="text-slate-500 dark:text-slate-400 max-w-2xl mx-auto text-base sm:text-lg">
+                Explore each real view: live device simulator, workflow spec comparison, developer notes, and client sign-offs.
+              </p>
             </div>
-            <h2 className="text-3xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
-              See the app in{" "}
-              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-                action
-              </span>
-            </h2>
-            <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-base sm:text-lg">
-              Explore the real screens: from live interactive device frames to structured developer notes, revision reasons, and 1-click client verification.
-            </p>
-          </div>
+          </Reveal>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {PRODUCT_PREVIEWS.map((item) => {
+            {PRODUCT_PREVIEWS.map((item, i) => {
               const Icon = item.icon
               return (
-                <div
-                  key={item.id}
-                  className="group rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/70 p-4 sm:p-5 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/5 transition-all duration-300 flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400">
+                <Reveal key={item.id} delay={i * 100} direction="up">
+                  <div className="group flex flex-col p-6 rounded-[24px] glass-panel transition-all duration-500 hover:shadow-xl hover:-translate-y-1">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 dark:bg-white/5 text-[#0071e3] shadow-inner">
                           <Icon className="h-4 w-4" />
                         </div>
                         <div>
-                          <h3 className="text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400">{item.badge}</span>
+                          <h3 className="text-base font-semibold tracking-tight">{item.title}</h3>
+                          <span className="text-xs text-slate-400 font-medium">{item.badge}</span>
                         </div>
                       </div>
                       <button
@@ -495,7 +520,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                             desc: item.description,
                           })
                         }
-                        className="text-xs text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                        className="text-xs text-[#0071e3] font-medium flex items-center gap-1 hover:underline cursor-pointer"
                       >
                         <span>Enlarge</span>
                         <Maximize2 className="h-3 w-3" />
@@ -510,26 +535,25 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
                           desc: item.description,
                         })
                       }
-                      className="relative rounded-xl overflow-hidden border border-slate-200/80 dark:border-white/10 bg-slate-950 aspect-[16/10] cursor-pointer group-hover:border-blue-400/40 transition-colors"
+                      className="relative rounded-2xl overflow-hidden border border-slate-200/60 dark:border-white/10 aspect-[16/10] bg-slate-950 cursor-pointer shadow-inner"
                     >
                       <img
                         src={item.src}
-                        alt={item.alt}
+                        alt={item.title}
                         className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
                       />
                       <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-md">
-                          <Maximize2 className="h-3 w-3" />
-                          Click to enlarge
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 text-white text-xs font-semibold backdrop-blur shadow-md">
+                          <Maximize2 className="h-3 w-3" /> Click to enlarge
                         </span>
                       </div>
                     </div>
-                  </div>
 
-                  <p className="mt-4 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                    {item.description}
-                  </p>
-                </div>
+                    <p className="mt-4 text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {item.description}
+                    </p>
+                  </div>
+                </Reveal>
               )
             })}
           </div>
@@ -537,249 +561,117 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
       </section>
 
       {/* ─── FEATURES ─── */}
-      <section id="features" className="relative py-24 px-6">
-        <div className="mx-auto max-w-7xl">
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 rounded-full border border-purple-200 dark:border-purple-800/60 bg-purple-50 dark:bg-purple-950/30 px-4 py-1.5 text-xs font-semibold text-purple-700 dark:text-purple-300 mb-5">
-              <Zap className="h-3.5 w-3.5" />
-              Everything You Need
+      <section id="features" className="py-28 px-6 relative z-10">
+        <div className="mx-auto max-w-6xl">
+          <Reveal direction="up">
+            <div className="text-center mb-20">
+              <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
+                Built for seamless handoffs
+              </h2>
+              <p className="text-slate-500 dark:text-slate-400 max-w-2xl mx-auto text-lg">
+                A clean, repeatable process that eliminates friction and keeps both you and your clients aligned.
+              </p>
             </div>
-            <h2 className="text-4xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
-              Everything for{" "}
-              <span className="bg-gradient-to-r from-purple-600 to-violet-600 bg-clip-text text-transparent">
-                code-to-client handoffs
-              </span>
-            </h2>
-            <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-lg">
-              No endless email threads. Test in interactive device frames, document developer notes, and get client approvals in clicks.
-            </p>
-          </div>
+          </Reveal>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
             {FEATURES.map((f, i) => (
-              <div
-                key={i}
-                className="group relative rounded-2xl border border-slate-200 dark:border-white/5 bg-white dark:bg-slate-900/50 p-6 hover:border-slate-300 dark:hover:border-white/10 hover:shadow-xl hover:shadow-slate-900/5 dark:hover:shadow-black/30 transition-all duration-300"
-              >
-                <div className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr ${colorMap[f.color]} shadow-lg mb-5`}>
-                  <f.icon className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{f.title}</h3>
-                <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">{f.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── HOW IT WORKS ─── */}
-      <section id="how-it-works" className="relative py-24 px-6 bg-slate-50/80 dark:bg-slate-950/50">
-        <div className="mx-auto max-w-5xl">
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-5">
-              <Play className="h-3.5 w-3.5" />
-              Simple Process
-            </div>
-            <h2 className="text-4xl md:text-5xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
-              From upload to{" "}
-              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                approval in 4 steps
-              </span>
-            </h2>
-            <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto text-lg">
-              A clean, repeatable process that keeps both you and your clients on the same page.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {STEPS.map((s, i) => (
-              <div
-                key={i}
-                className="relative flex gap-5 rounded-2xl border border-slate-200 dark:border-white/5 bg-white dark:bg-slate-900/50 p-6 hover:shadow-xl hover:shadow-slate-900/5 dark:hover:shadow-black/30 transition-all duration-300"
-              >
-                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr ${colorMap[s.color]} shadow-xl`}>
-                  <s.icon className="h-7 w-7 text-white" />
-                </div>
-                <div>
-                  <div className={`text-xs font-bold mb-1 ${bgPillMap[s.color]} inline-block px-2 py-0.5 rounded-full`}>
-                    Step {s.step}
+              <Reveal key={i} delay={i * 100} direction="up">
+                <div className="group flex flex-col p-8 rounded-[24px] glass-panel transition-all duration-500 hover:shadow-xl hover:-translate-y-1 hover:bg-white/90 dark:hover:bg-[#1c1c1e]/90 cursor-default">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-white/5 shadow-inner mb-6 text-[#0071e3] group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500">
+                    <f.icon className="h-5 w-5" />
                   </div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1.5">{s.title}</h3>
-                  <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">{s.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── OPEN SOURCE ─── */}
-      <section id="open-source" className="relative py-24 px-6">
-        <div className="mx-auto max-w-5xl">
-          <div className="rounded-3xl border border-slate-200 dark:border-white/10 bg-gradient-to-br from-slate-50 to-blue-50/40 dark:from-slate-900 dark:to-blue-950/20 p-10 md:p-16 overflow-hidden relative">
-            <div className="absolute -top-20 -right-20 h-[300px] w-[300px] rounded-full bg-blue-500/10 dark:bg-blue-500/5 blur-[80px] pointer-events-none" />
-
-            <div className="relative z-10 flex flex-col lg:flex-row items-start gap-10">
-              <div className="flex-1">
-                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-6">
-                  <Code2 className="h-3.5 w-3.5" />
-                  Open Source
-                </div>
-                <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight mb-4">
-                  Free to use.{" "}
-                  <span className="bg-gradient-to-r from-emerald-500 to-teal-500 bg-clip-text text-transparent">
-                    Open to all.
-                  </span>
-                </h2>
-                <p className="text-slate-600 dark:text-slate-400 text-lg leading-relaxed mb-8">
-                  Design Review is open source and free for freelancers. The full source code is available on GitHub
-                  under an open license — fork it, self-host it, contribute to it.
-                </p>
-
-                <div className="flex flex-wrap gap-3 mb-8">
-                  {[
-                    { icon: Globe, label: "Open Source", color: "text-blue-500" },
-                    { icon: Lock, label: "MIT + Commons Clause", color: "text-amber-500" },
-                    { icon: CheckCircle, label: "Free Forever", color: "text-emerald-500" },
-                  ].map((b) => (
-                    <div
-                      key={b.label}
-                      className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-300"
-                    >
-                      <b.icon className={`h-4 w-4 ${b.color}`} />
-                      {b.label}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 p-4">
-                    <div className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                      <CheckCircle className="h-3.5 w-3.5" /> Permitted
-                    </div>
-                    <ul className="text-xs text-emerald-700 dark:text-emerald-300 space-y-1.5">
-                      <li>✓ Use for client work</li>
-                      <li>✓ Self-host for your team</li>
-                      <li>✓ Fork &amp; contribute</li>
-                      <li>✓ Personal &amp; commercial use</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 p-4">
-                    <div className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                      <Shield className="h-3.5 w-3.5" /> Conditions
-                    </div>
-                    <ul className="text-xs text-amber-700 dark:text-amber-300 space-y-1.5">
-                      <li>→ Keep attribution</li>
-                      <li>→ Share modifications</li>
-                      <li>→ Link to this project</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/60 p-4">
-                    <div className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                      <Lock className="h-3.5 w-3.5" /> Restricted
-                    </div>
-                    <ul className="text-xs text-red-700 dark:text-red-300 space-y-1.5">
-                      <li>✗ Resell as a product</li>
-                      <li>✗ Remove attribution</li>
-                      <li>✗ Sublicense</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              {/* GitHub Card */}
-              <div className="shrink-0 w-full lg:w-72">
-                <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 p-6 shadow-xl">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 dark:bg-white">
-                      <GithubIcon className="h-5 w-5 text-white dark:text-slate-900" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-bold text-slate-900 dark:text-white">GitHub</div>
-                      <div className="text-xs text-slate-500 font-mono">nareshbabunuli/Design-Review</div>
-                    </div>
-                  </div>
-                  <p className="text-sm text-slate-600 dark:text-slate-400 mb-5">
-                    Open source design review workflow tracker for freelancers.
+                  <h3 className="text-lg font-semibold mb-3 tracking-tight group-hover:text-[#0071e3] transition-colors duration-300">
+                    {f.title}
+                  </h3>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors duration-300">
+                    {f.description}
                   </p>
-                  <div className="flex gap-3 text-xs font-medium mb-5">
-                    <span className="flex items-center gap-1 text-slate-600 dark:text-slate-400">
-                      <Star className="h-3.5 w-3.5 text-amber-500" /> Stars
-                    </span>
-                    <span className="flex items-center gap-1 text-slate-600 dark:text-slate-400">
-                      <Code2 className="h-3.5 w-3.5 text-blue-500" /> TypeScript
-                    </span>
-                    <span className="flex items-center gap-1 text-slate-600 dark:text-slate-400">
-                      <Shield className="h-3.5 w-3.5 text-emerald-500" /> MIT
-                    </span>
-                  </div>
-                  <a
-                    href="https://github.com/nareshbabunuli/Design-Review"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 px-4 py-2.5 text-sm font-semibold text-white dark:text-slate-900 transition-colors"
-                  >
-                    <GithubIcon className="h-4 w-4" />
-                    View Source Code
-                  </a>
                 </div>
-              </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── WORKFLOW ─── */}
+      <section
+        id="workflow"
+        className="py-28 px-6 relative z-10 border-y border-slate-200/30 dark:border-white/5 bg-slate-50/30 dark:bg-white/[0.02]"
+      >
+        <div className="mx-auto max-w-5xl">
+          <Reveal direction="up">
+            <div className="text-center mb-20">
+              <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
+                From upload to approval in 4 steps
+              </h2>
             </div>
+          </Reveal>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {STEPS.map((s, i) => (
+              <Reveal key={i} delay={i * 150} direction={i % 2 === 0 ? "left" : "right"}>
+                <div className="group flex gap-6 p-8 rounded-[24px] glass-panel transition-all duration-500 hover:shadow-md hover:border-[#0071e3]/30 dark:hover:border-[#0071e3]/30">
+                  <div className="shrink-0 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 dark:bg-white/5 text-lg font-semibold text-slate-400 dark:text-slate-500 group-hover:bg-[#0071e3] group-hover:text-white transition-colors duration-500 shadow-inner group-hover:shadow-[0_0_15px_rgba(0,113,227,0.4)]">
+                    {s.step}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold mb-2 tracking-tight group-hover:text-[#0071e3] transition-colors duration-300">
+                      {s.title}
+                    </h3>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">{s.description}</p>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
           </div>
         </div>
       </section>
 
       {/* ─── FINAL CTA ─── */}
-      <section className="relative py-24 px-6">
-        <div className="mx-auto max-w-3xl text-center">
-          <h2 className="text-4xl md:text-6xl font-black text-slate-900 dark:text-white tracking-tight mb-5">
-            Ready to level up your{" "}
-            <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-violet-600 bg-clip-text text-transparent">
-              client approvals?
-            </span>
+      <section className="py-28 px-6 relative z-10 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[#0071e3]/5 dark:to-[#0071e3]/10 pointer-events-none" />
+        <Reveal direction="up" className="mx-auto max-w-3xl text-center relative z-20">
+          <div className="inline-flex items-center justify-center h-16 w-16 rounded-3xl bg-[#0071e3] text-white shadow-[0_10px_30px_rgba(0,113,227,0.3)] mb-8 animate-float">
+            <FolderKanban className="h-8 w-8" />
+          </div>
+          <h2 className="font-display text-4xl md:text-5xl font-semibold tracking-tight mb-6">
+            Ready to level up your client approvals?
           </h2>
-          <p className="text-slate-600 dark:text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-            Give developers and clients a single place to simulate, review, and sign off on designs.
+          <p className="text-slate-500 dark:text-slate-400 text-lg mb-10 max-w-xl mx-auto">
+            Give developers and clients a single place to simulate, review, and sign off on designs. Open source and free.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button
-              onClick={onGetStarted}
-              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-10 py-4 text-base font-bold text-white shadow-2xl shadow-blue-500/40 transition-all hover:-translate-y-0.5 active:scale-95"
-            >
-              Get Started Free <ArrowRight className="h-4 w-4" />
-            </button>
-            <span className="text-sm text-slate-500 dark:text-slate-400">
-              No credit card &middot; No setup &middot; Open source
-            </span>
+            <PrimaryButton onClick={onGetStarted} className="px-8 py-4 text-base">
+              Get Started Free
+            </PrimaryButton>
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* ─── FOOTER ─── */}
-      <footer className="border-t border-slate-200 dark:border-white/5 py-10 px-6">
-        <div className="mx-auto max-w-7xl flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500">
-              <FolderKanban className="h-4 w-4 text-white" />
+      <footer className="border-t border-slate-200/50 dark:border-white/10 py-12 px-6 relative z-10 bg-white/50 dark:bg-[#000000]/50 backdrop-blur-lg">
+        <div className="mx-auto max-w-6xl flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-2 group cursor-pointer" onClick={onGetStarted}>
+            <div className="flex h-6 w-6 items-center justify-center rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 group-hover:bg-[#0071e3] group-hover:text-white transition-colors duration-300">
+              <FolderKanban className="h-3 w-3" />
             </div>
-            <span className="text-sm font-bold text-slate-900 dark:text-white">Design Review</span>
+            <span className="text-sm font-semibold tracking-tight">DesignReview</span>
           </div>
 
           <div className="flex items-center gap-6 text-sm text-slate-500 dark:text-slate-400">
-            <span>&copy; {new Date().getFullYear()} Design Review</span>
-            <a href="#open-source" className="hover:text-slate-700 dark:hover:text-slate-200 transition-colors">License</a>
+            <span>&copy; {new Date().getFullYear()} DesignReview.</span>
             <a
               href="https://github.com/nareshbabunuli/Design-Review"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              className="hover:text-slate-900 dark:hover:text-white transition-colors duration-300"
             >
-              <GithubIcon className="h-4 w-4" /> GitHub
+              GitHub
             </a>
-          </div>
-
-          <div className="text-xs text-slate-400 dark:text-slate-500 text-center md:text-right">
-            MIT + Commons Clause &middot; Free for freelancers &amp; teams
+            <a href="#simulator" className="hover:text-slate-900 dark:hover:text-white transition-colors duration-300">
+              License (MIT)
+            </a>
           </div>
         </div>
       </footer>
@@ -789,7 +681,7 @@ export function LandingPage({ onGetStarted, theme = "dark", onToggleTheme }: Lan
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6"
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200"
           onClick={() => setLightboxImg(null)}
         >
           <div
