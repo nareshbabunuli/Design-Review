@@ -274,6 +274,16 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
     return () => window.removeEventListener("scroll", onScroll)
   }, [])
 
+  // Preload all screenshots into memory immediately so tab switches are instant in Safari
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      PRODUCT_PREVIEWS.forEach((preview) => {
+        const img = new window.Image()
+        img.src = preview.src
+      })
+    }
+  }, [])
+
   // Smooth crossfade for image swapping
   const handleTabChange = (id: string) => {
     if (id === previewTab) return
@@ -283,23 +293,34 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
       const newImage = PRODUCT_PREVIEWS.find((p) => p.id === id)?.src || PRODUCT_PREVIEWS[0].src
       setActiveImage(newImage)
       setIsImageTransitioning(false)
-    }, 250)
+    }, 200)
   }
 
   const currentPreview = PRODUCT_PREVIEWS.find((p) => p.id === previewTab) || PRODUCT_PREVIEWS[0]
 
   return (
     <div className="relative font-sans text-slate-900 dark:text-white min-h-screen bg-[#fbfbfd] dark:bg-[#000000] overflow-x-hidden transition-colors duration-500 ease-in-out">
-      {/* Background Animated Blobs */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-[#0071e3]/10 dark:bg-[#0071e3]/20 blur-[100px] animate-blob" />
+      {/* High-Performance Safari-Optimized Radial Glow Background (eliminates 100px CPU blur calculations) */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0 [contain:strict]">
         <div
-          className="absolute top-[20%] right-[-10%] w-[40%] h-[60%] rounded-full bg-purple-500/5 dark:bg-purple-500/10 blur-[120px] animate-blob"
-          style={{ animationDelay: "2s" }}
+          className="absolute -top-[15%] -left-[10%] w-[60vw] h-[60vw] max-w-[700px] max-h-[700px] rounded-full opacity-60 dark:opacity-35 animate-blob [will-change:transform] [transform:translate3d(0,0,0)]"
+          style={{
+            background: "radial-gradient(circle, rgba(0,113,227,0.3) 0%, rgba(0,113,227,0.06) 45%, transparent 70%)",
+          }}
         />
         <div
-          className="absolute bottom-[-20%] left-[20%] w-[60%] h-[50%] rounded-full bg-cyan-500/10 dark:bg-cyan-500/15 blur-[100px] animate-blob"
-          style={{ animationDelay: "4s" }}
+          className="absolute top-[20%] -right-[15%] w-[55vw] h-[55vw] max-w-[650px] max-h-[650px] rounded-full opacity-50 dark:opacity-25 animate-blob [will-change:transform] [transform:translate3d(0,0,0)]"
+          style={{
+            animationDelay: "3s",
+            background: "radial-gradient(circle, rgba(168,85,247,0.25) 0%, rgba(168,85,247,0.05) 45%, transparent 70%)",
+          }}
+        />
+        <div
+          className="absolute -bottom-[20%] left-[20%] w-[65vw] h-[65vw] max-w-[750px] max-h-[750px] rounded-full opacity-55 dark:opacity-30 animate-blob [will-change:transform] [transform:translate3d(0,0,0)]"
+          style={{
+            animationDelay: "6s",
+            background: "radial-gradient(circle, rgba(6,182,212,0.25) 0%, rgba(6,182,212,0.05) 45%, transparent 70%)",
+          }}
         />
       </div>
 
@@ -366,41 +387,33 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
         </div>
       </header>
 
-      {/* ─── HERO SECTION ─── */}
+      {/* ─── HERO SECTION (Rendered immediately on load, no IntersectionObserver delay in Safari) ─── */}
       <section className="relative z-10 pt-36 sm:pt-40 pb-20 px-6 min-h-[90vh] flex flex-col items-center justify-start overflow-hidden">
         <div className="mx-auto max-w-4xl text-center">
-          <Reveal delay={100}>
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-8 shadow-sm hover:scale-105 transition-transform duration-300 cursor-default">
-              <Sparkles className="h-3.5 w-3.5 text-[#0071e3]" />
-              Interactive Simulator for Modern Teams
-            </div>
-          </Reveal>
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-8 shadow-sm hover:scale-105 transition-transform duration-300 cursor-default animate-in fade-in duration-500">
+            <Sparkles className="h-3.5 w-3.5 text-[#0071e3]" />
+            Interactive Simulator for Modern Teams
+          </div>
 
-          <Reveal delay={200}>
-            <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] font-semibold tracking-tight leading-[1.08] mb-6 text-slate-900 dark:text-white">
-              Design review with <br className="hidden sm:block" />
-              <span className="text-gradient-shimmer animate-shimmer">Live Device Simulator</span>
-            </h1>
-          </Reveal>
+          <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] font-semibold tracking-tight leading-[1.08] mb-6 text-slate-900 dark:text-white animate-in fade-in duration-700">
+            Design review with <br className="hidden sm:block" />
+            <span className="text-gradient-shimmer animate-shimmer">Live Device Simulator</span>
+          </h1>
 
-          <Reveal delay={300}>
-            <p className="text-base md:text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10 font-medium">
-              Test live preview URLs in responsive device frames, compare against Figma specs side-by-side, and collaborate with structured notes and 1-click approvals.
-            </p>
-          </Reveal>
+          <p className="text-base md:text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10 font-medium animate-in fade-in duration-700">
+            Test live preview URLs in responsive device frames, compare against Figma specs side-by-side, and collaborate with structured notes and 1-click approvals.
+          </p>
 
-          <Reveal delay={400}>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-              <PrimaryButton onClick={onGetStarted}>Start Free — No Credit Card</PrimaryButton>
-              <SecondaryButton href="https://github.com/nareshbabunuli/Design-Review" icon={GithubIcon}>
-                View on GitHub
-              </SecondaryButton>
-            </div>
-          </Reveal>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 animate-in fade-in duration-700">
+            <PrimaryButton onClick={onGetStarted}>Start Free — No Credit Card</PrimaryButton>
+            <SecondaryButton href="https://github.com/nareshbabunuli/Design-Review" icon={GithubIcon}>
+              View on GitHub
+            </SecondaryButton>
+          </div>
         </div>
 
         {/* ─── HERO MOCKUP ─── */}
-        <Reveal delay={500} className="w-full max-w-5xl mx-auto relative z-20">
+        <div className="w-full max-w-5xl mx-auto relative z-20 animate-in fade-in duration-1000">
           {/* Segmented Control Centered above mockup */}
           <div className="flex justify-center mb-6">
             <SegmentedControl tabs={PRODUCT_PREVIEWS} activeId={previewTab} onChange={handleTabChange} />
@@ -440,7 +453,7 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
               </button>
             </div>
 
-            {/* Image Content with crossfade */}
+            {/* Image Content with crossfade & high-priority asynchronous decoding */}
             <div
               className="relative bg-slate-100 dark:bg-[#0a0a0c] aspect-[16/10] sm:aspect-[16/9] overflow-hidden cursor-pointer"
               onClick={() =>
@@ -454,6 +467,9 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
               <img
                 src={activeImage}
                 alt={currentPreview.title}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
                 className={`w-full h-full object-cover object-top transition-all duration-500 ${
                   isImageTransitioning ? "opacity-0 scale-[1.02] blur-sm" : "opacity-100 scale-100 blur-0"
                 } group-hover:scale-[1.01]`}
@@ -468,7 +484,7 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
               </div>
             </div>
           </div>
-        </Reveal>
+        </div>
       </section>
 
       {/* ─── FEATURES ─── */}

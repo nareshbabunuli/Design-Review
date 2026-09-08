@@ -31,6 +31,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="light bg-slate-100" suppressHydrationWarning>
+      <head>
+        <link rel="preload" href="/screenshots/simulator-preview.png" as="image" type="image/png" />
+      </head>
       <body className="antialiased" suppressHydrationWarning>
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

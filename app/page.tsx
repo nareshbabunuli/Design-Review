@@ -206,7 +206,25 @@ const mapData = (
 
 export default function Page() {
   const supabase = createClient()
-  const [isAuthChecking, setIsAuthChecking] = useState(true)
+  const [isAuthChecking, setIsAuthChecking] = useState(() => {
+    if (typeof window === "undefined") return true
+    try {
+      const hasHash =
+        window.location.hash &&
+        (window.location.hash.includes("access_token") || window.location.hash.includes("type=recovery"))
+      const hasInvite =
+        window.location.search.includes("invite=") || window.location.search.includes("type=recovery")
+      if (hasHash || hasInvite) return true
+
+      const hasCookieAuth = document.cookie.includes("-auth-token")
+      const hasStorageAuth = Object.keys(localStorage).some(
+        (k) => k.includes("-auth-token") || k.includes("supabase.auth.token")
+      )
+      return hasCookieAuth || hasStorageAuth
+    } catch {
+      return true
+    }
+  })
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)

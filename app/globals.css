@@ -277,11 +277,15 @@
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.35);
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 .dark .glass-panel {
   background: rgba(28, 28, 30, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 .text-gradient-shimmer {
@@ -290,6 +294,7 @@
   color: transparent;
   -webkit-background-clip: text;
   background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 @keyframes blob {
