@@ -372,13 +372,13 @@ export function FigmaImportModal({
     if (zipFile) {
       try {
         const zip = await JSZip.loadAsync(zipFile)
-        const imageEntries: { name: string; entry: InstanceType<typeof JSZip.JSZipObject> }[] = []
+        const imageEntries: { name: string; entry: JSZip.JSZipObject }[] = []
 
         zip.forEach((relativePath, entry) => {
           if (entry.dir) return
           if (relativePath.includes("__MACOSX/") || relativePath.startsWith(".")) return
           if (/\.(png|jpe?g|webp|svg)$/i.test(relativePath)) {
-            imageEntries.push({ name: relativePath, entry: entry as any })
+            imageEntries.push({ name: relativePath, entry })
           }
         })
 
