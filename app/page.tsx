@@ -19,6 +19,8 @@ import {
   Settings,
   Smartphone,
   ChevronDown,
+  Sparkles,
+  Plug,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type {
@@ -38,6 +40,7 @@ import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { LandingPage } from "@/components/design-review/landing-page"
 import { SharePermissionsModal } from "@/components/design-review/share-permissions-modal"
 import { SettingsModal } from "@/components/design-review/settings-modal"
+import { FigmaImportModal } from "@/components/design-review/figma-import-modal"
 import { WorkflowSimulator } from "@/components/design-review/workflow-simulator"
 
 type ProjectRow = {
@@ -245,9 +248,17 @@ export default function Page() {
   const [showLanding, setShowLanding] = useState(true)
   const [isShareOpen, setIsShareOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<"account" | "integrations">("account")
+  const [isFigmaImportOpen, setIsFigmaImportOpen] = useState(false)
+  const [figmaImportProjectId, setFigmaImportProjectId] = useState<string | null>(null)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement>(null)
+
+  const handleOpenFigmaImport = (projectId?: string) => {
+    setFigmaImportProjectId(projectId || activeProjectId)
+    setIsFigmaImportOpen(true)
+  }
 
   // Close profile dropdown on outside click or Escape
   useEffect(() => {
@@ -1570,6 +1581,16 @@ export default function Page() {
     }
   }
 
+  const handleFigmaImportSuccess = async (projectId: string, importedWorkflows: Workflow[]) => {
+    // Reload full workspace from database
+    await loadWorkspace()
+    setActiveProjectId(projectId)
+    if (importedWorkflows.length > 0) {
+      setActiveWorkflowId(importedWorkflows[0].id)
+    }
+    setViewMode("editor")
+  }
+
   // Submit formal revision with mandatory reason
   const submitFinalRevision = async (workflowId: string, reason: string) => {
     if (!supabase || !user || !workflowId) return
@@ -1978,6 +1999,7 @@ export default function Page() {
             }
             onReorderWorkflows={handleReorderWorkflows}
             onToggleOrderLock={handleToggleOrderLock}
+            onOpenFigmaImport={handleOpenFigmaImport}
             onReorderProjects={(sourceIndex: number, destinationIndex: number) => {
               update((prev) => {
                 const updated = [...prev]
@@ -2147,6 +2169,19 @@ export default function Page() {
               </button>
             )}
 
+            {/* Import from Figma Button (Editor & Simulator Mode) */}
+            {(viewMode === "editor" || viewMode === "simulator") && canEdit && activeProject && (
+              <button
+                type="button"
+                onClick={() => handleOpenFigmaImport(activeProject.id)}
+                className="flex items-center gap-1.5 rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 px-2.5 sm:px-3 py-1.5 text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+                title="Import screens directly from Figma"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                <span className="hidden sm:inline">Import Figma</span>
+              </button>
+            )}
+
             {/* GitHub Repository Link (hidden on small screens) */}
             <a
               href="https://github.com/nareshbabunuli/Design-Review"
@@ -2210,11 +2245,39 @@ export default function Page() {
                       </div>
                     </div>
 
+                    {/* Third-Party Integrations */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false)
+                        setSettingsTab("integrations")
+                        setIsSettingsOpen(true)
+                      }}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left cursor-pointer"
+                    >
+                      <Plug className="h-4 w-4 text-purple-500" />
+                      <span>Third-Party Integrations</span>
+                    </button>
+
+                    {/* Import from Figma shortcut */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false)
+                        handleOpenFigmaImport()
+                      }}
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/40 transition-colors text-left cursor-pointer font-medium"
+                    >
+                      <Sparkles className="h-4 w-4 text-purple-500" />
+                      <span>Import from Figma</span>
+                    </button>
+
                     {/* Account Settings */}
                     <button
                       type="button"
                       onClick={() => {
                         setIsProfileMenuOpen(false)
+                        setSettingsTab("account")
                         setIsSettingsOpen(true)
                       }}
                       className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors text-left cursor-pointer"
@@ -2273,6 +2336,7 @@ export default function Page() {
                   onRenameProject={handleRenameProject}
                   onDuplicateProject={duplicateProject}
                   onLogout={handleSignOut}
+                  onOpenFigmaImport={handleOpenFigmaImport}
                   onShareProject={(id: string) => {
                     setActiveProjectId(id)
                     setIsShareOpen(true)
@@ -2332,14 +2396,24 @@ export default function Page() {
                   <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">
                     <p className="text-sm">Select or create a workflow to begin</p>
                     {canEdit && activeProject && (
-                      <button
-                        type="button"
-                        onClick={() => createWorkflow(activeProject.id)}
-                        className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-95 cursor-pointer"
-                      >
-                        <Plus className="h-4 w-4 stroke-[2.5]" />
-                        <span>Create First Screen</span>
-                      </button>
+                      <div className="flex flex-wrap items-center justify-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => createWorkflow(activeProject.id)}
+                          className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-95 cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4 stroke-[2.5]" />
+                          <span>Create First Screen</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenFigmaImport(activeProject.id)}
+                          className="flex items-center gap-2 rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 px-4 py-2 text-xs font-semibold shadow-sm transition-all active:scale-95 cursor-pointer"
+                        >
+                          <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                          <span>Import from Figma</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 )
@@ -2349,12 +2423,24 @@ export default function Page() {
         </div>
       </main>
 
-      {/* Account Settings Modal */}
+      {/* Account Settings & Third-Party Integrations Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         userEmail={user?.email}
         userId={user?.id}
+        initialTab={settingsTab}
+        onOpenFigmaImport={() => handleOpenFigmaImport()}
+      />
+
+      {/* Figma Screen Importer Modal */}
+      <FigmaImportModal
+        isOpen={isFigmaImportOpen}
+        onClose={() => setIsFigmaImportOpen(false)}
+        projects={projects}
+        activeProjectId={figmaImportProjectId || activeProjectId}
+        userId={user?.id}
+        onImportSuccess={handleFigmaImportSuccess}
       />
 
       {/* Share & Granular Permissions Modal */}

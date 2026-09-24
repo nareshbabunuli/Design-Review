@@ -42,6 +42,7 @@ interface ProjectDashboardProps {
   onRenameProject: (projectId: string, title: string) => void
   onDuplicateProject?: (projectId: string, e: React.MouseEvent) => void
   onShareProject?: (projectId: string) => void
+  onOpenFigmaImport?: (projectId?: string) => void
   onLogout?: () => void
 }
 
@@ -61,6 +62,7 @@ export function ProjectDashboard({
   onRenameProject,
   onDuplicateProject,
   onShareProject,
+  onOpenFigmaImport,
   onLogout,
 }: ProjectDashboardProps) {
   const [internalSearchQuery, setInternalSearchQuery] = useState("")
@@ -169,7 +171,20 @@ export function ProjectDashboard({
             ))}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {onOpenFigmaImport && (
+              <button
+                type="button"
+                onClick={() => onOpenFigmaImport()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 px-3 py-1.5 text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+                title="Import screens directly from Figma"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                <span className="hidden sm:inline">Import from Figma</span>
+                <span className="sm:hidden">Figma</span>
+              </button>
+            )}
+
             <div className="flex items-center rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900/90 p-1">
               <button
                 type="button"
@@ -411,17 +426,33 @@ export function ProjectDashboard({
                           />
                           <div className="absolute right-0 bottom-full mb-1 w-44 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-1.5 shadow-xl dark:shadow-2xl z-30 flex flex-col gap-0.5 text-xs animate-in fade-in-50 zoom-in-95 duration-150">
                           {canEditProject && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onSelectProject(project.id)
-                                setMenuOpenId(null)
-                              }}
-                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-zinc-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-left"
-                            >
-                              <Pencil className="h-3.5 w-3.5 text-blue-500" />
-                              <span>Edit & Upload Photos</span>
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSelectProject(project.id)
+                                  setMenuOpenId(null)
+                                }}
+                                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-zinc-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-left"
+                              >
+                                <Pencil className="h-3.5 w-3.5 text-blue-500" />
+                                <span>Edit & Upload Photos</span>
+                              </button>
+
+                              {onOpenFigmaImport && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onOpenFigmaImport(project.id)
+                                    setMenuOpenId(null)
+                                  }}
+                                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/60 transition-colors text-left font-medium"
+                                >
+                                  <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                                  <span>Import from Figma</span>
+                                </button>
+                              )}
+                            </>
                           )}
 
                           <button
@@ -597,6 +628,20 @@ export function ProjectDashboard({
                       >
                         <Pencil className="h-3.5 w-3.5" />
                         <span>Edit & Upload</span>
+                      </button>
+                    )}
+                    {canEditProject && onOpenFigmaImport && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onOpenFigmaImport(project.id)
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 px-3 py-1.5 text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+                        title="Import screens from Figma"
+                      >
+                        <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                        <span>Figma</span>
                       </button>
                     )}
                     <button

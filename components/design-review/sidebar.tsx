@@ -18,6 +18,7 @@ import {
   Copy,
   CopyPlus,
   X,
+  Sparkles,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -51,6 +52,7 @@ type SidebarProps = {
   onMoveProjectUp?: (projectId: string, e: React.MouseEvent) => void
   onMoveProjectDown?: (projectId: string, e: React.MouseEvent) => void
   onReorderProjects?: (sourceIndex: number, destinationIndex: number) => void
+  onOpenFigmaImport?: (projectId: string) => void
 }
 
 function InlineRenameInput({
@@ -122,6 +124,7 @@ export function Sidebar({
   onMoveProjectUp,
   onMoveProjectDown,
   onReorderProjects,
+  onOpenFigmaImport,
 }: SidebarProps) {
   const [draggedWorkflow, setDraggedWorkflow] = useState<{ projectId: string; index: number } | null>(null)
   const [dragOverWorkflow, setDragOverWorkflow] = useState<{ projectId: string; index: number } | null>(null)
@@ -312,6 +315,20 @@ export function Sidebar({
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
+                  {onOpenFigmaImport && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenFigmaImport(project.id)
+                      }}
+                      className="p-1.5 rounded-md hover:bg-purple-100 dark:hover:bg-purple-950/60 text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 cursor-pointer"
+                      title="Import screens from Figma"
+                      aria-label="Import screens from Figma"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
