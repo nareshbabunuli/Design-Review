@@ -7,6 +7,7 @@ import {
   LogOut,
   Share2,
   Eye,
+  EyeOff,
   Pencil,
   ArrowLeft,
   Menu,
@@ -209,25 +210,7 @@ const mapData = (
 
 export default function Page() {
   const supabase = createClient()
-  const [isAuthChecking, setIsAuthChecking] = useState(() => {
-    if (typeof window === "undefined") return true
-    try {
-      const hasHash =
-        window.location.hash &&
-        (window.location.hash.includes("access_token") || window.location.hash.includes("type=recovery"))
-      const hasInvite =
-        window.location.search.includes("invite=") || window.location.search.includes("type=recovery")
-      if (hasHash || hasInvite) return true
-
-      const hasCookieAuth = document.cookie.includes("-auth-token")
-      const hasStorageAuth = Object.keys(localStorage).some(
-        (k) => k.includes("-auth-token") || k.includes("supabase.auth.token")
-      )
-      return hasCookieAuth || hasStorageAuth
-    } catch {
-      return true
-    }
-  })
+  const [isAuthChecking, setIsAuthChecking] = useState(true)
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
@@ -240,6 +223,8 @@ export default function Page() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [authMessage, setAuthMessage] = useState("")
   const [showResend, setShowResend] = useState(false)
   const [viewMode, setViewMode] = useState<"dashboard" | "editor" | "simulator">("dashboard")
@@ -835,40 +820,70 @@ export default function Page() {
       return
     }
 
-    const result =
-      authMode === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-              emailRedirectTo:
-                process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ?? `${window.location.origin}/auth/callback`,
-            },
+    try {
+      let authUser: { id: string; email?: string } | null = null
+      let authError: string | null = null
+
+      try {
+        const result =
+          authMode === "signin"
+            ? await supabase.auth.signInWithPassword({ email, password })
+            : await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                  emailRedirectTo:
+                    process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ?? `${window.location.origin}/auth/callback`,
+                },
+              })
+
+        if (result.error) {
+          authError = result.error.message
+        } else if (result.data.user) {
+          authUser = { id: result.data.user.id, email: result.data.user.email }
+        }
+      } catch {
+        // Fallback to server-side route if client fetch to Supabase was blocked
+        try {
+          const proxyRes = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password, authMode }),
           })
-
-    setAuthLoading(false)
-
-    if (result.error) {
-      const msg = result.error.message.toLowerCase()
-      if (msg.includes("email not confirmed")) {
-        setAuthMessage("Please confirm your email before signing in.")
-        setShowResend(true)
-      } else {
-        setAuthMessage(result.error.message)
+          const proxyData = await proxyRes.json()
+          if (!proxyRes.ok || proxyData.error) {
+            authError = proxyData.error || "Authentication failed"
+          } else if (proxyData.user) {
+            authUser = { id: proxyData.user.id, email: proxyData.user.email }
+            if (proxyData.session) {
+              await supabase.auth.setSession(proxyData.session)
+            }
+          }
+        } catch (proxyErr: any) {
+          authError = proxyErr?.message || "Failed to reach authentication server"
+        }
       }
-      return
-    }
 
-    if (authMode === "signup" && !result.data.session) {
-      setAuthMessage("Account created. Please check your email for the confirmation link.")
-      setShowResend(true)
-      return
-    }
+      setAuthLoading(false)
 
-    if (result.data.user) {
-      setUser({ id: result.data.user.id, email: result.data.user.email })
-      setAuthMessage("")
+      if (authError) {
+        const msg = authError.toLowerCase()
+        if (msg.includes("email not confirmed")) {
+          setAuthMessage("Please confirm your email before signing in.")
+          setShowResend(true)
+        } else {
+          setAuthMessage(authError)
+        }
+        return
+      }
+
+      if (authUser) {
+        setUser(authUser)
+        setAuthMessage("")
+      }
+    } catch (err: any) {
+      setAuthLoading(false)
+      setAuthMessage(err?.message || "Failed to connect to authentication server. Please check your network or ad blocker.")
     }
   }
 
@@ -1812,15 +1827,26 @@ export default function Page() {
                   </button>
                 )}
               </div>
-              <input
-                className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                minLength={6}
-                placeholder="Enter at least 6 characters"
-                required
-              />
+              <div className="relative mt-1.5">
+                <input
+                  className="w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  minLength={6}
+                  placeholder="Enter at least 6 characters"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors cursor-pointer p-1"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </label>
           )}
 
@@ -1828,15 +1854,26 @@ export default function Page() {
           {authMode === "reset" && (
             <label className="mb-5 block text-xs font-semibold text-slate-700 dark:text-slate-300">
               Confirm New Password
-              <input
-                className="mt-1.5 w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                minLength={6}
-                placeholder="Re-enter your new password"
-                required
-              />
+              <div className="relative mt-1.5">
+                <input
+                  className="w-full rounded-xl border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-zinc-500 p-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  minLength={6}
+                  placeholder="Re-enter your new password"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors cursor-pointer p-1"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  title={showConfirmPassword ? "Hide password" : "Show password"}
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </label>
           )}
 

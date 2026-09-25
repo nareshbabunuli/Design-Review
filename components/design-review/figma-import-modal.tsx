@@ -851,7 +851,8 @@ export function FigmaImportModal({
                 <h2 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
                   Import Screens from Figma
                 </h2>
-                {isTokenSaved && (
+                {/* Figma Connected badge hidden */}
+                {false && isTokenSaved && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold">
                     <Check className="h-3 w-3" />
                     Figma Connected
@@ -859,7 +860,7 @@ export function FigmaImportModal({
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Browse team projects or paste a design link to import high-res screen artboards
+                Upload your exported Figma .zip archive to extract and preview design screens
               </p>
             </div>
           </div>
@@ -876,8 +877,8 @@ export function FigmaImportModal({
 
         {/* Body Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Step 1: Connect Token Section (if not connected) */}
-          {!isTokenSaved ? (
+          {/* Step 1: Connect Token Section (if not connected) - Hidden */}
+          {false && (!isTokenSaved ? (
             <div className="p-5 rounded-2xl border border-purple-500/20 bg-purple-50/50 dark:bg-purple-950/20 space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -941,11 +942,11 @@ export function FigmaImportModal({
             </div>
           ) : (
             /* Connected state info bar */
-            <div className="p-3.5 rounded-2xl border border-emerald-500/20 bg-emerald-50/40 dark:bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3">
+            false && <div className="p-3.5 rounded-2xl border border-emerald-500/20 bg-emerald-50/40 dark:bg-emerald-950/20 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold text-xs">
                   {figmaUser?.img_url ? (
-                    <img src={figmaUser.img_url} alt="" className="h-8 w-8 rounded-xl object-cover" />
+                    <img src={figmaUser?.img_url} alt="" className="h-8 w-8 rounded-xl object-cover" />
                   ) : (
                     figmaUser?.handle?.slice(0, 2).toUpperCase() || "FG"
                   )}
@@ -971,10 +972,10 @@ export function FigmaImportModal({
                 </button>
               </div>
             </div>
-          )}
+          ))}
 
-          {/* Smart Unified URL / Link Input */}
-          {isTokenSaved && (
+          {/* Smart Unified URL / Link Input - Hidden */}
+          {false && (
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -1045,6 +1046,8 @@ export function FigmaImportModal({
                   </span>
                 </div>
               </div>
+            </div>
+          )}
 
               {/* Hidden file inputs for ZIP, Folder, and Multiple Files */}
               <input
@@ -1123,32 +1126,40 @@ export function FigmaImportModal({
                   <button
                     type="button"
                     onClick={() => zipInputRef.current?.click()}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-500/25 transition-all active:scale-95 cursor-pointer"
+                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-500/25 transition-all active:scale-95 cursor-pointer"
                   >
                     <Archive className="h-4 w-4" />
                     <span>Upload Figma .ZIP File</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => folderInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium shadow-xs transition-all active:scale-95 cursor-pointer"
-                  >
-                    <Folder className="h-3.5 w-3.5 text-purple-500" />
-                    <span>Select Extracted Folder</span>
-                  </button>
+                  {/* Manual folder and images buttons hidden */}
+                  {false && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => folderInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium shadow-xs transition-all active:scale-95 cursor-pointer"
+                      >
+                        <Folder className="h-3.5 w-3.5 text-purple-500" />
+                        <span>Select Extracted Folder</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => filesInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium shadow-xs transition-all active:scale-95 cursor-pointer"
-                  >
-                    <Upload className="h-3.5 w-3.5 text-purple-500" />
-                    <span>Select PNG Images</span>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => filesInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium shadow-xs transition-all active:scale-95 cursor-pointer"
+                      >
+                        <Upload className="h-3.5 w-3.5 text-purple-500" />
+                        <span>Select PNG Images</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
+          {/* Other options (Figma monthly quota, cooldown, team projects browser) - Hidden */}
+          {false && (
+            <div className="space-y-4">
               {/* Starter Monthly Quota Reached Banner & Direct Export Dropzone */}
               {isMonthlyQuotaReached && (
                 <div className="p-4 rounded-2xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 space-y-3">
@@ -1368,7 +1379,7 @@ export function FigmaImportModal({
           )}
 
           {/* Destination project selection (shown whenever a file is selected or screens found) */}
-          {isTokenSaved && (fileUrl || screens.length > 0) && (
+          {(screens.length > 0 || fileUrl) && (
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-slate-950/30 space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
