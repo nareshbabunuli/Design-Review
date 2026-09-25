@@ -16,6 +16,7 @@ import {
   Sun,
   Maximize2,
   X,
+  Archive,
 } from "lucide-react"
 
 function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
@@ -104,6 +105,15 @@ export const PRODUCT_PREVIEWS = [
     icon: Smartphone,
   },
   {
+    id: "figma-import",
+    title: "Figma ZIP Import",
+    badge: "Instant Screen Extraction",
+    url: "designhub.app/figma-import",
+    src: "/screenshots/figma-import-preview.png",
+    description: "Drop exported Figma .zip archives to instantly extract, preview, and batch-import design screens with zero rate limits.",
+    icon: Archive,
+  },
+  {
     id: "editor",
     title: "Workflow Editor",
     badge: "Screens & Spec Notes",
@@ -134,19 +144,14 @@ export const PRODUCT_PREVIEWS = [
 
 const FEATURES = [
   {
+    icon: Archive,
+    title: "Figma .ZIP Importer",
+    description: "Export frames from Figma into a .zip file and drop it in. Extract and preview screens instantly with zero rate limits or tokens.",
+  },
+  {
     icon: Smartphone,
     title: "Interactive Simulator",
     description: "Test live URLs inside Phone, Tablet, and Desktop frames side-by-side with Figma specs.",
-  },
-  {
-    icon: Users,
-    title: "Client Collaboration",
-    description: "Developers add designs and notes. Clients inspect, test, and provide direct feedback.",
-  },
-  {
-    icon: MessageSquare,
-    title: "Structured Notes",
-    description: "Client messages and developer notes right on the screen. No endless email threads.",
   },
   {
     icon: Eye,
@@ -154,22 +159,27 @@ const FEATURES = [
     description: "Compare Figma designs directly against live app frames with Difference modes.",
   },
   {
+    icon: MessageSquare,
+    title: "Structured Notes",
+    description: "Client messages and developer notes right on the screen. No endless email threads.",
+  },
+  {
+    icon: Users,
+    title: "Client Collaboration",
+    description: "Developers add designs and notes. Clients inspect, test, and provide direct feedback.",
+  },
+  {
     icon: CheckCircle,
     title: "1-Click Sign-off",
     description: "Clients verify and approve workflows with a single click. Export presentation reports.",
   },
-  {
-    icon: Share2,
-    title: "Frictionless Sharing",
-    description: "Generate secure invite links with custom view or edit permissions. No login required.",
-  },
 ]
 
 const STEPS = [
-  { step: "1", title: "Import Designs", description: "Upload Figma designs and set live app URLs." },
-  { step: "2", title: "Add Context", description: "Detail technical constraints and design structure." },
-  { step: "3", title: "Share Link", description: "Clients test the live simulator and leave feedback." },
-  { step: "4", title: "Get Approved", description: "Clients approve workflows with 1-click verification." },
+  { step: "1", title: "Import Figma ZIP", description: "Drop exported Figma .zip archives to extract and select your design screens instantly." },
+  { step: "2", title: "Set Live Simulator", description: "Attach live staging URLs and configure device frames side-by-side." },
+  { step: "3", title: "Collaborate & Note", description: "Clients test interactive frames and leave structured screen feedback." },
+  { step: "4", title: "1-Click Sign-off", description: "Verify approvals and export presentation-ready review reports." },
 ]
 
 const PrimaryButton = ({
@@ -401,7 +411,7 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
           </h1>
 
           <p className="text-base md:text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10 font-medium animate-in fade-in duration-700">
-            Test live preview URLs in responsive device frames, compare against Figma specs side-by-side, and collaborate with structured notes and 1-click approvals.
+            Import screens directly from exported Figma .zip archives, test live URLs in responsive device frames side-by-side, and collaborate with structured notes and 1-click approvals.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 animate-in fade-in duration-700">
