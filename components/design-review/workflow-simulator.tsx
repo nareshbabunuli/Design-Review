@@ -54,7 +54,6 @@ import {
   FrameFinish,
   getDeviceFrameMetrics,
 } from "./device-frame"
-import { ThemeToggle } from "./theme-toggle"
 
 // ============================================================================
 // Types & Constants
@@ -1457,13 +1456,6 @@ export function WorkflowSimulator({
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
-
-          {/* Theme toggle - Hidden on mobile */}
-          {onToggleTheme && (
-            <div className="hidden sm:block">
-              <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-            </div>
-          )}
         </div>
 
         {/* Center: primary comparison mode */}
@@ -1496,167 +1488,10 @@ export function WorkflowSimulator({
             <span className="hidden sm:inline">Difference</span>
           </ToolbarButton>
           
-          {/* Browser Navigation & Mode Toggle */}
-          <div className="flex items-center gap-0.5 bg-transparent">
-            {/* Back Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (navIndex > 0) handleGoBack()
-              }}
-              disabled={navIndex === 0}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Back"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            
-            {/* Forward Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (navIndex < navHistory.length - 1) handleGoForward()
-              }}
-              disabled={navIndex >= navHistory.length - 1}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Forward"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-            
-            {/* Reload Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (iframeRef.current) {
-                  iframeRef.current.src = currentUrl
-                }
-              }}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Reload"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-            
-            {/* Mode Toggle: Screenshot/URL */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = !isLiveCanvas
-                setIsLiveCanvas(next)
-                if (typeof window !== "undefined") {
-                  localStorage.setItem("simulator_is_live_mode", String(next))
-                }
-                triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
-              }}
-              className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
-                  ? "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
-                  : "text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-                }`}
-              title={isLiveCanvas ? "Switch to Screenshot view" : "Switch to Live URL view"}
-            >
-              {isLiveCanvas ? (
-                <Globe className="w-3.5 h-3.5" />
-              ) : (
-                <Camera className="w-3.5 h-3.5" />
-              )}
-            </button>
-          </div>
-          
-          {/* Live/Screenshot Toggle Icon */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = !isLiveCanvas
-              setIsLiveCanvas(next)
-              if (typeof window !== "undefined") {
-                localStorage.setItem("simulator_is_live_mode", String(next))
-              }
-              triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
-            }}
-            className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
-                ? "text-purple-600 dark:text-purple-400"
-                : "text-emerald-600 dark:text-emerald-400"
-              }`}
-            title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-          </button>
         </div>
 
-        <div className="hidden md:flex w-full sm:w-auto items-center justify-start sm:justify-end gap-1.5 sm:gap-2 shrink-0 order-2 ml-0 sm:ml-auto flex-wrap">
-
-          {/* Browser Navigation & Mode Toggle - With Border */}
-          <div className="flex items-center gap-0.5 bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-lg p-0.5 shadow-xs transition-colors">
-            {/* Back Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (navIndex > 0) handleGoBack()
-              }}
-              disabled={navIndex === 0}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Back"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            
-            {/* Forward Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (navIndex < navHistory.length - 1) handleGoForward()
-              }}
-              disabled={navIndex >= navHistory.length - 1}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Forward"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-            
-            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
-            
-            {/* Reload Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (iframeRef.current) {
-                  iframeRef.current.src = currentUrl
-                }
-              }}
-              className="p-1 rounded transition cursor-pointer text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
-              title="Reload"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-            
-            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
-            
-            {/* Mode Toggle: Screenshot/URL */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = !isLiveCanvas
-                setIsLiveCanvas(next)
-                if (typeof window !== "undefined") {
-                  localStorage.setItem("simulator_is_live_mode", String(next))
-                }
-                triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
-              }}
-              className={`p-1 rounded transition cursor-pointer shrink-0 ${isLiveCanvas
-                  ? "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430]"
-                  : "text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-                }`}
-              title={isLiveCanvas ? "Switch to Screenshot view" : "Switch to Live URL view"}
-            >
-              {isLiveCanvas ? (
-                <Globe className="w-3.5 h-3.5" />
-              ) : (
-                <Camera className="w-3.5 h-3.5" />
-              )}
-            </button>
-          </div>
-
+        {/* Right: Options + Capture + Fullscreen */}
+        <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0 order-2 ml-auto">
           {/* Options toggle with checkbox */}
           <label
             className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showOptions
@@ -1698,15 +1533,15 @@ export function WorkflowSimulator({
             title={isAreaSelectionActive ? "Capture the selected area from live screen" : "Capture full app screen (clean, full height including bottom navigation)"}
           >
             <Camera className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}</span>
+            <span className="hidden sm:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Area" : "Capture App Screen"}</span>
           </button>
 
-          {/* Upload exact screenshot button (icon only beside capture) */}
+          {/* Upload exact screenshot button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isSavingScreenshot}
-            className="p-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg flex items-center justify-center transition shadow-xs cursor-pointer disabled:opacity-50"
+            className="hidden sm:flex p-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg items-center justify-center transition shadow-xs cursor-pointer disabled:opacity-50"
             title="Upload exact screenshot image"
             aria-label="Upload exact screenshot image"
           >
@@ -1717,7 +1552,7 @@ export function WorkflowSimulator({
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="p-1.5 text-xs font-semibold rounded-lg flex items-center gap-1 transition shadow-xs cursor-pointer bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white"
+            className="hidden sm:flex p-1.5 text-xs font-semibold rounded-lg items-center gap-1 transition shadow-xs cursor-pointer bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white"
             title="Hide Total Header (Fullscreen Canvas)"
             aria-label="Hide Total Header"
           >
@@ -1945,8 +1780,8 @@ export function WorkflowSimulator({
             >
               <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  {/* Dashboard Link */}
-                  {onNavigateView && (
+                  {/* Dashboard Link - Only in fullscreen when top header is hidden */}
+                  {isFullscreen && onNavigateView && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1954,15 +1789,15 @@ export function WorkflowSimulator({
                           onNavigateView("dashboard")
                         }
                       }}
-                        className="hidden sm:block p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
+                      className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
                       title="Return to Dashboard"
                     >
                       <FolderKanban className="w-3.5 h-3.5" />
                     </button>
                   )}
 
-                  {/* Screen Switcher */}
-                  <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0">
+                  {/* Screen Switcher - Show only on mobile or in fullscreen mode when top header dropdown is hidden */}
+                  <div className={`${isFullscreen ? "flex" : "flex md:hidden"} items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0`}>
                     <button
                       type="button"
                       onClick={handlePrevWorkflow}
@@ -2036,41 +1871,6 @@ export function WorkflowSimulator({
                     <Smartphone className="w-3 h-3" />
                     <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
                   </button>
-
-                  {/* Live Screen Toggle */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !isLiveCanvas
-                      setIsLiveCanvas(next)
-                      if (typeof window !== "undefined") {
-                        localStorage.setItem("simulator_is_live_mode", String(next))
-                      }
-                      triggerToast(next ? "Showing Live Preview" : "Showing App Screenshot")
-                    }}
-                    className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                      isLiveCanvas
-                        ? "bg-purple-600 text-white border-purple-500 shadow-xs"
-                        : "bg-emerald-600 text-white border-emerald-500 shadow-xs"
-                    }`}
-                    title={isLiveCanvas ? "Switch to App Screenshot preview" : "Switch to Live Preview"}
-                  >
-                    <Globe className="w-3 h-3" />
-                    <span>{isLiveCanvas ? "Live Screen" : "Screenshot"}</span>
-                  </button>
-
-                  {/* Capture button in Panel A shows only in fullscreen mode (main header has capture in normal mode) */}
-                  {isFullscreen && (
-                    <button
-                      type="button"
-                      onClick={() => handleLiveScreenCapture(false)}
-                      disabled={isCapturing || isSavingScreenshot}
-                      className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                      title="Capture App Screen"
-                    >
-                      <Camera className="w-3 h-3" />
-                    </button>
-                  )}
                 </div>
 
                 <div className="hidden sm:block font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
@@ -2244,6 +2044,41 @@ export function WorkflowSimulator({
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   )}
                 </button>
+
+                {/* Mode Toggle: Live URL view vs Captured Screenshot */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isLiveCanvas
+                    setIsLiveCanvas(next)
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("simulator_is_live_mode", String(next))
+                    }
+                    triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+                  }}
+                  className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border items-center gap-1 transition cursor-pointer shrink-0 ${
+                    isLiveCanvas
+                      ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-600/50 text-purple-700 dark:text-purple-300"
+                      : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-600/50 text-emerald-700 dark:text-emerald-300"
+                  }`}
+                  title={isLiveCanvas ? "Switch to saved screenshot" : "Switch to interactive live preview"}
+                >
+                  {isLiveCanvas ? <Globe className="w-3 h-3" /> : <Camera className="w-3 h-3" />}
+                  <span>{isLiveCanvas ? "Live App" : "Screenshot"}</span>
+                </button>
+
+                {/* Capture button in Panel B for fullscreen mode */}
+                {isFullscreen && (
+                  <button
+                    type="button"
+                    onClick={() => handleLiveScreenCapture(false)}
+                    disabled={isCapturing || isSavingScreenshot}
+                    className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                    title="Capture App Screen"
+                  >
+                    <Camera className="w-3 h-3" />
+                  </button>
+                )}
               </div>
 
               <div
