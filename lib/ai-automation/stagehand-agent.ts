@@ -7,7 +7,7 @@ type StagehandHooks = {
   uploadScreenshot: (buffer: Buffer, workflowId: string, suffix: string) => Promise<string>
 }
 
-type AgentRunResult = {
+type RunnerRunResult = {
   success?: boolean
   message?: string
   actions?: Array<{
@@ -36,7 +36,7 @@ function actionType(value: string): "navigate" | "click" | "type" | "back" | "sc
  * Runs Stagehand's open-source autonomous browser agent inside the browser
  * already launched by our Puppeteer runner. This keeps Design Review's
  * screenshots, cursor overlay and report pipeline while delegating browser
- * reasoning to an established agentic engine.
+ * reasoning to an established browser engine.
  */
 export async function runStagehandExploration(
   job: AutomationJob,
@@ -49,7 +49,7 @@ export async function runStagehandExploration(
 
   const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY
   if (!apiKey && !params.aiBaseUrl) {
-    throw new Error("Stagehand exploration requires an AI provider key or local AI base URL.")
+    throw new Error("Stagehand exploration requires an model provider key or local  base URL.")
   }
 
   const modelName = params.aiModel || "google/gemini-2.0-flash-001"
@@ -67,7 +67,7 @@ export async function runStagehandExploration(
     verbose: 1,
   }
 
-  hooks.appendLog(job, "info", `Agentic engine: Stagehand ${modelName} (open-source browser agent)`)
+  hooks.appendLog(job, "info", `Runneric engine: Stagehand ${modelName} (open-source browser engine)`)
 
   const stagehand = new Stagehand(stagehandConfig)
   const visitedUrls = new Set<string>([job.targetUrl])
@@ -124,14 +124,14 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
       maxSteps,
       highlightCursor: true,
       page: stagePage,
-    } as any)) as AgentRunResult
+    } as any)) as RunnerRunResult
 
     const actionList = Array.isArray(result?.actions) ? result.actions : []
     actionCount = actionList.length
 
     for (const [index, action] of actionList.entries()) {
       const raw = `${action.type || ""} ${action.action || ""}`.trim()
-      const description = action.action || action.type || "Agent action"
+      const description = action.action || action.type || "Runner action"
       const risky = RISKY_ACTION.test(description)
 
       if (risky) {
@@ -142,10 +142,10 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
       hooks.appendLog(
         job,
         "info",
-        `Agent [${index + 1}/${actionList.length}] ${description}${action.reasoning ? ` — ${action.reasoning}` : ""}`,
+        `Runner [${index + 1}/${actionList.length}] ${description}${action.reasoning ? ` — ${action.reasoning}` : ""}`,
       )
 
-      job.currentStep = `Agent: ${description}`
+      job.currentStep = `Runner: ${description}`
       job.progress = Math.min(90, 25 + Math.round(((index + 1) / Math.max(actionList.length, 1)) * 60))
       hooks.saveJob(job)
 
@@ -182,11 +182,11 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
 
       job.screens.push({
         url: finalUrl,
-        title: finalTitle.trim() || new URL(finalUrl).pathname || "Agent Exploration",
+        title: finalTitle.trim() || new URL(finalUrl).pathname || "Runner Exploration",
         path: new URL(finalUrl).pathname || "/",
         testedAt: new Date().toISOString(),
         screenshotUrl,
-        screenshots: { Agent: screenshotUrl },
+        screenshots: { Runner: screenshotUrl },
         backNavigationStatus: "passed",
         responsiveStatus: "passed",
         issuesCount: issues.length,
@@ -197,7 +197,7 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
     hooks.appendLog(
       job,
       result?.success === false ? "warn" : "success",
-      `Agentic exploration finished: ${actionCount} agent actions across ${visitedUrls.size} URL state(s). ${result?.message || ""}`,
+      `Runneric exploration finished: ${actionCount} agent actions across ${visitedUrls.size} URL state(s). ${result?.message || ""}`,
     )
 
     return { pagesVisited: visitedUrls.size, actions: actionCount, issues }
