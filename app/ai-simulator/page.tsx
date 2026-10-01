@@ -193,7 +193,8 @@ export default function AISimulatorPage() {
   // Laya Fast System-1 Reflexes & Journey Role State
   const [journeyRole, setJourneyRole] = useState<"user" | "admin" | "client" | "editor" | "viewer" | "custom">("user")
   const [customJourneyRole, setCustomJourneyRole] = useState("")
-  const [layaBaseUrl, setLayaBaseUrl] = useState("http://127.0.0.1:8000")
+  const [enableLaya, setEnableLaya] = useState(false)
+  const [layaBaseUrl, setLayaBaseUrl] = useState("http://127.0.0.1:8001")
   const [isLayaLive, setIsLayaLive] = useState(false)
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null)
 
@@ -219,13 +220,24 @@ export default function AISimulatorPage() {
     fetchLocalRoutes()
   }, [fetchLocalRoutes])
 
-  // Laya fast health checker
+  // Laya fast health checker (runs only if explicitly enabled)
   useEffect(() => {
+    if (!enableLaya) {
+      setIsLayaLive(false)
+      return
+    }
     let active = true
     const checkLaya = async () => {
       try {
-        const res = await fetch(`${layaBaseUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(1500) }).catch(() => null)
-        if (active) setIsLayaLive(Boolean(res?.ok))
+        const res = await fetch(`/api/ai-automation/laya-health?baseUrl=${encodeURIComponent(layaBaseUrl)}`, {
+          signal: AbortSignal.timeout(2500),
+        }).catch(() => null)
+        if (!res || !res.ok) {
+          if (active) setIsLayaLive(false)
+          return
+        }
+        const data = await res.json().catch(() => null)
+        if (active) setIsLayaLive(Boolean(data?.live))
       } catch {
         if (active) setIsLayaLive(false)
       }
@@ -236,7 +248,7 @@ export default function AISimulatorPage() {
       active = false
       clearInterval(timer)
     }
-  }, [layaBaseUrl])
+  }, [enableLaya, layaBaseUrl])
 
   // AI Agent Chat Command Center State
   const [activeDockTab, setActiveDockTab] = useState<"chat" | "crawl" | "report">("chat")
@@ -382,6 +394,10 @@ export default function AISimulatorPage() {
     if (savedOmniKey) setOmniRouterKey(savedOmniKey)
     const savedOmniModel = localStorage.getItem("omnirouter_model")
     if (savedOmniModel) setOmniRouterModel(savedOmniModel)
+    const savedEnableLaya = localStorage.getItem("enable_laya_reflexes")
+    if (savedEnableLaya !== null) setEnableLaya(savedEnableLaya === "true")
+    const savedLayaUrl = localStorage.getItem("laya_base_url")
+    if (savedLayaUrl) setLayaBaseUrl(savedLayaUrl)
   }, [])
 
   const handleUpdateOpenRouterKey = (key: string) => {
@@ -422,6 +438,16 @@ export default function AISimulatorPage() {
   const handleUpdateOmniRouterModel = (model: string) => {
     setOmniRouterModel(model)
     localStorage.setItem("omnirouter_model", model)
+  }
+
+  const handleToggleLaya = (enabled: boolean) => {
+    setEnableLaya(enabled)
+    localStorage.setItem("enable_laya_reflexes", String(enabled))
+  }
+
+  const handleUpdateLayaUrl = (url: string) => {
+    setLayaBaseUrl(url)
+    localStorage.setItem("laya_base_url", url)
   }
 
   // Theme initialization
@@ -767,7 +793,7 @@ export default function AISimulatorPage() {
           url: targetUrl.trim(),
           projectId: activeProject.id,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
-          layaBaseUrl: layaBaseUrl.trim() || "http://127.0.0.1:8000",
+          layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials:
             username || password
               ? {
@@ -1721,19 +1747,45 @@ export default function AISimulatorPage() {
                           )}
                         </div>
 
-                        {/* Laya Fast Decision Reflexes Status */}
-                        <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-[11px]">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full ${isLayaLive ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
-                            <span className="text-slate-300 font-medium">Laya System-1 Reflexes</span>
+                        {/* Laya Fast Decision Reflexes Card (Optional Toggle) */}
+                        <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2 text-[11px]">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={enableLaya}
+                                onChange={(e) => handleToggleLaya(e.target.checked)}
+                                className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
+                              />
+                              <span className="text-slate-300 font-medium">Use Laya Reflexes</span>
+                              <span className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Optional</span>
+                            </label>
+                            <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${
+                              !enableLaya
+                                ? "bg-slate-900 text-slate-500 border border-slate-800"
+                                : isLayaLive
+                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                            }`}>
+                              {!enableLaya ? "Off (Heuristic)" : isLayaLive ? "Ready (~30ms)" : "Offline"}
+                            </span>
                           </div>
-                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded ${
-                            isLayaLive
-                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                              : "bg-slate-800 text-slate-400"
-                          }`}>
-                            {isLayaLive ? "Ready (~30ms)" : "Offline (DOM Fallback)"}
-                          </span>
+
+                          {enableLaya && (
+                            <div className="pt-1.5 border-t border-slate-900 space-y-1">
+                              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Laya Gateway URL</span>
+                                <span className="text-slate-500 font-mono text-[9px]">e.g. port 8001</span>
+                              </div>
+                              <input
+                                type="text"
+                                value={layaBaseUrl}
+                                onChange={(e) => handleUpdateLayaUrl(e.target.value)}
+                                placeholder="http://127.0.0.1:8001"
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
+                              />
+                            </div>
+                          )}
                         </div>
 
                         {/* Credentials Toggle */}

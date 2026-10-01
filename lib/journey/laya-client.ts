@@ -5,7 +5,7 @@
 
 import type { PageType } from "./types"
 
-const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || "http://127.0.0.1:8000"
+const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || ""
 
 interface PredictPayload {
   state: string
@@ -20,6 +20,7 @@ async function predict(
   baseUrl: string,
   payload: PredictPayload
 ): Promise<Record<string, any> | null> {
+  if (!baseUrl || !baseUrl.trim()) return null
   const cleanBase = baseUrl.replace(/\/$/, "")
   const endpoints = [`${cleanBase}/v1/systemone`, `${cleanBase}/predict`]
 
@@ -45,6 +46,7 @@ async function predict(
 }
 
 export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boolean> {
+  if (!baseUrl || !baseUrl.trim()) return false
   const cleanBase = baseUrl.replace(/\/$/, "")
   const healthEndpoints = [`${cleanBase}/health`, `${cleanBase}/`]
   for (const url of healthEndpoints) {

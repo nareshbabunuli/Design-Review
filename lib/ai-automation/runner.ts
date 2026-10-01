@@ -767,33 +767,35 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       const screenTitle = rawTitle.trim() || new URL(screenUrl).pathname || "Screen"
       const screenPath = new URL(screenUrl).pathname || "/"
 
-      // Laya System-1 Fast Classification (~30ms)
+      // Laya System-1 Fast Classification (~30ms) - only if configured
       const pageText = await page.evaluate(() => document.body?.innerText || "").catch(() => "")
       const layaUrl = params.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
       let classifiedPageType: PageType = "other"
       let layaHasBlocker = false
 
-      try {
-        const layaResult = await classifyPage(pageText, screenUrl, layaUrl)
-        if (layaResult) {
-          classifiedPageType = layaResult.pageType
-          layaHasBlocker = layaResult.hasBlockingIssue
-          appendLog(
-            job,
-            "info",
-            `[Laya ~30ms] Screen classified as: ${classifiedPageType.toUpperCase()} (Ready: ${layaResult.ready ? "Stable" : "Loading"}, Blocker: ${layaHasBlocker ? "YES" : "NO"})`
-          )
+      if (layaUrl) {
+        try {
+          const layaResult = await classifyPage(pageText, screenUrl, layaUrl)
+          if (layaResult) {
+            classifiedPageType = layaResult.pageType
+            layaHasBlocker = layaResult.hasBlockingIssue
+            appendLog(
+              job,
+              "info",
+              `[Laya ~30ms] Screen classified as: ${classifiedPageType.toUpperCase()} (Ready: ${layaResult.ready ? "Stable" : "Loading"}, Blocker: ${layaHasBlocker ? "YES" : "NO"})`
+            )
 
-          await recordAgentAction(job, page, {
-            type: "inspect",
-            description: `[Laya System-1] Classified as ${classifiedPageType.toUpperCase()}`,
-            thought: `Laya fast decision: identified page type "${classifiedPageType}" for ${params.role || "user"} flow. Layout readiness: ${layaResult.ready ? "Interactive" : "Loading"}.`,
-            target: screenUrl,
-            status: layaHasBlocker ? "failed" : "passed",
-          })
+            await recordAgentAction(job, page, {
+              type: "inspect",
+              description: `[Laya System-1] Classified as ${classifiedPageType.toUpperCase()}`,
+              thought: `Laya fast decision: identified page type "${classifiedPageType}" for ${params.role || "user"} flow. Layout readiness: ${layaResult.ready ? "Interactive" : "Loading"}.`,
+              target: screenUrl,
+              status: layaHasBlocker ? "failed" : "passed",
+            })
+          }
+        } catch (layaErr: any) {
+          console.warn("[Laya] Classification notice:", layaErr?.message)
         }
-      } catch (layaErr: any) {
-        console.warn("[Laya] Classification notice:", layaErr?.message)
       }
 
       await recordAgentAction(job, page, {
