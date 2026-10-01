@@ -54,34 +54,55 @@ export default function ResetPasswordPage() {
         const params = new URLSearchParams(window.location.search)
         const code = params.get("code")
 
+        // Tracks whether this visit carried a one-time recovery marker.
+        // Markers are sticky (Back button, bookmarks), so they must be
+        // consumed exactly once and then stripped from the URL.
+        let consumedRecoveryMarker = false
+
         if (code) {
+          consumedRecoveryMarker = true
           const { error } = await supabase.auth.exchangeCodeForSession(code)
           if (error) {
             console.warn("Code exchange failed:", error.message)
-          } else {
-            if (isMounted) setHasValidSession(true)
           }
         }
 
         const token_hash = params.get("token_hash")
         const type = params.get("type") as any
         if (token_hash && type) {
+          consumedRecoveryMarker = true
           const { error } = await supabase.auth.verifyOtp({ token_hash, type })
-          if (!error && isMounted) {
-            setHasValidSession(true)
+          if (error) {
+            console.warn("Recovery token verification failed:", error.message)
           }
         }
 
-        // 2. Check if hash tokens exist (#access_token=...&type=recovery)
+        // 2. Check if hash tokens exist (#access_token=...&type=recovery).
+        // Note: the Supabase client already consumed these into storage during
+        // init — the hash alone is NOT proof of a usable session.
         const hash = window.location.hash
         if (hash && (hash.includes("type=recovery") || hash.includes("access_token"))) {
-          if (isMounted) setHasValidSession(true)
+          consumedRecoveryMarker = true
         }
 
-        // 3. Check existing session
+        // 3. The only thing that makes "Update Password" work is a real
+        // session. A stale/expired recovery link leaves its markers behind
+        // with no usable session — say so instead of showing a dead form.
         const { data: { session } } = await supabase.auth.getSession()
-        if (session && isMounted) {
+        if (!isMounted) return
+        if (session) {
           setHasValidSession(true)
+        } else if (consumedRecoveryMarker) {
+          setHasValidSession(false)
+          setErrorMessage(
+            "This password reset link is invalid or has expired. Please go back to sign in and request a new reset link."
+          )
+        }
+
+        // 4. Strip one-time recovery markers from the URL now that they have
+        // been consumed, so they can never bounce the user back here again.
+        if (consumedRecoveryMarker && isMounted) {
+          window.history.replaceState(null, "", window.location.pathname)
         }
       } catch (err) {
         console.error("Auth init error:", err)
@@ -94,7 +115,10 @@ export default function ResetPasswordPage() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (!isMounted) return
-      if (event === "PASSWORD_RECOVERY" || session) {
+      // Only a real session counts. A bare PASSWORD_RECOVERY event with no
+      // session means a stale/expired recovery marker — initAuth above
+      // already handles that case with a clear message.
+      if (session) {
         setHasValidSession(true)
       }
     })
@@ -137,7 +161,21 @@ export default function ResetPasswordPage() {
       })
 
       if (error) {
-        setErrorMessage(error.message)
+        const msg = error.message || ""
+        // The recovery session is gone (expired / already used) — don't
+        // leave the user on a dead form. Clear local state and point them
+        // back to sign in for a fresh reset link.
+        if (/session|jwt|token|expired/i.test(msg)) {
+          try {
+            await supabase.auth.signOut()
+          } catch {}
+          setHasValidSession(false)
+          setErrorMessage(
+            "This reset link is no longer valid. Please go back to sign in and request a new password reset link."
+          )
+        } else {
+          setErrorMessage(msg)
+        }
         setLoading(false)
         return
       }
