@@ -13,6 +13,8 @@ import {
   AgentChatMessage,
 } from "./types"
 import { analyzeScreenWithAI, generateAIExecutiveReport, interpretCommandWithAI } from "./openrouter"
+import type { AICommandInterpretation } from "./openrouter"
+import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
@@ -560,13 +562,26 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       job.currentStep = `Interpreting command: "${params.userInstruction}"`
       saveJob(job)
 
-      const plan = await interpretCommandWithAI({
-        command: params.userInstruction,
-        currentUrl: page.url(),
-        apiKey: openRouterKey,
-        baseUrl: params.aiBaseUrl,
-        model: params.aiModel,
-      })
+      // Laya System-1 reflex fast-path (~30ms local): resolve simple commands
+      // without a slow, rate-limited cloud model call. Escalates automatically
+      // when Laya is offline or unsure — the cloud interpreter runs unchanged.
+      let plan: AICommandInterpretation | null = await tryLayaReflexPlan(
+        page,
+        params.userInstruction,
+        params.layaBaseUrl,
+      ).catch(() => null)
+      if (plan) {
+        appendLog(job, "success", "[Laya reflex] Fast-path plan accepted — skipping cloud interpretation.")
+      } else {
+        appendLog(job, "info", "Laya reflex unsure or offline — escalating to cloud command interpreter.")
+        plan = await interpretCommandWithAI({
+          command: params.userInstruction,
+          currentUrl: page.url(),
+          apiKey: openRouterKey,
+          baseUrl: params.aiBaseUrl,
+          model: params.aiModel,
+        })
+      }
 
       appendLog(job, "info", `AI Plan: ${plan.planSummary}`)
       if (job.messages && job.messages.length > 1) {
@@ -592,7 +607,13 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
           })
         } else if (act.type === "click") {
           const targetStr = act.target || ""
-          let selector = targetStr.startsWith("#") || targetStr.startsWith(".") || targetStr.includes("[") ? targetStr : null
+          let selector =
+            targetStr.startsWith("#") ||
+            targetStr.startsWith(".") ||
+            targetStr.includes("[") ||
+            targetStr.includes(":nth-of-type(")
+              ? targetStr
+              : null
 
           if (!selector && targetStr) {
             selector = await page.evaluate((txt) => {
