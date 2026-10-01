@@ -21,6 +21,7 @@ export type DiscoveredScreen = {
   url: string
   title: string
   path: string
+  pageType?: string
   testedAt: string
   screenshotUrl?: string
   screenshots: Record<string, string> // viewport name -> publicUrl or base64
@@ -28,6 +29,7 @@ export type DiscoveredScreen = {
   responsiveStatus: "passed" | "warning" | "failed"
   workflowId?: string
   issuesCount: number
+  issues?: AutomationIssue[]
   aiAnalysis?: {
     uxScore: number
     summary: string
@@ -52,6 +54,7 @@ export type AutomationReport = {
   summary: string
   recommendations: string[]
   issues?: AutomationIssue[]
+  chainedWorkflowId?: string
   aiExecutiveSummary?: {
     executiveSummary: string
     keyStrengths: string[]
@@ -110,6 +113,9 @@ export type AutomationJob = {
   report?: AutomationReport
   aiModel?: string
   aiBaseUrl?: string
+  layaBaseUrl?: string
+  role?: string
+  chainedWorkflowId?: string
   error?: string
 }
 
@@ -117,6 +123,8 @@ export type StartAutomationRequest = {
   url: string
   projectId: string
   userInstruction?: string
+  role?: string
+  layaBaseUrl?: string
   credentials?: {
     username?: string
     password?: string
@@ -130,3 +138,4 @@ export type StartAutomationRequest = {
   aiModel?: string
   aiBaseUrl?: string
 }
+

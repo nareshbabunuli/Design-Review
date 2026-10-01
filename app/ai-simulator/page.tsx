@@ -190,6 +190,13 @@ export default function AISimulatorPage() {
   const [isPlayingReplay, setIsPlayingReplay] = useState(false)
   const [isAntigravityHudExpanded, setIsAntigravityHudExpanded] = useState(true)
 
+  // Laya Fast System-1 Reflexes & Journey Role State
+  const [journeyRole, setJourneyRole] = useState<"user" | "admin" | "client" | "editor" | "viewer" | "custom">("user")
+  const [customJourneyRole, setCustomJourneyRole] = useState("")
+  const [layaBaseUrl, setLayaBaseUrl] = useState("http://127.0.0.1:8000")
+  const [isLayaLive, setIsLayaLive] = useState(false)
+  const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null)
+
   // Local Project Route Scanner State
   const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
   const [isScanningRoutes, setIsScanningRoutes] = useState(false)
@@ -211,6 +218,25 @@ export default function AISimulatorPage() {
   useEffect(() => {
     fetchLocalRoutes()
   }, [fetchLocalRoutes])
+
+  // Laya fast health checker
+  useEffect(() => {
+    let active = true
+    const checkLaya = async () => {
+      try {
+        const res = await fetch(`${layaBaseUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(1500) }).catch(() => null)
+        if (active) setIsLayaLive(Boolean(res?.ok))
+      } catch {
+        if (active) setIsLayaLive(false)
+      }
+    }
+    checkLaya()
+    const timer = setInterval(checkLaya, 12000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [layaBaseUrl])
 
   // AI Agent Chat Command Center State
   const [activeDockTab, setActiveDockTab] = useState<"chat" | "crawl" | "report">("chat")
@@ -740,6 +766,8 @@ export default function AISimulatorPage() {
         body: JSON.stringify({
           url: targetUrl.trim(),
           projectId: activeProject.id,
+          role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
+          layaBaseUrl: layaBaseUrl.trim() || "http://127.0.0.1:8000",
           credentials:
             username || password
               ? {
@@ -1025,6 +1053,111 @@ export default function AISimulatorPage() {
           <>
             {/* 1. CORE WORKFLOW SIMULATOR CANVAS */}
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
+              {/* Visible Workflow Journey Sequence Strip (Login ➔ Home Page ➔ Dashboard...) */}
+              {currentJob?.screens && currentJob.screens.length > 0 && (
+                <div className="bg-slate-950/95 border-b border-slate-800/80 px-4 py-2.5 flex items-center justify-between gap-4 z-20 shrink-0 backdrop-blur-md">
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white tracking-tight">
+                          Workflow Journey
+                        </span>
+                        {currentJob.chainedWorkflowId && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            Saved to Workflows
+                          </span>
+                        )}
+                        {currentJob.role && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-300 font-mono">
+                            {currentJob.role}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {currentJob.screens.length} step(s) captured · Click any step to inspect
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Horizontal Scrolling Sequence of Steps */}
+                  <div className="flex-1 flex items-center gap-2 overflow-x-auto py-1 custom-scrollbar">
+                    {currentJob.screens.map((screen, idx) => {
+                      const isSelected = selectedStepIndex === idx
+                      const isLast = idx === currentJob.screens.length - 1
+                      return (
+                        <div key={idx} className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedStepIndex(idx)
+                              const targetWfId = screen.workflowId || `bot-screen-${idx}`
+                              setActiveWorkflowId(targetWfId)
+                            }}
+                            className={`group flex items-center gap-2.5 p-1.5 pr-3 rounded-xl border transition text-left cursor-pointer ${
+                              isSelected
+                                ? "bg-indigo-950/60 border-indigo-500/70 shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-400"
+                                : "bg-slate-900/90 border-slate-800 hover:border-slate-700 hover:bg-slate-850"
+                            }`}
+                          >
+                            {/* Thumbnail */}
+                            <div className="w-12 h-9 rounded-lg overflow-hidden bg-slate-950 border border-slate-800 relative shrink-0">
+                              {screen.screenshotUrl ? (
+                                <img
+                                  src={screen.screenshotUrl}
+                                  alt={screen.title}
+                                  className="w-full h-full object-cover object-top"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">
+                                  📸
+                                </div>
+                              )}
+                              <span className="absolute top-0.5 left-0.5 px-1 py-0.2 bg-black/75 rounded text-[8px] font-mono font-bold text-white">
+                                {idx + 1}
+                              </span>
+                            </div>
+
+                            {/* Step info */}
+                            <div className="min-w-0 max-w-[130px]">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] font-bold uppercase font-mono px-1 rounded bg-purple-500/20 text-purple-300">
+                                  {screen.pageType || "SCREEN"}
+                                </span>
+                                {screen.issuesCount > 0 ? (
+                                  <span className="text-[9px] font-bold text-rose-400 flex items-center gap-0.5">
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    {screen.issuesCount}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-bold text-emerald-400 flex items-center gap-0.5">
+                                    <CheckCircle2 className="w-2.5 h-2.5" />
+                                    Pass
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] font-semibold text-slate-200 truncate mt-0.5">
+                                {screen.title}
+                              </p>
+                              <p className="text-[9px] text-slate-500 truncate font-mono">
+                                {screen.path || screen.url}
+                              </p>
+                            </div>
+                          </button>
+
+                          {/* Arrow connector */}
+                          {!isLast && (
+                            <ChevronRight className="w-4 h-4 text-slate-600 shrink-0" />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               <WorkflowSimulator
                 project={mergedSimulatorProject}
                 initialWorkflowId={activeWorkflowId}
@@ -1555,26 +1688,52 @@ export default function AISimulatorPage() {
                           </div>
                         </div>
 
-                        {/* Test options */}
-                        <div className="pt-1 flex flex-col gap-1.5 text-[11px] text-slate-300 border-t border-slate-800/80">
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={checkBackNav}
-                              onChange={(e) => setCheckBackNav(e.target.checked)}
-                              className="rounded border-slate-700 bg-slate-950 text-indigo-600 accent-indigo-600 focus:ring-0"
-                            />
-                            <span>Test back button integrity on each screen</span>
+                        {/* Journey Role Selector */}
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                            <span>Journey Role</span>
+                            <span className="text-[10px] text-indigo-400 font-mono">Laya System-1</span>
                           </label>
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <div className="flex flex-wrap gap-1">
+                            {(["user", "admin", "client", "editor", "custom"] as const).map((r) => (
+                              <button
+                                key={r}
+                                type="button"
+                                onClick={() => setJourneyRole(r)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase transition cursor-pointer ${
+                                  journeyRole === r
+                                    ? "bg-indigo-600 text-white shadow-xs font-semibold"
+                                    : "bg-slate-950 border border-slate-800 text-slate-400 hover:text-white"
+                                }`}
+                              >
+                                {r}
+                              </button>
+                            ))}
+                          </div>
+                          {journeyRole === "custom" && (
                             <input
-                              type="checkbox"
-                              checked={checkResponsive}
-                              onChange={(e) => setCheckResponsive(e.target.checked)}
-                              className="rounded border-slate-700 bg-slate-950 text-indigo-600 accent-indigo-600 focus:ring-0"
+                              type="text"
+                              value={customJourneyRole}
+                              onChange={(e) => setCustomJourneyRole(e.target.value)}
+                              placeholder="Custom role (e.g. VIP Member)"
+                              className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white placeholder-slate-500 mt-1"
                             />
-                            <span>Audit 3 viewports (390px, 768px, 1440px)</span>
-                          </label>
+                          )}
+                        </div>
+
+                        {/* Laya Fast Decision Reflexes Status */}
+                        <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${isLayaLive ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+                            <span className="text-slate-300 font-medium">Laya System-1 Reflexes</span>
+                          </div>
+                          <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded ${
+                            isLayaLive
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : "bg-slate-800 text-slate-400"
+                          }`}>
+                            {isLayaLive ? "Ready (~30ms)" : "Offline (DOM Fallback)"}
+                          </span>
                         </div>
 
                         {/* Credentials Toggle */}
@@ -2094,6 +2253,31 @@ export default function AISimulatorPage() {
                                   <span>AI Executive Review:</span>
                                 </span>
                                 <p className="leading-relaxed">{currentJob.report.aiExecutiveSummary.executiveSummary}</p>
+                              </div>
+                            )}
+
+                            {/* Chained Journey Workflow Banner */}
+                            {currentJob.chainedWorkflowId && (
+                              <div className="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/40 flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider block">
+                                    🏁 Workflow Chain Created
+                                  </span>
+                                  <p className="text-xs font-semibold text-white truncate">
+                                    {currentJob.screens.map((s) => s.pageType ? s.pageType.toUpperCase() : s.title).join(" ➔ ")}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (currentJob.chainedWorkflowId) {
+                                      setActiveWorkflowId(currentJob.chainedWorkflowId)
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold shrink-0 transition shadow-xs cursor-pointer"
+                                >
+                                  Inspect Chain ➔
+                                </button>
                               </div>
                             )}
                           </div>

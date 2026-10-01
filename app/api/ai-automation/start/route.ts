@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
     const job = await createAndStartJob({
       url: body.url.trim(),
       projectId: body.projectId.trim(),
+      userInstruction: body.userInstruction,
+      role: body.role,
+      layaBaseUrl: body.layaBaseUrl,
       credentials: body.credentials,
       viewports: body.viewports,
       maxScreens: body.maxScreens || 5,

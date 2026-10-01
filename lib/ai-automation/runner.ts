@@ -14,6 +14,9 @@ import {
 } from "./types"
 import { analyzeScreenWithAI, generateAIExecutiveReport, interpretCommandWithAI } from "./openrouter"
 import { discoverLocalProjectRoutes } from "./discover-routes"
+import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
+import type { JourneyStep, PageType } from "@/lib/journey/types"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
   { name: "Mobile", width: 390, height: 844 },
@@ -118,6 +121,8 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     maxScreens: Math.min(Math.max(params.maxScreens || 5, 1), 15),
     aiModel: params.aiModel || "google/gemini-2.0-flash-001",
     aiBaseUrl: params.aiBaseUrl,
+    layaBaseUrl: params.layaBaseUrl,
+    role: params.role || "user",
     messages: initialMessages,
     logs: [],
     screens: [],
@@ -762,6 +767,35 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       const screenTitle = rawTitle.trim() || new URL(screenUrl).pathname || "Screen"
       const screenPath = new URL(screenUrl).pathname || "/"
 
+      // Laya System-1 Fast Classification (~30ms)
+      const pageText = await page.evaluate(() => document.body?.innerText || "").catch(() => "")
+      const layaUrl = params.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
+      let classifiedPageType: PageType = "other"
+      let layaHasBlocker = false
+
+      try {
+        const layaResult = await classifyPage(pageText, screenUrl, layaUrl)
+        if (layaResult) {
+          classifiedPageType = layaResult.pageType
+          layaHasBlocker = layaResult.hasBlockingIssue
+          appendLog(
+            job,
+            "info",
+            `[Laya ~30ms] Screen classified as: ${classifiedPageType.toUpperCase()} (Ready: ${layaResult.ready ? "Stable" : "Loading"}, Blocker: ${layaHasBlocker ? "YES" : "NO"})`
+          )
+
+          await recordAgentAction(job, page, {
+            type: "inspect",
+            description: `[Laya System-1] Classified as ${classifiedPageType.toUpperCase()}`,
+            thought: `Laya fast decision: identified page type "${classifiedPageType}" for ${params.role || "user"} flow. Layout readiness: ${layaResult.ready ? "Interactive" : "Loading"}.`,
+            target: screenUrl,
+            status: layaHasBlocker ? "failed" : "passed",
+          })
+        }
+      } catch (layaErr: any) {
+        console.warn("[Laya] Classification notice:", layaErr?.message)
+      }
+
       await recordAgentAction(job, page, {
         type: "inspect",
         description: `Inspecting screen "${screenTitle}"`,
@@ -770,6 +804,19 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       })
 
       const screenIssues: AutomationIssue[] = []
+      if (layaHasBlocker) {
+        const blockIssue: AutomationIssue = {
+          id: `laya-block-${Date.now()}-${index}`,
+          screenUrl,
+          screenTitle,
+          type: "layout_shift",
+          severity: "blocker",
+          description: `[Laya Fast System-1] UI/UX blocking issue detected: layout broken or key action unreadable.`,
+          timestamp: new Date().toISOString(),
+        }
+        screenIssues.push(blockIssue)
+        job.issues.push(blockIssue)
+      }
       let backNavigationStatus: "passed" | "failed" | "skipped" = "skipped"
       let responsiveStatus: "passed" | "warning" | "failed" = "passed"
 
@@ -1064,6 +1111,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         url: screenUrl,
         title: screenTitle,
         path: screenPath,
+        pageType: classifiedPageType,
         testedAt: new Date().toISOString(),
         screenshotUrl: primaryScreenshotUrl,
         screenshots: screenshotMap,
@@ -1071,6 +1119,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         responsiveStatus,
         workflowId: workflowId || undefined,
         issuesCount: screenIssues.length,
+        issues: screenIssues,
         aiAnalysis: aiAnalysisResult,
       }
 
@@ -1141,6 +1190,57 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       summary: aiExecSummary?.executiveSummary || `Audited ${totalScreens} screens. Back navigation fidelity: ${backNavigationScore}%, Responsive fidelity: ${responsiveScore}%. Total issues flagged: ${totalIssues}.`,
       recommendations,
       aiExecutiveSummary: aiExecSummary,
+    }
+
+    // 5. Create Chained Journey Workflow in Database (e.g. Login ➔ Dashboard ➔ Settings)
+    if (job.screens.length > 0) {
+      try {
+        const journeySteps: JourneyStep[] = job.screens.map((s, idx) => ({
+          index: idx,
+          url: s.url,
+          title: s.title,
+          screenshotUrl: s.screenshotUrl || "",
+          pageType: (s.pageType as PageType) || "other",
+          hasBlockingIssue: s.issuesCount > 0,
+          severity: s.issuesCount > 0
+            ? (s.issues?.some((i) => i.severity === "blocker") ? "Blocker" : "High")
+            : undefined,
+          viewport: { width: 1280, height: 800 },
+          capturedAt: s.testedAt,
+          issues: (s.issues || []).map((iss) => ({
+            id: iss.id,
+            type: iss.type,
+            severity: iss.severity,
+            description: iss.description,
+          })),
+          aiAnalysis: s.aiAnalysis,
+        }))
+
+        const flowSummary = job.screens
+          .slice(0, 4)
+          .map((s) => (s.pageType && s.pageType !== "other" ? s.pageType.charAt(0).toUpperCase() + s.pageType.slice(1) : s.title.slice(0, 18)))
+          .join(" ➔ ")
+
+        const journeyRole = (params.role as any) || "user"
+        const roleLabel = journeyRole.charAt(0).toUpperCase() + journeyRole.slice(1)
+        const chainedTitle = `${roleLabel} Journey: ${flowSummary}`
+
+        const createdWf = await createWorkflowFromJourney(
+          {
+            projectId: job.projectId,
+            startUrl: job.targetUrl,
+            role: journeyRole,
+            title: chainedTitle,
+          },
+          journeySteps
+        )
+
+        job.chainedWorkflowId = createdWf.workflowId
+        job.report.chainedWorkflowId = createdWf.workflowId
+        appendLog(job, "success", `🏁 Created Chained Workflow: "${chainedTitle}" (#${createdWf.workflowId.slice(0, 8)})`)
+      } catch (wfErr: any) {
+        appendLog(job, "warn", `Chained journey workflow notice: ${wfErr?.message}`)
+      }
     }
 
     job.progress = 100

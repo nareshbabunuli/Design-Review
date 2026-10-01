@@ -46,6 +46,7 @@ import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
 import { AreaSelectionOverlay } from "./area-selection-overlay"
 import { CapturedResultModal } from "./captured-result-modal"
+import { JourneyCaptureModal } from "./journey-capture-modal"
 import {
   DeviceFrame,
   EXTENDED_DEVICE_PRESETS,
@@ -269,6 +270,7 @@ export function WorkflowSimulator({
     return true
   })
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false)
+  const [showJourneyModal, setShowJourneyModal] = useState(false)
   const [authConfig, setAuthConfig] = useState<{
     type: "login" | "cookie" | "token"
     username?: string
@@ -1534,6 +1536,17 @@ export function WorkflowSimulator({
           >
             <Camera className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Area" : "Capture App Screen"}</span>
+          </button>
+
+          {/* Capture full journey (multi-page workflow) */}
+          <button
+            type="button"
+            onClick={() => setShowJourneyModal(true)}
+            className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:border-indigo-500/40 dark:text-indigo-300 dark:bg-indigo-500/15 dark:hover:bg-indigo-500/25"
+            title="Capture a multi-page journey (User / Admin / Client workflows)"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Capture Journey</span>
           </button>
 
           {/* Upload exact screenshot button */}
@@ -2829,6 +2842,20 @@ export function WorkflowSimulator({
         onClose={() => setIsResultModalOpen(false)}
         onSaveToWorkflow={handleSaveCapturedResult}
         isSaving={isSavingResult}
+      />
+
+      <JourneyCaptureModal
+        open={showJourneyModal}
+        onClose={() => setShowJourneyModal(false)}
+        projectId={project.id}
+        defaultUrl={currentUrl}
+        defaultWidth={viewportWidth}
+        defaultHeight={viewportHeight}
+        onComplete={(workflowId) => {
+          setShowJourneyModal(false)
+          triggerToast("Journey workflow created")
+          onSelectWorkflow?.(workflowId)
+        }}
       />
     </div>
   )
