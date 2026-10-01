@@ -47,12 +47,21 @@ export async function runStagehandExploration(
 ): Promise<{ pagesVisited: number; actions: number; issues: AutomationIssue[] }> {
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
-  const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY
-  if (!apiKey && !params.aiBaseUrl) {
-    throw new Error("Stagehand exploration requires an model provider key or local  base URL.")
+  const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const baseURL = params.aiBaseUrl?.trim() || "https://api.unorouter.com/v1"
+  // Free flagship-class model on UnoRouter — small :free models are too weak
+  // for the autonomous observe → decide → act loop. Alternatives:
+  // "gpt-5.5:free", "qwen3.8-flash-next:free".
+  const modelName = params.aiModel?.trim() || "deepseek-v4-flash:free"
+  const isLocalGateway = /localhost|127\.0\.0\.1/.test(baseURL)
+  if (!apiKey && !isLocalGateway) {
+    throw new Error(
+      "Stagehand exploration needs an AI provider key for the remote gateway. " +
+        "Add your UnoRouter key in AI Settings → OmniRouter (free at https://unorouter.com/token), " +
+        "or point the gateway URL at a local endpoint.",
+    )
   }
 
-  const modelName = params.aiModel || "google/gemini-2.0-flash-001"
   const stagehandConfig: any = {
     env: "LOCAL",
     localBrowserLaunchOptions: {
@@ -61,13 +70,13 @@ export async function runStagehandExploration(
     model: {
       modelName,
       apiKey,
-      baseURL: params.aiBaseUrl || undefined,
+      baseURL,
     },
     selfHeal: true,
     verbose: 1,
   }
 
-  hooks.appendLog(job, "info", `Runneric engine: Stagehand ${modelName} (open-source browser engine)`)
+  hooks.appendLog(job, "info", `Runneric engine: Stagehand ${modelName} via ${baseURL} (open-source browser engine)`)
 
   const stagehand = new Stagehand(stagehandConfig)
   const visitedUrls = new Set<string>([job.targetUrl])
@@ -114,7 +123,7 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
       model: {
         modelName,
         apiKey,
-        baseURL: params.aiBaseUrl || undefined,
+        baseURL,
       },
       systemPrompt: instruction,
     } as any)

@@ -119,7 +119,7 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     credentialsProvided: Boolean(params.credentials?.username || params.credentials?.token),
     viewports: targetViewports,
     maxScreens: Math.min(Math.max(params.maxScreens || 5, 1), 15),
-    aiModel: params.aiModel || "google/gemini-2.0-flash-001",
+    aiModel: params.aiModel || "deepseek-v4-flash:free",
     aiBaseUrl: params.aiBaseUrl,
     layaBaseUrl: params.layaBaseUrl,
     role: params.role || "user",
@@ -449,10 +449,20 @@ async function recordAgentAction(
 
 async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
-  const openRouterKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY
-  const isLocalAi = Boolean(params.aiBaseUrl && (params.aiBaseUrl.includes("localhost") || params.aiBaseUrl.includes("127.0.0.1")))
+  const openRouterKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const aiBase = (params.aiBaseUrl || "").trim()
+  const isLocalAi = Boolean(aiBase && (aiBase.includes("localhost") || aiBase.includes("127.0.0.1")))
+  const isUnoRouter = aiBase.includes("unorouter.com")
   const hasAiConfigured = isLocalAi || Boolean(openRouterKey)
   appendLog(job, "info", `Starting headless automation crawl on: ${job.targetUrl}`)
+  if (!hasAiConfigured && aiBase && !isLocalAi) {
+    appendLog(
+      job,
+      "warn",
+      "AI provider key missing for the remote gateway — AI visual analysis and autonomous exploration will be skipped. " +
+        "Add a free UnoRouter key at https://unorouter.com/token and paste it in AI Settings → OmniRouter.",
+    )
+  }
 
   let browser: Browser | null = null
 
@@ -1046,8 +1056,8 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       // 2.5 OpenRouter / Local AI Model Visual QA Inspection
       let aiAnalysisResult: { uxScore: number; summary: string } | undefined
       if (hasAiConfigured && primaryScreenshotUrl) {
-        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : "OpenRouter Cloud"
-        appendLog(job, "info", `Requesting ${providerName} visual review for "${screenTitle}" (${params.aiModel || "google/gemini-2.0-flash-001"})...`)
+        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "UnoRouter" : "OpenRouter Cloud"
+        appendLog(job, "info", `Requesting ${providerName} visual review for "${screenTitle}" (${params.aiModel || "deepseek-v4-flash:free"})...`)
         const aiFinding = await analyzeScreenWithAI({
           screenshotUrl: primaryScreenshotUrl,
           screenTitle,
@@ -1163,7 +1173,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     // AI Executive Synthesis
     let aiExecSummary: { executiveSummary: string; keyStrengths: string[]; criticalFixes: string[]; overallScore: number } | undefined
     if (hasAiConfigured && job.screens.length > 0) {
-      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : "OpenRouter"} (${params.aiModel || "default"})...`)
+      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : isUnoRouter ? "UnoRouter" : "OpenRouter"} (${params.aiModel || "deepseek-v4-flash:free"})...`)
       const aiExec = await generateAIExecutiveReport({
         screensSummary: job.screens.map((s) => `${s.title} (${s.url})`).join(", "),
         detectedIssuesCount: job.issues.length,

@@ -177,11 +177,11 @@ export default function AISimulatorPage() {
   // OpenRouter / OmniRouter / Local AI Model Provider State
   const [aiProvider, setAiProvider] = useState<"cloud" | "omnirouter" | "local">("cloud")
   const [localAiBaseUrl, setLocalAiBaseUrl] = useState("http://localhost:11434/v1")
-  const [omniRouterBaseUrl, setOmniRouterBaseUrl] = useState("http://localhost:8000/v1")
+  const [omniRouterBaseUrl, setOmniRouterBaseUrl] = useState("https://api.unorouter.com/v1")
   const [omniRouterKey, setOmniRouterKey] = useState("")
   const [openRouterKey, setOpenRouterKey] = useState("")
   const [selectedAiModel, setSelectedAiModel] = useState("google/gemini-2.0-flash-001")
-  const [omniRouterModel, setOmniRouterModel] = useState("gpt-4o")
+  const [omniRouterModel, setOmniRouterModel] = useState("deepseek-v4-flash:free")
   const [showAiSettings, setShowAiSettings] = useState(false)
 
   // Antigravity Browser Control & Action Replay State
@@ -321,13 +321,13 @@ export default function AISimulatorPage() {
               : undefined,
           aiModel:
             aiProvider === "omnirouter"
-              ? omniRouterModel.trim() || "gpt-4o"
+              ? omniRouterModel.trim() || "deepseek-v4-flash:free"
               : selectedAiModel,
           aiBaseUrl:
             aiProvider === "local"
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
-              ? omniRouterBaseUrl.trim() || "http://localhost:8000/v1"
+              ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
               : "https://openrouter.ai/api/v1",
         }),
       })
@@ -785,13 +785,13 @@ export default function AISimulatorPage() {
               : undefined,
           aiModel:
             aiProvider === "omnirouter"
-              ? omniRouterModel.trim() || "gpt-4o"
+              ? omniRouterModel.trim() || "deepseek-v4-flash:free"
               : selectedAiModel,
           aiBaseUrl:
             aiProvider === "local"
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
-              ? omniRouterBaseUrl.trim() || "http://localhost:8000/v1"
+              ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
               : "https://openrouter.ai/api/v1",
         }),
       })
@@ -1692,7 +1692,11 @@ export default function AISimulatorPage() {
                             type="button"
                             onClick={() => setShowAiSettings((prev) => !prev)}
                             className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-xs transition cursor-pointer ${
-                              openRouterKey.trim() || aiProvider === "local" || aiProvider === "omnirouter"
+                              openRouterKey.trim() || aiProvider === "local" ||
+                              (aiProvider === "omnirouter" &&
+                                (omniRouterKey.trim() ||
+                                  omniRouterBaseUrl.includes("localhost") ||
+                                  omniRouterBaseUrl.includes("127.0.0.1")))
                                 ? "bg-purple-950/30 border-purple-800/50 text-purple-300"
                                 : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
                             }`}
@@ -1761,13 +1765,13 @@ export default function AISimulatorPage() {
                                       type="text"
                                       value={omniRouterBaseUrl}
                                       onChange={(e) => handleUpdateOmniRouterUrl(e.target.value)}
-                                      placeholder="http://localhost:8000/v1"
+                                      placeholder="https://api.unorouter.com/v1"
                                       className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-[11px] text-white font-mono"
                                     />
                                   </div>
                                   <div className="space-y-1">
                                     <label className="text-[10px] text-slate-400 font-medium">
-                                      Gateway API Key (Optional)
+                                      API Key (required for unorouter.com — free at unorouter.com/token)
                                     </label>
                                     <input
                                       type="password"
@@ -1785,12 +1789,12 @@ export default function AISimulatorPage() {
                                       type="text"
                                       value={omniRouterModel}
                                       onChange={(e) => handleUpdateOmniRouterModel(e.target.value)}
-                                      placeholder="gpt-4o, claude-3-5-sonnet, gemini-2.0-flash"
+                                      placeholder="deepseek-v4-flash:free, gpt-5.5:free, qwen3.8-flash-next:free"
                                       className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-[11px] text-white font-mono"
                                     />
                                   </div>
                                   <p className="text-[10px] text-slate-500 italic">
-                                    OmniRouter routes requests across multiple AI providers via a single unified endpoint.
+                                    UnoRouter (unorouter.com) serves 200+ models behind one key — :free models cost nothing (~1 req/min each). Prefer a flagship :free model (deepseek-v4-flash:free, gpt-5.5:free) for the browser agent. You can still point the URL at a local gateway instead.
                                   </p>
                                 </div>
                               ) : aiProvider === "cloud" ? (
