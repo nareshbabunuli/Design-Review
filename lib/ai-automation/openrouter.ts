@@ -16,15 +16,99 @@ export interface AIExecutiveReportResult {
   overallScore: number
 }
 
-const DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+export const UNOROUTER_BASE_URL = "https://api.unorouter.com/v1"
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+const OPENROUTER_DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+// Free flagship-class model on UnoRouter. Small :free models (space-bunny,
+// atria-dawn) are too weak for the observe → decide → act browser loop —
+// use a flagship :free variant (deepseek-v4-flash:free, gpt-5.5:free) instead.
+const UNOROUTER_DEFAULT_MODEL = "deepseek-v4-flash:free"
+
+function isLocalBase(url: string): boolean {
+  return url.includes("localhost") || url.includes("127.0.0.1")
+}
+
+function resolveBaseUrl(baseUrl?: string): string {
+  return (baseUrl?.trim() || UNOROUTER_BASE_URL).replace(/\/$/, "")
+}
+
+function resolveModel(base: string, model?: string): string {
+  const m = model?.trim()
+  if (m) return m
+  return base.includes("openrouter.ai") ? OPENROUTER_DEFAULT_MODEL : UNOROUTER_DEFAULT_MODEL
+}
+
+/**
+ * Builds auth headers. Returns null when a key is required but missing —
+ * callers must fail LOUDLY in that case, never silently fall back to a
+ * placeholder key (remote gateways like UnoRouter reject those with 401).
+ * Local gateways (localhost) genuinely don't need a key.
+ */
+function buildHeaders(base: string, apiKey?: string): Record<string, string> | null {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  if (apiKey?.trim()) {
+    headers["Authorization"] = `Bearer ${apiKey.trim()}`
+  } else if (!isLocalBase(base)) {
+    return null
+  }
+  if (base.includes("openrouter")) {
+    headers["HTTP-Referer"] = "http://localhost:3000"
+    headers["X-Title"] = "Design Workflow Tracker"
+  }
+  return headers
+}
+
+/**
+ * POST with retry on 429 honoring Retry-After.
+ * UnoRouter's free tier is ~1 request/min per model, and Stagehand's agent
+ * loop makes many calls — without this the agent dies on the first throttle.
+ */
+async function postChatCompletion(
+  base: string,
+  headers: Record<string, string>,
+  body: unknown,
+  label: string,
+  maxRetries = 4,
+): Promise<Response> {
+  let attempt = 0
+  for (;;) {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    })
+    if (res.status === 429 && attempt < maxRetries) {
+      const retryAfter = Number(res.headers.get("retry-after") || "60")
+      const waitSec = Math.min(Math.max(Number.isNaN(retryAfter) ? 60 : retryAfter, 2), 180)
+      console.warn(
+        `[AI] ${label}: rate limited (429). Waiting ${waitSec}s before retry ${attempt + 1}/${maxRetries}... ` +
+          `Tip: rotate between free models (deepseek-v4-flash:free, gpt-5.5:free) for more throughput.`,
+      )
+      await new Promise((r) => setTimeout(r, waitSec * 1000))
+      attempt++
+      continue
+    }
+    return res
+  }
+}
+
+function missingKeyWarning(label: string): void {
+  console.warn(
+    `[AI] ${label}: no API key for remote gateway. ` +
+      `Get a free key at https://unorouter.com/token and set it in AI Settings → OmniRouter. ` +
+      `AI features are disabled until then — this is NOT silent, fix the key to proceed.`,
+  )
+}
 
 export async function analyzeScreenWithAI({
   screenshotUrl,
   screenTitle,
   screenUrl,
   apiKey,
-  baseUrl = "https://openrouter.ai/api/v1",
-  model = DEFAULT_MODEL,
+  baseUrl = UNOROUTER_BASE_URL,
+  model,
 }: {
   screenshotUrl: string
   screenTitle: string
@@ -33,15 +117,13 @@ export async function analyzeScreenWithAI({
   baseUrl?: string
   model?: string
 }): Promise<AIScreenAnalysisResult | null> {
-  const cleanBase = (baseUrl?.trim() || "https://openrouter.ai/api/v1").replace(/\/$/, "")
-  const isLocalOrGateway =
-    cleanBase.includes("localhost") ||
-    cleanBase.includes("127.0.0.1") ||
-    cleanBase.includes("omni") ||
-    !cleanBase.includes("openrouter.ai")
+  const cleanBase = resolveBaseUrl(baseUrl)
 
-  // For cloud OpenRouter, apiKey is required; for OmniRouter / local gateways, it's optional
-  if (!isLocalOrGateway && (!apiKey || !apiKey.trim())) return null
+  const headers = buildHeaders(cleanBase, apiKey)
+  if (!headers) {
+    missingKeyWarning("Screen analysis")
+    return null
+  }
   if (!screenshotUrl) return null
 
   try {
@@ -69,25 +151,11 @@ Return strictly valid JSON in this schema:
   "summary": "1-2 sentence overall visual assessment"
 } `
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    }
-    if (apiKey?.trim()) {
-      headers["Authorization"] = `Bearer ${apiKey.trim()}`
-    } else if (isLocalOrGateway) {
-      headers["Authorization"] = "Bearer omnirouter"
-    }
-
-    if (cleanBase.includes("openrouter")) {
-      headers["HTTP-Referer"] = "http://localhost:3000"
-      headers["X-Title"] = "Design Workflow Tracker"
-    }
-
-    const res = await fetch(`${cleanBase}/chat/completions`, {
-      method: "POST",
+    const res = await postChatCompletion(
+      cleanBase,
       headers,
-      body: JSON.stringify({
-        model: model.trim() || DEFAULT_MODEL,
+      {
+        model: resolveModel(cleanBase, model),
         messages: [
           {
             role: "user",
@@ -105,8 +173,9 @@ Return strictly valid JSON in this schema:
         temperature: 0.2,
         max_tokens: 1000,
         response_format: { type: "json_object" },
-      }),
-    })
+      },
+      "Screen analysis",
+    )
 
     if (!res.ok) {
       const errText = await res.text()
@@ -131,8 +200,8 @@ export async function generateAIExecutiveReport({
   detectedIssuesCount,
   targetUrl,
   apiKey,
-  baseUrl = "https://openrouter.ai/api/v1",
-  model = DEFAULT_MODEL,
+  baseUrl = UNOROUTER_BASE_URL,
+  model,
 }: {
   screensSummary: string
   detectedIssuesCount: number
@@ -141,14 +210,13 @@ export async function generateAIExecutiveReport({
   baseUrl?: string
   model?: string
 }): Promise<AIExecutiveReportResult | null> {
-  const cleanBase = (baseUrl?.trim() || "https://openrouter.ai/api/v1").replace(/\/$/, "")
-  const isLocalOrGateway =
-    cleanBase.includes("localhost") ||
-    cleanBase.includes("127.0.0.1") ||
-    cleanBase.includes("omni") ||
-    !cleanBase.includes("openrouter.ai")
+  const cleanBase = resolveBaseUrl(baseUrl)
 
-  if (!isLocalOrGateway && (!apiKey || !apiKey.trim())) return null
+  const headers = buildHeaders(cleanBase, apiKey)
+  if (!headers) {
+    missingKeyWarning("Executive report")
+    return null
+  }
 
   try {
     const prompt = `You are a Principal Product Designer and QA Architect.
@@ -166,31 +234,18 @@ Return strictly valid JSON in this schema:
   "overallScore": 88
 }`
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    }
-    if (apiKey?.trim()) {
-      headers["Authorization"] = `Bearer ${apiKey.trim()}`
-    } else if (isLocalOrGateway) {
-      headers["Authorization"] = "Bearer omnirouter"
-    }
-
-    if (cleanBase.includes("openrouter")) {
-      headers["HTTP-Referer"] = "http://localhost:3000"
-      headers["X-Title"] = "Design Workflow Tracker"
-    }
-
-    const res = await fetch(`${cleanBase}/chat/completions`, {
-      method: "POST",
+    const res = await postChatCompletion(
+      cleanBase,
       headers,
-      body: JSON.stringify({
-        model: model.trim() || DEFAULT_MODEL,
+      {
+        model: resolveModel(cleanBase, model),
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3,
         max_tokens: 800,
         response_format: { type: "json_object" },
-      }),
-    })
+      },
+      "Executive report",
+    )
 
     if (!res.ok) return null
 
@@ -220,8 +275,8 @@ export async function interpretCommandWithAI({
   command,
   currentUrl,
   apiKey,
-  baseUrl = "https://openrouter.ai/api/v1",
-  model = DEFAULT_MODEL,
+  baseUrl = UNOROUTER_BASE_URL,
+  model,
 }: {
   command: string
   currentUrl: string
@@ -229,12 +284,7 @@ export async function interpretCommandWithAI({
   baseUrl?: string
   model?: string
 }): Promise<AICommandInterpretation> {
-  const cleanBase = (baseUrl?.trim() || "https://openrouter.ai/api/v1").replace(/\/$/, "")
-  const isLocalOrGateway =
-    cleanBase.includes("localhost") ||
-    cleanBase.includes("127.0.0.1") ||
-    cleanBase.includes("omni") ||
-    !cleanBase.includes("openrouter.ai")
+  const cleanBase = resolveBaseUrl(baseUrl)
 
   // Fallback heuristic interpreter if no key or offline
   const fallbackInterpretation = (): AICommandInterpretation => {
@@ -320,7 +370,11 @@ export async function interpretCommandWithAI({
     }
   }
 
-  if (!isLocalOrGateway && (!apiKey || !apiKey.trim())) {
+  const headers = buildHeaders(cleanBase, apiKey)
+  if (!headers) {
+    // No key for a remote gateway: say so loudly, then use the offline
+    // heuristic planner so the UI still does something useful.
+    missingKeyWarning("Command interpreter")
     return fallbackInterpretation()
   }
 
@@ -347,31 +401,18 @@ Return strictly valid JSON in this schema:
   ]
 }`
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    }
-    if (apiKey?.trim()) {
-      headers["Authorization"] = `Bearer ${apiKey.trim()}`
-    } else if (isLocalOrGateway) {
-      headers["Authorization"] = "Bearer omnirouter"
-    }
-
-    if (cleanBase.includes("openrouter")) {
-      headers["HTTP-Referer"] = "http://localhost:3000"
-      headers["X-Title"] = "Design Workflow Tracker"
-    }
-
-    const res = await fetch(`${cleanBase}/chat/completions`, {
-      method: "POST",
+    const res = await postChatCompletion(
+      cleanBase,
       headers,
-      body: JSON.stringify({
-        model: model.trim() || DEFAULT_MODEL,
+      {
+        model: resolveModel(cleanBase, model),
         messages: [{ role: "user", content: prompt }],
         temperature: 0.2,
         max_tokens: 700,
         response_format: { type: "json_object" },
-      }),
-    })
+      },
+      "Command interpreter",
+    )
 
     if (!res.ok) return fallbackInterpretation()
 

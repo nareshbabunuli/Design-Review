@@ -19,7 +19,6 @@ import {
   Download,
   Key,
   Terminal,
-  ArrowLeft,
   ChevronDown,
   Globe,
   Loader2,
@@ -178,11 +177,11 @@ export default function AISimulatorPage() {
   // OpenRouter / OmniRouter / Local AI Model Provider State
   const [aiProvider, setAiProvider] = useState<"cloud" | "omnirouter" | "local">("cloud")
   const [localAiBaseUrl, setLocalAiBaseUrl] = useState("http://localhost:11434/v1")
-  const [omniRouterBaseUrl, setOmniRouterBaseUrl] = useState("http://localhost:8000/v1")
+  const [omniRouterBaseUrl, setOmniRouterBaseUrl] = useState("https://api.unorouter.com/v1")
   const [omniRouterKey, setOmniRouterKey] = useState("")
   const [openRouterKey, setOpenRouterKey] = useState("")
   const [selectedAiModel, setSelectedAiModel] = useState("google/gemini-2.0-flash-001")
-  const [omniRouterModel, setOmniRouterModel] = useState("gpt-4o")
+  const [omniRouterModel, setOmniRouterModel] = useState("deepseek-v4-flash:free")
   const [showAiSettings, setShowAiSettings] = useState(false)
 
   // Antigravity Browser Control & Action Replay State
@@ -334,13 +333,13 @@ export default function AISimulatorPage() {
               : undefined,
           aiModel:
             aiProvider === "omnirouter"
-              ? omniRouterModel.trim() || "gpt-4o"
+              ? omniRouterModel.trim() || "deepseek-v4-flash:free"
               : selectedAiModel,
           aiBaseUrl:
             aiProvider === "local"
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
-              ? omniRouterBaseUrl.trim() || "http://localhost:8000/v1"
+              ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
               : "https://openrouter.ai/api/v1",
         }),
       })
@@ -812,13 +811,13 @@ export default function AISimulatorPage() {
               : undefined,
           aiModel:
             aiProvider === "omnirouter"
-              ? omniRouterModel.trim() || "gpt-4o"
+              ? omniRouterModel.trim() || "deepseek-v4-flash:free"
               : selectedAiModel,
           aiBaseUrl:
             aiProvider === "local"
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
-              ? omniRouterBaseUrl.trim() || "http://localhost:8000/v1"
+              ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
               : "https://openrouter.ai/api/v1",
         }),
       })
@@ -1056,14 +1055,6 @@ export default function AISimulatorPage() {
             </button>
 
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            <Link
-              href="/"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-slate-800 hover:bg-slate-800 text-slate-300 transition"
-              title="Return to main workspace"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Exit</span>
-            </Link>
           </div>
         </header>
       )}
@@ -1296,70 +1287,9 @@ export default function AISimulatorPage() {
                         )}
                       </div>
 
-                      {/* Bottom Controls: Step navigation, Play/Pause Replay, and Live Feed */}
-                      <div className="flex items-center justify-between pt-1 gap-2 border-t border-slate-800/60">
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (activeActionIndex > 0) {
-                                setSelectedActionId(chronologicalActions[activeActionIndex - 1].id)
-                                setIsPlayingReplay(false)
-                              }
-                            }}
-                            disabled={activeActionIndex <= 0}
-                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs transition cursor-pointer"
-                            title="Previous step"
-                          >
-                            Prev
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsPlayingReplay((prev) => !prev)}
-                            disabled={chronologicalActions.length <= 1}
-                            className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-semibold text-white flex items-center gap-1 transition cursor-pointer"
-                            title={isPlayingReplay ? "Pause replay" : "Play step replay"}
-                          >
-                            {isPlayingReplay ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3 fill-current" />}
-                            <span>{isPlayingReplay ? "Pause" : "Replay"}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (activeActionIndex < chronologicalActions.length - 1) {
-                                setSelectedActionId(chronologicalActions[activeActionIndex + 1].id)
-                                setIsPlayingReplay(false)
-                              }
-                            }}
-                            disabled={activeActionIndex >= chronologicalActions.length - 1}
-                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs transition cursor-pointer"
-                            title="Next step"
-                          >
-                            Next
-                          </button>
-                        </div>
-
-                        {selectedActionId && currentJob.status === "running" && (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedActionId(null)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-600/30 transition cursor-pointer"
-                          >
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            <span>Return to Live Stream</span>
-                          </button>
-                        )}
-
-                        {!isBotPanelOpen && (
-                          <button
-                            type="button"
-                            onClick={() => setIsBotPanelOpen(true)}
-                            className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium transition cursor-pointer"
-                          >
-                            Open Console →
-                          </button>
-                        )}
-                      </div>
+                      <p className="border-t border-slate-800/60 pt-2 text-[10px] text-slate-500">
+                        Use Action Trajectory in the AI Bot panel to review or replay steps.
+                      </p>
                     </div>
                   ) : (
                     <div
@@ -1403,7 +1333,7 @@ export default function AISimulatorPage() {
                     type="button"
                     onClick={() => setIsBotPanelOpen(false)}
                     className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                    title="Close Dock"
+                    title="Hide AI Bot panel" aria-label="Hide AI Bot panel"
                   >
                     <PanelRightClose className="h-4 w-4" />
                   </button>
@@ -1467,16 +1397,6 @@ export default function AISimulatorPage() {
                             ({aiProvider === "omnirouter" ? omniRouterModel : selectedAiModel.split("/").pop()})
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveDockTab("crawl")
-                            setShowAiSettings(true)
-                          }}
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium transition cursor-pointer"
-                        >
-                          Change
-                        </button>
                       </div>
 
                       {/* Chat messages stream */}
@@ -1581,10 +1501,8 @@ export default function AISimulatorPage() {
                         </div>
                         <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
                           {[
-                            "Click theme toggle and verify dark mode",
                             "Test back button navigation",
                             "Audit viewports (390px, 768px, 1440px)",
-                            "Scroll to bottom and inspect footer",
                           ].map((chip, idx) => (
                             <button
                               key={idx}
@@ -1826,7 +1744,11 @@ export default function AISimulatorPage() {
                             type="button"
                             onClick={() => setShowAiSettings((prev) => !prev)}
                             className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-xs transition cursor-pointer ${
-                              openRouterKey.trim() || aiProvider === "local" || aiProvider === "omnirouter"
+                              openRouterKey.trim() || aiProvider === "local" ||
+                              (aiProvider === "omnirouter" &&
+                                (omniRouterKey.trim() ||
+                                  omniRouterBaseUrl.includes("localhost") ||
+                                  omniRouterBaseUrl.includes("127.0.0.1")))
                                 ? "bg-purple-950/30 border-purple-800/50 text-purple-300"
                                 : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
                             }`}
@@ -1834,7 +1756,7 @@ export default function AISimulatorPage() {
                             <div className="flex items-center gap-1.5">
                               <Sparkles className="h-3.5 w-3.5 text-purple-400" />
                               <span className="font-semibold text-[11px]">
-                                AI Vision Provider: {
+                                Settings · {
                                   aiProvider === "omnirouter"
                                     ? "OmniRouter Gateway"
                                     : aiProvider === "local"
@@ -1895,13 +1817,13 @@ export default function AISimulatorPage() {
                                       type="text"
                                       value={omniRouterBaseUrl}
                                       onChange={(e) => handleUpdateOmniRouterUrl(e.target.value)}
-                                      placeholder="http://localhost:8000/v1"
+                                      placeholder="https://api.unorouter.com/v1"
                                       className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-[11px] text-white font-mono"
                                     />
                                   </div>
                                   <div className="space-y-1">
                                     <label className="text-[10px] text-slate-400 font-medium">
-                                      Gateway API Key (Optional)
+                                      API Key (required for unorouter.com — free at unorouter.com/token)
                                     </label>
                                     <input
                                       type="password"
@@ -1919,28 +1841,12 @@ export default function AISimulatorPage() {
                                       type="text"
                                       value={omniRouterModel}
                                       onChange={(e) => handleUpdateOmniRouterModel(e.target.value)}
-                                      placeholder="gpt-4o, claude-3-5-sonnet, gemini-2.0-flash"
+                                      placeholder="deepseek-v4-flash:free, gpt-5.5:free, qwen3.8-flash-next:free"
                                       className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-[11px] text-white font-mono"
                                     />
-                                    <div className="flex flex-wrap gap-1 pt-0.5">
-                                      {["gpt-4o", "claude-3-5-sonnet", "gemini-2.0-flash", "deepseek-chat"].map((m) => (
-                                        <button
-                                          key={m}
-                                          type="button"
-                                          onClick={() => handleUpdateOmniRouterModel(m)}
-                                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono transition cursor-pointer ${
-                                            omniRouterModel === m
-                                              ? "bg-indigo-600 text-white"
-                                              : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
-                                          }`}
-                                        >
-                                          {m}
-                                        </button>
-                                      ))}
-                                    </div>
                                   </div>
                                   <p className="text-[10px] text-slate-500 italic">
-                                    OmniRouter routes requests across multiple AI providers via a single unified endpoint.
+                                    UnoRouter (unorouter.com) serves 200+ models behind one key — :free models cost nothing (~1 req/min each). Prefer a flagship :free model (deepseek-v4-flash:free, gpt-5.5:free) for the browser agent. You can still point the URL at a local gateway instead.
                                   </p>
                                 </div>
                               ) : aiProvider === "cloud" ? (
@@ -1995,7 +1901,7 @@ export default function AISimulatorPage() {
                               className="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs py-2 rounded-lg transition shadow-lg shadow-rose-600/20 cursor-pointer"
                             >
                               <Square className="h-3.5 w-3.5 fill-current" />
-                              <span>Stop Automation Bot</span>
+                              <span>Stop Test</span>
                             </button>
                           ) : (
                             <button
@@ -2009,7 +1915,7 @@ export default function AISimulatorPage() {
                               ) : (
                                 <Play className="h-3.5 w-3.5 fill-current" />
                               )}
-                              <span>Launch AI Automation Bot</span>
+                              <span>Run AI Test</span>
                             </button>
                           )}
                         </div>
@@ -2094,15 +2000,44 @@ export default function AISimulatorPage() {
                               <Activity className="h-3.5 w-3.5 text-indigo-400" />
                               <span>Action Trajectory ({currentJob.actionHistory.length})</span>
                             </span>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (activeActionIndex > 0) {
+                                    setSelectedActionId(chronologicalActions[activeActionIndex - 1].id)
+                                    setIsPlayingReplay(false)
+                                  }
+                                }}
+                                disabled={activeActionIndex <= 0}
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                                title="Previous action"
+                              >
+                                Prev
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => setIsPlayingReplay((prev) => !prev)}
-                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/50 flex items-center gap-1 transition cursor-pointer"
+                                disabled={chronologicalActions.length <= 1}
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 transition cursor-pointer"
                                 title={isPlayingReplay ? "Pause replay" : "Replay actions in simulator frame"}
                               >
                                 {isPlayingReplay ? <Pause className="h-2.5 w-2.5" /> : <Play className="h-2.5 w-2.5 fill-current" />}
                                 <span>{isPlayingReplay ? "Pause" : "Replay"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (activeActionIndex < chronologicalActions.length - 1) {
+                                    setSelectedActionId(chronologicalActions[activeActionIndex + 1].id)
+                                    setIsPlayingReplay(false)
+                                  }
+                                }}
+                                disabled={activeActionIndex >= chronologicalActions.length - 1}
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                                title="Next action"
+                              >
+                                Next
                               </button>
                               {selectedActionId && currentJob.status === "running" && (
                                 <button
@@ -2173,78 +2108,6 @@ export default function AISimulatorPage() {
                         </div>
                       )}
 
-                      {/* Discovered Screens List */}
-                      {currentJob && currentJob.screens.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-white flex items-center gap-1.5">
-                              <Layers className="h-3.5 w-3.5 text-indigo-400" />
-                              Audited Screens ({currentJob.screens.length})
-                            </span>
-                            <span className="text-[10px] text-slate-500">Click to preview in device frame</span>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            {currentJob.screens.map((screen, idx) => (
-                              <div
-                                key={idx}
-                                onClick={() => {
-                                  if (screen.workflowId) setActiveWorkflowId(screen.workflowId)
-                                }}
-                                className={`p-2.5 rounded-lg border flex items-center justify-between gap-2 cursor-pointer transition ${
-                                  activeWorkflowId === screen.workflowId
-                                    ? "bg-indigo-950/40 border-indigo-500/60 ring-1 ring-indigo-500"
-                                    : "bg-slate-900/60 border-slate-800 hover:border-slate-700"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  {screen.screenshotUrl ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img
-                                      src={screen.screenshotUrl}
-                                      alt={screen.title}
-                                      className="w-8 h-10 object-cover object-top rounded border border-slate-700 shrink-0"
-                                    />
-                                  ) : (
-                                    <Smartphone className="w-6 h-6 text-slate-600 shrink-0" />
-                                  )}
-                                  <div className="min-w-0">
-                                    <span className="text-xs font-semibold text-white block truncate" title={screen.title}>
-                                      {screen.title}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 font-mono block truncate" title={screen.url}>
-                                      {screen.path || screen.url}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {screen.backNavigationStatus === "passed" ? (
-                                    <span title="Back navigation verified">
-                                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                                    </span>
-                                  ) : screen.backNavigationStatus === "failed" ? (
-                                    <span title="Back navigation failed">
-                                      <XCircle className="h-3.5 w-3.5 text-rose-400" />
-                                    </span>
-                                  ) : null}
-
-                                  {screen.issuesCount > 0 ? (
-                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                                      {screen.issuesCount} issue{screen.issuesCount > 1 ? "s" : ""}
-                                    </span>
-                                  ) : (
-                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                      Clean
-                                    </span>
-                                  )}
-                                  <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
 

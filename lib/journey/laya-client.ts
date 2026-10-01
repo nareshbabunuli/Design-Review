@@ -7,18 +7,19 @@ import type { PageType } from "./types"
 
 const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || ""
 
-interface PredictPayload {
+export interface LayaPredictPayload {
   state: string
   questions: Record<
     string,
     | { type: "noul"; instructions: string }
     | { type: "choice"; instructions: string; criteria: Record<string, string> }
+    | { type: "score"; instructions: string; criteria: string[] }
   >
 }
 
 async function predict(
   baseUrl: string,
-  payload: PredictPayload
+  payload: LayaPredictPayload
 ): Promise<Record<string, any> | null> {
   if (!baseUrl || !baseUrl.trim()) return null
   const cleanBase = baseUrl.replace(/\/$/, "")
@@ -168,3 +169,11 @@ export async function pickNextLink(
 }
 
 export { DEFAULT_LAYA_URL }
+
+/** Shared low-level call: POST { state, questions } to a Laya server, with endpoint fallback. */
+export async function layaPredict(
+  baseUrl: string,
+  payload: LayaPredictPayload,
+): Promise<Record<string, any> | null> {
+  return predict(baseUrl, payload)
+}
