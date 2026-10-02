@@ -420,29 +420,48 @@ Return strictly valid JSON in this schema:
   ]
 }`
 
+    const requestBody: any = {
+      model: resolveModel(cleanBase, model),
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 700,
+    }
+    if (!isLocalBase(cleanBase)) {
+      requestBody.response_format = { type: "json_object" }
+    }
+
     const res = await postChatCompletion(
       cleanBase,
       headers,
-      {
-        model: resolveModel(cleanBase, model),
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 700,
-        response_format: { type: "json_object" },
-      },
+      requestBody,
       "Command interpreter",
     )
 
-    if (!res.ok)
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "")
+      let reason = ""
+      try {
+        const errObj = JSON.parse(errText)
+        reason = errObj?.error?.message || errObj?.message || errText
+      } catch {
+        reason = errText
+      }
+      reason = (reason || "").replace(/\s+/g, " ").trim().slice(0, 220)
+      console.warn(`[AI Command] Gateway error HTTP ${res.status}:`, reason)
       return fallbackInterpretation(
-        `AI gateway returned HTTP ${res.status} — the provider may be down, rate-limiting, or rejecting the model name.`,
+        `AI gateway returned HTTP ${res.status}${reason ? `: ${reason}` : " — the provider may be down, rate-limiting, or rejecting the model name."}`,
       )
+    }
 
     const data = await res.json()
     const content = data?.choices?.[0]?.message?.content
     if (!content) return fallbackInterpretation("The AI gateway returned an empty response.")
 
-    const parsed = JSON.parse(content) as AICommandInterpretation
+    const cleanedContent = String(content)
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim()
+    const parsed = JSON.parse(cleanedContent) as AICommandInterpretation
     if (!parsed.actions || !Array.isArray(parsed.actions) || parsed.actions.length === 0) {
       return fallbackInterpretation("The AI model returned no usable actions.")
     }

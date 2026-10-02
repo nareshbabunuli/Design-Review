@@ -1837,9 +1837,30 @@ export default function AISimulatorPage() {
 
                               {aiProvider === "omnirouter" ? (
                                 <div className="space-y-2">
+                                  <div className="flex items-center gap-1.5 pb-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleUpdateOmniRouterUrl("https://api.unorouter.com/v1")
+                                        handleUpdateOmniRouterModel("deepseek-v4-flash:free")
+                                      }}
+                                      className="px-2 py-0.5 rounded text-[9px] bg-indigo-950/60 border border-indigo-700/60 text-indigo-300 hover:bg-indigo-900/80 cursor-pointer"
+                                    >
+                                      UnoRouter (Free Cloud)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleUpdateOmniRouterUrl("http://localhost:20128/v1")
+                                      }}
+                                      className="px-2 py-0.5 rounded text-[9px] bg-slate-900 border border-slate-700 text-slate-300 hover:text-white cursor-pointer"
+                                    >
+                                      OmniRoute (Local :20128)
+                                    </button>
+                                  </div>
                                   <div className="space-y-1">
                                     <label className="text-[10px] text-slate-400 font-medium flex items-center justify-between">
-                                      <span>OmniRouter Gateway URL</span>
+                                      <span>Gateway Base URL</span>
                                       <span className="text-emerald-400 text-[9px] font-mono">OpenAI Compatible</span>
                                     </label>
                                     <input
@@ -1875,7 +1896,9 @@ export default function AISimulatorPage() {
                                     />
                                   </div>
                                   <p className="text-[10px] text-slate-500 italic">
-                                    UnoRouter (unorouter.com) serves 200+ models behind one key — :free models cost nothing (~1 req/min each). Prefer a flagship :free model (deepseek-v4-flash:free, gpt-5.5:free) for the browser agent. You can still point the URL at a local gateway instead.
+                                    {omniRouterBaseUrl.includes("20128") || omniRouterBaseUrl.includes("localhost")
+                                      ? "Local OmniRoute requires a configured provider/model prefix (e.g. openai/gpt-4o-mini). Check 'omniroute providers list' or dashboard at http://localhost:20128."
+                                      : "UnoRouter (unorouter.com) serves 200+ models behind one key — :free models cost nothing. Get a key at unorouter.com/token and use deepseek-v4-flash:free."}
                                   </p>
                                 </div>
                               ) : aiProvider === "cloud" ? (

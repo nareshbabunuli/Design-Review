@@ -79,7 +79,11 @@ Rules: never invent credentials; never touch delete/destroy/purchase/checkout/lo
         const data = await res.json()
         const content: string | undefined = data?.choices?.[0]?.message?.content
         if (content) {
-          const parsed = JSON.parse(content)
+          const cleaned = String(content)
+            .replace(/^```(?:json)?\s*/i, "")
+            .replace(/```\s*$/i, "")
+            .trim()
+          const parsed = JSON.parse(cleaned)
           const arr = Array.isArray(parsed) ? parsed : parsed.scenarios
           if (Array.isArray(arr) && arr.length > 0) {
             const scenarios = arr.slice(0, count).map((s: any, i: number) => ({
@@ -97,10 +101,19 @@ Rules: never invent credentials; never touch delete/destroy/purchase/checkout/lo
         }
         return { scenarios: heuristicScenarios(opts, count), usedAi: false, error: "AI planner returned no usable scenarios — using the built-in scenario pack." }
       }
+      const errText = await res.text().catch(() => "")
+      let reason = ""
+      try {
+        const errObj = JSON.parse(errText)
+        reason = errObj?.error?.message || errObj?.message || errText
+      } catch {
+        reason = errText
+      }
+      reason = (reason || "").replace(/\s+/g, " ").trim().slice(0, 200)
       return {
         scenarios: heuristicScenarios(opts, count),
         usedAi: false,
-        error: `AI planner gateway returned HTTP ${res.status} — using the built-in scenario pack.`,
+        error: `AI planner gateway returned HTTP ${res.status}${reason ? `: ${reason}` : ""} — using the built-in scenario pack.`,
       }
     } catch (err: any) {
       return {
