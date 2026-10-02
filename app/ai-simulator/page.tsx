@@ -32,12 +32,16 @@ import {
   Send,
   Bot,
   Wand2,
+  Video,
+  ListChecks,
+  GitBranch,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
 import { WorkflowSimulator } from "@/components/design-review/workflow-simulator"
 import { ThemeToggle } from "@/components/design-review/theme-toggle"
+import TestFlowGraph from "@/components/design-review/test-flow-graph"
 import type { AutomationJob, DiscoveredScreen, AutomationIssue, AgentChatMessage } from "@/lib/ai-automation/types"
 
 type ProjectRow = {
@@ -1609,7 +1613,7 @@ export default function AISimulatorPage() {
                               </span>
                               <button
                                 type="button"
-                                onClick={fetchLocalRoutes}
+                                onClick={() => fetchLocalRoutes()}
                                 disabled={isScanningRoutes}
                                 className="text-[9px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer"
                                 title="Rescan local project files"
@@ -2221,6 +2225,102 @@ export default function AISimulatorPage() {
                               </div>
                             )}
                           </div>
+
+                          {/* Session Recording */}
+                          {currentJob.recordingUrl && (
+                            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                              <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                                <Video className="h-3.5 w-3.5 text-indigo-400" />
+                                Session Recording
+                              </span>
+                              <video
+                                src={currentJob.recordingUrl}
+                                controls
+                                className="w-full rounded-lg border border-slate-800 bg-black"
+                              />
+                            </div>
+                          )}
+
+                          {/* Autonomous Test Cases */}
+                          {currentJob.testCases && currentJob.testCases.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="font-bold text-white text-xs flex items-center gap-1.5 px-0.5">
+                                <ListChecks className="h-3.5 w-3.5 text-emerald-400" />
+                                Test Cases (
+                                {currentJob.testCases.filter((t) => t.status === "passed").length}/
+                                {currentJob.testCases.length} passed)
+                              </span>
+                              {currentJob.testCases.map((tc) => (
+                                <div
+                                  key={tc.scenarioId}
+                                  className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-white truncate">{tc.name}</span>
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
+                                        tc.status === "passed"
+                                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                          : tc.status === "blocked"
+                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                            : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                      }`}
+                                    >
+                                      {tc.status}
+                                    </span>
+                                  </div>
+                                  {tc.error && <p className="text-[11px] text-rose-300/90">{tc.error}</p>}
+                                  {tc.steps.length > 0 && (
+                                    <ul className="text-[11px] text-slate-400 space-y-0.5 list-disc pl-4">
+                                      {tc.steps.slice(0, 5).map((st, i) => (
+                                        <li key={i} className="leading-snug">
+                                          {st}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {tc.screenshots.length > 0 && (
+                                    <div className="flex gap-1.5 overflow-x-auto custom-scrollbar">
+                                      {tc.screenshots.map((shot, i) => (
+                                        <a key={i} href={shot.url} target="_blank" rel="noreferrer" title={shot.label}>
+                                          <img
+                                            src={shot.url}
+                                            alt={shot.label}
+                                            className="h-16 w-28 object-cover rounded-md border border-slate-700 hover:border-indigo-500 transition"
+                                          />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {tc.bugs.length > 0 && (
+                                    <div className="space-y-1">
+                                      {tc.bugs.map((b, i) => (
+                                        <div key={i} className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50">
+                                          <p className="text-[11px] text-rose-200 font-medium">
+                                            &#x1F41E; [{b.severity}] {b.description}
+                                          </p>
+                                          <p className="text-[10px] text-slate-400 mt-0.5">
+                                            Repro: {b.repro.join(" \u2192 ")}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Test Flow Graph */}
+                          {currentJob.flowGraph && currentJob.flowGraph.nodes.length > 0 && (
+                            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                              <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                                <GitBranch className="h-3.5 w-3.5 text-indigo-400" />
+                                Test Flow ({currentJob.flowGraph.nodes.length} screens)
+                              </span>
+                              <TestFlowGraph graph={currentJob.flowGraph} />
+                            </div>
+                          )}
 
                           {/* Issues Breakdown */}
                           {currentJob.report.issues && currentJob.report.issues.length > 0 ? (

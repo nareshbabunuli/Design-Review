@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { createAndStartJob } from "@/lib/ai-automation/runner"
 import type { StartAutomationRequest } from "@/lib/ai-automation/types"
 
+/**
+ * Starts a fully autonomous test run: the Stagehand scenario engine plans
+ * N realistic scenarios, drives a real browser through each, records video,
+ * captures masked screenshots, and compiles test cases + flow graph + report.
+ */
 export async function POST(req: NextRequest) {
   try {
     const body: StartAutomationRequest = await req.json()
@@ -9,7 +14,6 @@ export async function POST(req: NextRequest) {
     if (!body.url || !body.url.trim()) {
       return NextResponse.json({ error: "Missing target URL" }, { status: 400 })
     }
-
     if (!body.projectId || !body.projectId.trim()) {
       return NextResponse.json({ error: "Missing projectId" }, { status: 400 })
     }
@@ -20,7 +24,6 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: "Invalid target URL format" }, { status: 400 })
     }
-
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
       return NextResponse.json({ error: "URL must start with http:// or https://" }, { status: 400 })
     }
@@ -39,18 +42,18 @@ export async function POST(req: NextRequest) {
       openRouterApiKey: body.openRouterApiKey,
       aiModel: body.aiModel,
       aiBaseUrl: body.aiBaseUrl,
-      mode: body.mode,
-      scenarioCount: body.scenarioCount,
+      mode: "autonomous",
+      scenarioCount: body.scenarioCount || 15,
     })
 
     return NextResponse.json({
       success: true,
       jobId: job.id,
       status: job.status,
-      message: "AI UI Automation job started in background.",
+      message: "Autonomous test run started in background.",
     })
   } catch (err: any) {
-    console.error("[API ai-automation/start] Error:", err)
+    console.error("[API ai-automation/autonomous] Error:", err)
     return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 })
   }
 }

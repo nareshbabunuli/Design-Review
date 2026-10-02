@@ -88,7 +88,7 @@ export async function runStagehandExploration(
     const stagePage = stagehand.context.activePage()
     if (!stagePage) throw new Error("Stagehand attached to the browser but found no active page.")
 
-    await stagePage.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 })
+    await stagePage.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeoutMs: 20000 })
 
     hooks.appendLog(job, "info", "Stagehand attached to the existing browser session.")
     hooks.appendLog(job, "info", "Autonomous exploration started: observe → decide → move → click → verify → backtrack.")
