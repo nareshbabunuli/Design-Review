@@ -114,6 +114,7 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     id: jobId,
     targetUrl: params.url.trim(),
     projectId: params.projectId,
+    projectDir: params.projectDir,
     status: "queued",
     progress: 5,
     currentStep: params.userInstruction ? `Command: "${params.userInstruction}"` : "Initializing automation runner...",
@@ -757,7 +758,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     let localFsUrls: string[] = []
     if (targetOrigin.includes("localhost") || targetOrigin.includes("127.0.0.1")) {
       try {
-        const fsRoutes = discoverLocalProjectRoutes(job.targetUrl)
+        const fsRoutes = discoverLocalProjectRoutes(job.targetUrl, params.projectDir)
         localFsUrls = fsRoutes.map((r) => r.url)
         appendLog(job, "info", `Local Project Scanner: Found ${localFsUrls.length} routes in app filesystem.`)
       } catch (e: any) {

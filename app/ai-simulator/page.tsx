@@ -160,7 +160,9 @@ export default function AISimulatorPage() {
   const [isBotPanelOpen, setIsBotPanelOpen] = useState(true)
 
   // Automation Bot Configuration State
-  const [targetUrl, setTargetUrl] = useState("http://localhost:3000")
+  const [targetUrl, setTargetUrl] = useState("http://localhost:3001")
+  const [selectedProjectDir, setSelectedProjectDir] = useState<string>("landlord-accounting-portal")
+  const [availableProjects, setAvailableProjects] = useState<Array<{ name: string; path: string; defaultPort?: number }>>([])
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [showCredentials, setShowCredentials] = useState(false)
@@ -187,7 +189,6 @@ export default function AISimulatorPage() {
   // Antigravity Browser Control & Action Replay State
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null)
   const [isPlayingReplay, setIsPlayingReplay] = useState(false)
-  const [isAntigravityHudExpanded, setIsAntigravityHudExpanded] = useState(true)
 
   // Laya Fast System-1 Reflexes & Journey Role State
   const [journeyRole, setJourneyRole] = useState<"user" | "admin" | "client" | "editor" | "viewer" | "custom">("user")
@@ -201,23 +202,50 @@ export default function AISimulatorPage() {
   const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
   const [isScanningRoutes, setIsScanningRoutes] = useState(false)
 
-  const fetchLocalRoutes = useCallback(async () => {
+  const fetchLocalRoutes = useCallback(async (dirOverride?: string, urlOverride?: string) => {
     try {
       setIsScanningRoutes(true)
-      const res = await fetch("/api/ai-automation/routes")
+      const dir = dirOverride !== undefined ? dirOverride : selectedProjectDir
+      const url = urlOverride !== undefined ? urlOverride : targetUrl
+      const params = new URLSearchParams()
+      if (url) params.set("baseUrl", url)
+      if (dir) params.set("projectDir", dir)
+      const res = await fetch(`/api/ai-automation/routes?${params.toString()}`)
       const data = await res.json()
       if (data?.routes) {
         setDiscoveredRoutes(data.routes)
+      }
+      if (data?.availableProjects) {
+        setAvailableProjects(data.availableProjects)
+      }
+      if (data?.activeProjectDir && !selectedProjectDir) {
+        setSelectedProjectDir(data.activeProjectDir)
       }
     } catch {}
     finally {
       setIsScanningRoutes(false)
     }
-  }, [])
+  }, [selectedProjectDir, targetUrl])
+
+  const handleSelectTestingProject = (projectName: string) => {
+    setSelectedProjectDir(projectName)
+    localStorage.setItem("ai_target_project_dir", projectName)
+
+    const projectInfo = availableProjects.find((p) => p.name === projectName)
+    const newPort = projectInfo?.defaultPort || (projectName === "landlord-accounting-portal" ? 3001 : 3000)
+    const newUrl = `http://localhost:${newPort}`
+    setTargetUrl(newUrl)
+    localStorage.setItem("ai_target_app_url", newUrl)
+    fetchLocalRoutes(projectName, newUrl)
+  }
 
   useEffect(() => {
-    fetchLocalRoutes()
-  }, [fetchLocalRoutes])
+    const savedProject = localStorage.getItem("ai_target_project_dir") || "landlord-accounting-portal"
+    const savedUrl = localStorage.getItem("ai_target_app_url") || (savedProject === "landlord-accounting-portal" ? "http://localhost:3001" : "http://localhost:3000")
+    setSelectedProjectDir(savedProject)
+    setTargetUrl(savedUrl)
+    fetchLocalRoutes(savedProject, savedUrl)
+  }, [])
 
   // Laya fast health checker (runs only if explicitly enabled)
   useEffect(() => {
@@ -257,7 +285,7 @@ export default function AISimulatorPage() {
     {
       id: "welcome-msg",
       sender: "agent",
-      text: "Hello! I am your Antigravity Autonomous Browser Testing Agent. You can give me direct testing commands in natural language, or pick a quick command chip below.",
+      text: "Hello! I am your Testing Bot. You can give me direct testing commands in natural language, or pick a quick command chip below.",
       timestamp: new Date().toISOString(),
       status: "completed",
     },
@@ -265,16 +293,41 @@ export default function AISimulatorPage() {
 
   // Sync chat messages from current running job
   useEffect(() => {
-    if (currentJob?.messages && currentJob.messages.length > 0) {
-      setChatHistory((prev) => {
-        const existingIds = new Set(prev.map((m) => m.id))
-        const newMsgs = currentJob.messages!.filter((m) => !existingIds.has(m.id))
-        if (newMsgs.length > 0) {
-          return [...prev, ...newMsgs]
+    if (!currentJob?.messages || currentJob.messages.length === 0) return
+
+    setChatHistory((prev) => {
+      const agentJobMsgs = currentJob.messages!.filter((m) => m.sender === "agent")
+      if (agentJobMsgs.length === 0) return prev
+      const latestAgentMsg = agentJobMsgs[agentJobMsgs.length - 1]
+
+      // Replace any optimistic pending agent placeholder
+      const pendingIdx = prev.findIndex(
+        (m) =>
+          m.id.startsWith("agent-pending-") ||
+          (m.sender === "agent" && m.status === "thinking" && m.id.startsWith("agent-"))
+      )
+      if (pendingIdx !== -1) {
+        const next = [...prev]
+        next[pendingIdx] = { ...latestAgentMsg }
+        return next
+      }
+
+      // Update existing agent message in place if status or text changed
+      const existingIdx = prev.findIndex((m) => m.id === latestAgentMsg.id)
+      if (existingIdx !== -1) {
+        if (
+          prev[existingIdx].text !== latestAgentMsg.text ||
+          prev[existingIdx].status !== latestAgentMsg.status
+        ) {
+          const next = [...prev]
+          next[existingIdx] = { ...latestAgentMsg }
+          return next
         }
         return prev
-      })
-    }
+      }
+
+      return [...prev, latestAgentMsg]
+    })
   }, [currentJob?.messages])
 
   const terminalRef = useRef<HTMLDivElement>(null)
@@ -304,9 +357,9 @@ export default function AISimulatorPage() {
       status: "completed",
     }
     const agentThinkingMsg: AgentChatMessage = {
-      id: `agent-${Date.now()}`,
+      id: `agent-pending-${Date.now()}`,
       sender: "agent",
-      text: `Processing command: "${textToSend}"... Preparing Antigravity browser actions.`,
+      text: `Processing command: "${textToSend}"... Preparing browser testing actions.`,
       timestamp: new Date().toISOString(),
       status: "thinking",
     }
@@ -319,8 +372,9 @@ export default function AISimulatorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command: textToSend,
-          targetUrl: targetUrl.trim() || "http://localhost:3000",
+          targetUrl: targetUrl.trim() || "http://localhost:3001",
           projectId: activeProject.id,
+          projectDir: selectedProjectDir,
           credentials:
             username || password
               ? { username: username.trim(), password: password.trim() }
@@ -494,9 +548,9 @@ export default function AISimulatorPage() {
     }
   }, [supabase.auth])
 
-  // Load projects from database
-  const loadWorkspace = useCallback(async () => {
-    setLoading(true)
+  // Load projects from database (silent refresh prevents tearing down the screen)
+  const loadWorkspace = useCallback(async (showFullLoader = false) => {
+    if (showFullLoader) setLoading(true)
     try {
       const { data: ps, error: pError } = await supabase
         .from("projects")
@@ -592,7 +646,7 @@ export default function AISimulatorPage() {
   }, [supabase])
 
   useEffect(() => {
-    loadWorkspace()
+    loadWorkspace(true)
   }, [loadWorkspace])
 
   const activeProject = useMemo(() => {
@@ -614,9 +668,9 @@ export default function AISimulatorPage() {
     }
   }, [])
 
-  // Poll job status while running
+  // Poll job status while running or queued
   useEffect(() => {
-    if (!currentJob?.id || currentJob.status !== "running") return
+    if (!currentJob?.id || (currentJob.status !== "running" && currentJob.status !== "queued")) return
 
     const interval = setInterval(async () => {
       try {
@@ -625,8 +679,9 @@ export default function AISimulatorPage() {
         if (data?.success && data.job) {
           setCurrentJob(data.job)
           if (data.job.status === "completed" || data.job.status === "failed" || data.job.status === "stopped") {
-            // Reload project workspace to immediately surface newly created workflows!
-            loadWorkspace()
+            clearInterval(interval)
+            // Reload project workspace silently in the background without screen flicker
+            loadWorkspace(false)
           }
         }
       } catch (err) {
@@ -791,6 +846,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify({
           url: targetUrl.trim(),
           projectId: activeProject.id,
+          projectDir: selectedProjectDir,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials:
@@ -1198,112 +1254,6 @@ export default function AISimulatorPage() {
                 }}
               />
 
-              {/* Google Antigravity Browser Testing Cockpit HUD */}
-              {currentJob && (currentJob.status === "running" || (currentJob.actionHistory && currentJob.actionHistory.length > 0)) && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-xl w-[94%] sm:w-auto">
-                  {isAntigravityHudExpanded ? (
-                    <div className="bg-slate-950/95 border border-indigo-500/40 rounded-2xl p-3 shadow-2xl backdrop-blur-xl space-y-2 text-xs text-slate-200 ring-1 ring-purple-500/20">
-                      {/* Top Bar: Agent Badge, Action Type, Step Counter, and Minimizer */}
-                      <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 pb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#10b981]" />
-                          <span className="font-bold text-[11px] tracking-wider text-purple-400 font-mono uppercase">
-                            ANTIGRAVITY AGENT
-                          </span>
-                          {activeAction && (
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono ${
-                                activeAction.type === "click"
-                                  ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
-                                  : activeAction.type === "back"
-                                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                  : activeAction.type === "type"
-                                  ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                                  : activeAction.type === "scroll"
-                                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
-                                  : activeAction.type === "assert"
-                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                  : "bg-slate-800 text-slate-300"
-                              }`}
-                            >
-                              {activeAction.type}
-                            </span>
-                          )}
-                          {activeAction?.status && (
-                            <span
-                              className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
-                                activeAction.status === "passed"
-                                  ? "text-emerald-400 bg-emerald-950/40"
-                                  : activeAction.status === "failed"
-                                  ? "text-rose-400 bg-rose-950/40"
-                                  : "text-amber-400 bg-amber-950/40"
-                              }`}
-                            >
-                              {activeAction.status}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {chronologicalActions.length > 0 && (
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              Step {activeActionIndex >= 0 ? activeActionIndex + 1 : 1}/{chronologicalActions.length}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setIsAntigravityHudExpanded(false)}
-                            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
-                            title="Collapse HUD"
-                          >
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Middle: Agent Thought & Target */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="text-slate-400 font-medium truncate">
-                            🎯 <strong className="text-white">{activeAction?.target || currentJob.targetUrl}</strong>
-                            {activeAction?.coordinates && (
-                              <span className="ml-1.5 text-purple-400 font-mono text-[10px]">
-                                ({activeAction.coordinates.x}, {activeAction.coordinates.y})
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        {activeAction?.thought && (
-                          <div className="text-[11px] text-slate-300 italic bg-slate-900/90 rounded-lg p-2 border border-slate-800/80 leading-relaxed">
-                            <span className="text-purple-400 font-semibold not-italic font-mono mr-1.5">🧠 Thought:</span>
-                            {activeAction.thought}
-                          </div>
-                        )}
-                        {activeAction?.observation && (
-                          <div className="text-[10px] text-emerald-300 font-mono flex items-center gap-1.5">
-                            <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
-                            <span className="truncate">{activeAction.observation}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <p className="border-t border-slate-800/60 pt-2 text-[10px] text-slate-500">
-                        Use Action Trajectory in the AI Bot panel to review or replay steps.
-                      </p>
-                    </div>
-                  ) : (
-                    <div
-                      onClick={() => setIsAntigravityHudExpanded(true)}
-                      className="bg-slate-950/95 border border-indigo-500/40 rounded-full px-4 py-2 shadow-2xl backdrop-blur-md flex items-center gap-3 text-xs cursor-pointer hover:border-indigo-400 transition"
-                    >
-                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                      <span className="font-bold text-white font-mono">ANTIGRAVITY AGENT</span>
-                      <span className="text-slate-300 max-w-[200px] truncate">{activeAction?.description || currentJob.currentStep}</span>
-                      <span className="font-mono text-indigo-400 font-bold">{currentJob.progress}%</span>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* 2. DOCKED AI AUTOMATION TESTING COCKPIT (Slides out from right) */}
@@ -1421,7 +1371,7 @@ export default function AISimulatorPage() {
                                     <div className="w-4 h-4 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[10px] text-white">
                                       <Bot className="h-2.5 w-2.5" />
                                     </div>
-                                    <span className="text-[10px] font-semibold text-indigo-400">Antigravity Bot</span>
+                                    <span className="text-[10px] font-semibold text-indigo-400">Testing Bot</span>
                                     <span className="text-[10px] text-slate-500 font-mono">
                                       {msg.timestamp?.slice(11, 19) || ""}
                                     </span>
@@ -1515,6 +1465,57 @@ export default function AISimulatorPage() {
                             </button>
                           ))}
                         </div>
+
+                        {/* Project Routes Presets with Target Project Switcher */}
+                        <div className="pt-1.5 border-t border-slate-800/60 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 gap-1">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
+                              <span className="font-semibold text-slate-300 shrink-0">Testing:</span>
+                              <select
+                                value={selectedProjectDir}
+                                onChange={(e) => handleSelectTestingProject(e.target.value)}
+                                className="bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 font-mono outline-none cursor-pointer max-w-[170px] truncate"
+                                title="Switch local testing project to load its routes"
+                              >
+                                {availableProjects.map((p) => (
+                                  <option key={p.name} value={p.name}>
+                                    {p.name} {p.defaultPort ? `(:${p.defaultPort})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => fetchLocalRoutes()}
+                              disabled={isScanningRoutes}
+                              className="text-[9px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer shrink-0"
+                              title="Rescan target project routes"
+                            >
+                              <RotateCcw className={`h-2.5 w-2.5 ${isScanningRoutes ? "animate-spin" : ""}`} />
+                              <span>Rescan</span>
+                            </button>
+                          </div>
+                          {discoveredRoutes.length > 0 && (
+                            <div className="flex gap-1 overflow-x-auto pb-0.5 custom-scrollbar">
+                              {discoveredRoutes.map((r, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => {
+                                    setTargetUrl(r.url)
+                                    handleSendChatCommand(`Test and inspect route ${r.path}`)
+                                  }}
+                                  disabled={isSendingChat}
+                                  className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition cursor-pointer disabled:opacity-50"
+                                  title={`Click to test: ${r.path} (${r.url})`}
+                                >
+                                  {r.path}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Chat Input Bar */}
@@ -1557,6 +1558,25 @@ export default function AISimulatorPage() {
                     <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar">
                       {/* Configuration Form */}
                       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-3">
+                        {/* Target Project Selector */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                            <span>Target Project Folder</span>
+                            <span className="text-[10px] text-indigo-400 font-mono">{selectedProjectDir}</span>
+                          </label>
+                          <select
+                            value={selectedProjectDir}
+                            onChange={(e) => handleSelectTestingProject(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 font-mono outline-none cursor-pointer"
+                          >
+                            {availableProjects.map((p) => (
+                              <option key={p.name} value={p.name}>
+                                {p.name} {p.defaultPort ? `(Port ${p.defaultPort})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
                         <div className="space-y-1">
                           <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
                             <span>Target App URL</span>
@@ -1567,8 +1587,13 @@ export default function AISimulatorPage() {
                             <input
                               type="url"
                               value={targetUrl}
-                              onChange={(e) => setTargetUrl(e.target.value)}
-                              placeholder="http://localhost:3000"
+                              onChange={(e) => {
+                                const newUrl = e.target.value
+                                setTargetUrl(newUrl)
+                                localStorage.setItem("ai_target_app_url", newUrl)
+                                fetchLocalRoutes(selectedProjectDir, newUrl)
+                              }}
+                              placeholder="http://localhost:3001"
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                             />
                           </div>
