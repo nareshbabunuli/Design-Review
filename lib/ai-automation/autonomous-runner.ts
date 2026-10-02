@@ -17,7 +17,7 @@ import path from "path"
 import fs from "fs"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import { createClient } from "@supabase/supabase-js"
-import { PuppeteerScreenRecorder } from "puppeteer-screen-recorder"
+
 import type {
   AutomationJob,
   AutomationIssue,
@@ -535,6 +535,7 @@ export async function executeAutonomousJob(
 
     // ---- Session video ----
     try {
+      const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
       recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
       await recorder.start(recordingPath)
       appendLog(job, "info", "Session video recording started.")

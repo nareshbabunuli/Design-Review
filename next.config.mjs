@@ -1,5 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: [
+    'puppeteer',
+    'puppeteer-screen-recorder',
+    '@ffmpeg-installer/ffmpeg',
+    '@browserbasehq/stagehand',
+  ],
   typescript: {
     ignoreBuildErrors: true,
   },
