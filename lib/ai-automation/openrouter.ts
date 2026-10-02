@@ -271,6 +271,13 @@ export interface AICommandInterpretation {
   }>
 }
 
+export interface CommandInterpretationResult extends AICommandInterpretation {
+  /** True when the offline heuristic planner was used instead of the AI model. */
+  usedFallback: boolean
+  /** Human-readable reason the AI call did not produce a plan. Set when usedFallback is true. */
+  fallbackReason?: string
+}
+
 export async function interpretCommandWithAI({
   command,
   currentUrl,
@@ -283,11 +290,21 @@ export async function interpretCommandWithAI({
   apiKey?: string
   baseUrl?: string
   model?: string
-}): Promise<AICommandInterpretation> {
+}): Promise<CommandInterpretationResult> {
   const cleanBase = resolveBaseUrl(baseUrl)
 
-  // Fallback heuristic interpreter if no key or offline
-  const fallbackInterpretation = (): AICommandInterpretation => {
+  const asResult = (
+    interpretation: AICommandInterpretation,
+    usedFallback: boolean,
+    fallbackReason?: string,
+  ): CommandInterpretationResult => ({ ...interpretation, usedFallback, fallbackReason })
+
+  // Fallback heuristic interpreter if no key or offline.
+  // The reason is ALWAYS recorded — the UI must show it instead of a fake success.
+  const fallbackInterpretation = (reason: string): CommandInterpretationResult =>
+    asResult(fallbackInterpretationInner(), true, reason)
+
+  const fallbackInterpretationInner = (): AICommandInterpretation => {
     const lower = command.toLowerCase()
     const actions: AICommandInterpretation["actions"] = []
 
@@ -375,7 +392,9 @@ export async function interpretCommandWithAI({
     // No key for a remote gateway: say so loudly, then use the offline
     // heuristic planner so the UI still does something useful.
     missingKeyWarning("Command interpreter")
-    return fallbackInterpretation()
+    return fallbackInterpretation(
+      "No API key configured for the remote gateway. Add a free key in AI Settings \u2192 OmniRouter, or point the gateway URL at a local endpoint.",
+    )
   }
 
   try {
@@ -414,19 +433,22 @@ Return strictly valid JSON in this schema:
       "Command interpreter",
     )
 
-    if (!res.ok) return fallbackInterpretation()
+    if (!res.ok)
+      return fallbackInterpretation(
+        `AI gateway returned HTTP ${res.status} — the provider may be down, rate-limiting, or rejecting the model name.`,
+      )
 
     const data = await res.json()
     const content = data?.choices?.[0]?.message?.content
-    if (!content) return fallbackInterpretation()
+    if (!content) return fallbackInterpretation("The AI gateway returned an empty response.")
 
     const parsed = JSON.parse(content) as AICommandInterpretation
     if (!parsed.actions || !Array.isArray(parsed.actions) || parsed.actions.length === 0) {
-      return fallbackInterpretation()
+      return fallbackInterpretation("The AI model returned no usable actions.")
     }
-    return parsed
-  } catch (err) {
+    return asResult(parsed, false)
+  } catch (err: any) {
     console.warn("[AI Command] Falling back to heuristic command interpreter:", err)
-    return fallbackInterpretation()
+    return fallbackInterpretation(`AI request failed: ${err?.message || "network error"}.`)
   }
 }

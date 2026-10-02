@@ -18,6 +18,7 @@ import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
+import { executeAutonomousJob, isAutonomousCommand } from "./autonomous-runner"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
@@ -74,7 +75,7 @@ export function getJob(jobId: string): AutomationJob | null {
   return null
 }
 
-function appendLog(job: AutomationJob, level: AutomationLog["level"], message: string) {
+export function appendLog(job: AutomationJob, level: AutomationLog["level"], message: string) {
   const log: AutomationLog = {
     timestamp: new Date().toISOString(),
     level,
@@ -114,6 +115,7 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     id: jobId,
     targetUrl: params.url.trim(),
     projectId: params.projectId,
+    mode: params.mode || (params.userInstruction ? "chat" : "crawl"),
     status: "queued",
     progress: 5,
     currentStep: params.userInstruction ? `Command: "${params.userInstruction}"` : "Initializing automation runner...",
@@ -466,6 +468,17 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     )
   }
 
+  // Autonomous mode: the Stagehand scenario engine drives the browser.
+  // Triggered explicitly (mode === "autonomous") or by exploration-style
+  // chat commands ("test every page", "run 15 scenarios", ...).
+  if (params.mode === "autonomous" || (params.userInstruction && isAutonomousCommand(params.userInstruction))) {
+    appendLog(job, "info", "Autonomous exploration requested — handing off to the Stagehand scenario engine.")
+    job.mode = "autonomous"
+    saveJob(job)
+    await executeAutonomousJob(job, params)
+    return
+  }
+
   let browser: Browser | null = null
 
   try {
@@ -570,17 +583,32 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         params.userInstruction,
         params.layaBaseUrl,
       ).catch(() => null)
+      let usedFallback = false
       if (plan) {
         appendLog(job, "success", "[Laya reflex] Fast-path plan accepted — skipping cloud interpretation.")
       } else {
         appendLog(job, "info", "Laya reflex unsure or offline — escalating to cloud command interpreter.")
-        plan = await interpretCommandWithAI({
+        const interpreted = await interpretCommandWithAI({
           command: params.userInstruction,
           currentUrl: page.url(),
           apiKey: openRouterKey,
           baseUrl: params.aiBaseUrl,
           model: params.aiModel,
         })
+        plan = interpreted
+        usedFallback = interpreted.usedFallback
+        if (interpreted.usedFallback) {
+          // LOUD failure: never present the offline fallback as a success.
+          job.aiError = interpreted.fallbackReason
+          appendLog(job, "warn", `AI provider unreachable — ${interpreted.fallbackReason}`)
+          if (job.messages && job.messages.length > 1) {
+            job.messages[1].text =
+              `\u26a0\uFE0F AI provider unreachable: ${interpreted.fallbackReason} ` +
+              `Running the offline fallback plan (basic inspection only) — it cannot really execute your command.`
+            job.messages[1].status = "executing"
+            saveJob(job)
+          }
+        }
       }
 
       appendLog(job, "info", `AI Plan: ${plan.planSummary}`)
@@ -719,7 +747,9 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       })
 
       if (job.messages && job.messages.length > 1) {
-        job.messages[1].text = `✅ Executed ${plan.actions.length} action(s). ${plan.planSummary}`
+                job.messages[1].text = usedFallback
+          ? `\u26a0\uFE0F Offline fallback only \u2014 ran ${plan.actions.length} basic check(s), not your command. ${job.aiError || ""} Fix the AI provider (AI Settings \u2192 OmniRouter) for real command execution.`
+          : `\u2705 Executed ${plan.actions.length} action(s). ${plan.planSummary}`
         job.messages[1].status = "completed"
       }
     } else {

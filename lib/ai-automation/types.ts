@@ -38,6 +38,70 @@ export type DiscoveredScreen = {
 
 export type AutomationJobStatus = "queued" | "running" | "completed" | "failed" | "stopped"
 
+export type TestScenarioCategory =
+  | "navigation"
+  | "auth"
+  | "forms"
+  | "validation"
+  | "error-handling"
+  | "content"
+  | "edge"
+
+export type TestScenario = {
+  id: string
+  name: string
+  category: TestScenarioCategory
+  goal: string
+  /** Natural-language instruction handed to the browser agent for this scenario. */
+  instruction: string
+  needsAuth: boolean
+  fillsForms: boolean
+  expectedOutcome: string
+}
+
+export type TestCaseBug = {
+  description: string
+  severity: "low" | "medium" | "high" | "blocker"
+  repro: string[]
+}
+
+export type TestCaseScreenshot = {
+  label: string
+  url: string
+}
+
+export type TestCaseResult = {
+  scenarioId: string
+  name: string
+  category: TestScenarioCategory
+  status: "passed" | "failed" | "blocked" | "skipped"
+  steps: string[]
+  screenshots: TestCaseScreenshot[]
+  bugs: TestCaseBug[]
+  startedAt: string
+  finishedAt: string
+  error?: string
+}
+
+export type FlowGraphNode = {
+  id: string
+  url: string
+  title: string
+  screenshotUrl?: string
+  scenarioId?: string
+}
+
+export type FlowGraphEdge = {
+  from: string
+  to: string
+  label: string
+}
+
+export type FlowGraph = {
+  nodes: FlowGraphNode[]
+  edges: FlowGraphEdge[]
+}
+
 export type AutomationLog = {
   timestamp: string
   level: "info" | "success" | "warn" | "error"
@@ -55,6 +119,12 @@ export type AutomationReport = {
   recommendations: string[]
   issues?: AutomationIssue[]
   chainedWorkflowId?: string
+  /** Autonomous runs: per-scenario results (15 test cases). */
+  testCases?: TestCaseResult[]
+  /** Autonomous runs: Figma-style node/edge flow of visited screens. */
+  flowGraph?: FlowGraph
+  /** Autonomous runs: session recording (webm) URL. */
+  recordingUrl?: string
   aiExecutiveSummary?: {
     executiveSummary: string
     keyStrengths: string[]
@@ -117,6 +187,15 @@ export type AutomationJob = {
   role?: string
   chainedWorkflowId?: string
   error?: string
+  /** "autonomous" routes the job through the Stagehand scenario engine. */
+  mode?: "chat" | "crawl" | "autonomous"
+  /** Autonomous runs: planned scenarios, per-scenario results, flow graph, recording. */
+  scenarios?: TestScenario[]
+  testCases?: TestCaseResult[]
+  flowGraph?: FlowGraph
+  recordingUrl?: string
+  /** Last AI-provider error surfaced loudly to the user (never a silent fallback). */
+  aiError?: string
 }
 
 export type StartAutomationRequest = {
@@ -137,5 +216,8 @@ export type StartAutomationRequest = {
   openRouterApiKey?: string
   aiModel?: string
   aiBaseUrl?: string
+  /** "autonomous" runs the 15-scenario Stagehand engine; default is the legacy crawl/chat flow. */
+  mode?: "autonomous" | "crawl" | "chat"
+  scenarioCount?: number
 }
 
