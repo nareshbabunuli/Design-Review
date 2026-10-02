@@ -529,41 +529,73 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       target: job.targetUrl,
     })
 
-    // Authentication if provided
-    if (params.credentials?.username && params.credentials?.password) {
-      job.progress = 15
-      job.currentStep = "Checking authentication requirements..."
-      saveJob(job)
+    // Authentication: explicit credentials, pre-filled form inputs, or user login intent
+    const isLoginIntent = Boolean(params.userInstruction && /(login|signin|sign in|auth|credential|creds)/i.test(params.userInstruction))
+    const hasPasswordInput = (await page.$('input[type="password"]')) !== null
+    const isLoginUrl = /(login|signin|auth)/i.test(page.url())
 
-      const hasPasswordInput = (await page.$('input[type="password"]')) !== null
-      const isLoginUrl = /(login|signin|auth)/i.test(page.url())
+    if (hasPasswordInput || isLoginUrl || params.credentials?.username || isLoginIntent) {
+      const loginCheck = await page.evaluate((creds) => {
+        const pass = document.querySelector('input[type="password"]') as HTMLInputElement | null
+        const user = document.querySelector(
+          'input[type="email"], input[name*="email"], input[name*="user"], input[id*="email"], input[type="text"]'
+        ) as HTMLInputElement | null
+        const hasFormValues = Boolean(pass && pass.value) || Boolean(user && user.value)
+        const hasExplicit = Boolean(creds?.username && creds?.password)
+        return { shouldLogin: hasFormValues || hasExplicit, hasExplicit, hasFormValues }
+      }, params.credentials).catch(() => ({ shouldLogin: false, hasExplicit: false, hasFormValues: false }))
 
-      if (hasPasswordInput || isLoginUrl) {
-        appendLog(job, "info", "Login screen detected. Performing auto-login...")
+      if (loginCheck.shouldLogin) {
+        job.progress = 15
+        job.currentStep = "Logging into application..."
+        saveJob(job)
+        appendLog(job, "info", "Login screen detected. Submitting authentication...")
+
         try {
           const userInput = await page.$(
             'input[type="email"], input[name*="email"], input[name*="user"], input[id*="email"], input[type="text"]'
           )
           const passInput = await page.$('input[type="password"]')
 
-          if (userInput && passInput) {
+          if (params.credentials?.username && userInput) {
             await userInput.click({ count: 3 }).catch(() => {})
             await userInput.type(params.credentials.username, { delay: 10 })
+          }
+          if (params.credentials?.password && passInput) {
             await passInput.click({ count: 3 }).catch(() => {})
             await passInput.type(params.credentials.password, { delay: 10 })
+          }
 
-            const submitBtn = await page.$('button[type="submit"], input[type="submit"], form button, button')
-            if (submitBtn) {
-              await Promise.all([
-                page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {}),
-                submitBtn.click(),
-              ])
-            } else {
-              await page.keyboard.press("Enter")
-              await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {})
+          const submitSelector = await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, input[type="submit"]')) as (HTMLButtonElement | HTMLInputElement)[]
+            const btn = btns.find((b) => b.type === "submit" || /(sign in|login|log in|submit|continue)/i.test(b.textContent || b.value || ""))
+            if (btn) {
+              btn.setAttribute("data-agent-auth-submit", "true")
+              return '[data-agent-auth-submit="true"]'
             }
+            return null
+          }).catch(() => null)
 
-            appendLog(job, "success", `Auto-login submitted. Landed on: ${page.url()}`)
+          if (submitSelector) {
+            const submitBtn = await page.$(submitSelector)
+            if (submitBtn) {
+              await recordAgentAction(job, page, {
+                type: "click",
+                description: "Clicked Sign In / Login button",
+                thought: "Submitting authentication credentials to enter application dashboard.",
+                highlightSelector: submitSelector,
+              })
+              await submitBtn.click().catch(() => {})
+              await Promise.race([
+                page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 4000 }).catch(() => null),
+                new Promise((r) => setTimeout(r, 2000)),
+              ])
+              const postTitle = await page.title().catch(() => "")
+              appendLog(job, "success", `Logged into application. Current screen: "${postTitle}" (${page.url()})`)
+            }
+          } else {
+            await page.keyboard.press("Enter")
+            await new Promise((r) => setTimeout(r, 2000))
           }
         } catch (authErr: any) {
           appendLog(job, "warn", `Auto-login encountered notice: ${authErr?.message}`)
@@ -646,14 +678,34 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
 
           if (!selector && targetStr) {
             selector = await page.evaluate((txt) => {
-              const el = Array.from(document.querySelectorAll("button, a, input[type='submit'], [role='button'], select"))
-                .find((e) => (e.textContent || "").toLowerCase().includes(txt.toLowerCase()))
-              if (el) {
-                if (el.id) return `#${el.id}`
-                const tag = el.tagName.toLowerCase()
-                return tag
+              const elements = Array.from(
+                document.querySelectorAll("button, a, input[type='submit'], [role='button'], select, [tabindex]")
+              ) as HTMLElement[]
+              // 1. Exact match on trimmed text or value
+              let el = elements.find((e) => {
+                const t = (e.textContent || (e as HTMLInputElement).value || "").trim().toLowerCase()
+                return t === txt.toLowerCase()
+              })
+              // 2. Partial match on text
+              if (!el) {
+                el = elements.find((e) => {
+                  const t = (e.textContent || (e as HTMLInputElement).value || "").toLowerCase()
+                  return t.includes(txt.toLowerCase())
+                })
               }
-              return "button, a"
+              // 3. Login / Sign-in intent synonyms
+              if (!el && /(login|signin|sign in|auth|submit|continue)/i.test(txt)) {
+                el = elements.find((e) => {
+                  const t = (e.textContent || (e as HTMLInputElement).value || (e as HTMLInputElement).type || "").toLowerCase()
+                  return /(sign in|login|log in|submit)/i.test(t)
+                })
+              }
+              if (el) {
+                const marker = `agent-tgt-${Date.now()}`
+                el.setAttribute("data-agent-click-target", marker)
+                return `[data-agent-click-target="${marker}"]`
+              }
+              return null
             }, targetStr).catch(() => null)
           }
 
@@ -666,8 +718,14 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
               target: targetStr,
             })
             const el = await page.$(selector)
-            if (el) await el.click().catch(() => {})
-            await new Promise((r) => setTimeout(r, 450))
+            if (el) {
+              await el.click().catch(() => {})
+              // Allow either SPA DOM re-render or native page navigation
+              await Promise.race([
+                page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 4000 }).catch(() => null),
+                new Promise((r) => setTimeout(r, 1500)),
+              ])
+            }
           }
         } else if (act.type === "type") {
           const inputSel = act.target || "input:not([type='hidden']), textarea"
@@ -887,20 +945,19 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       // 1. Interactive Element Exercise (Antigravity Control Simulation)
       try {
         const interactiveSelector = await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll("button:not([disabled]), [role='button'], [role='tab'], select"))
+          const btns = Array.from(document.querySelectorAll("button:not([disabled]), [role='button'], [role='tab'], select")) as HTMLElement[]
           for (const btn of btns) {
             const rect = btn.getBoundingClientRect()
             const text = (btn.textContent || "").trim()
-            // Skip logout, delete, or submit buttons
+            // Skip destructive actions: logout, delete, leave
             if (
               rect.width > 10 &&
               rect.height > 10 &&
-              !/(logout|signout|delete|leave|pay|submit)/i.test(text)
+              !/(logout|signout|delete|leave|pay)/i.test(text)
             ) {
-              const id = btn.id ? `#${btn.id}` : ""
-              const tag = btn.tagName.toLowerCase()
-              const cls = btn.className && typeof btn.className === "string" ? `.${btn.className.trim().split(/\s+/)[0]}` : ""
-              return id || (cls ? `${tag}${cls}` : tag)
+              const marker = `ctrl-${Date.now()}`
+              btn.setAttribute("data-agent-ctrl", marker)
+              return `[data-agent-ctrl="${marker}"]`
             }
           }
           return null
@@ -916,7 +973,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
               highlightSelector: interactiveSelector,
             })
             await btnEl.click().catch(() => {})
-            await new Promise((r) => setTimeout(r, 250))
+            await new Promise((r) => setTimeout(r, 600))
           }
         }
 

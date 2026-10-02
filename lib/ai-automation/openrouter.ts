@@ -354,6 +354,32 @@ export async function interpretCommandWithAI({
       }
     }
 
+    if (
+      lower.includes("login") ||
+      lower.includes("sign in") ||
+      lower.includes("signin") ||
+      lower.includes("log in") ||
+      lower.includes("logining") ||
+      lower.includes("auth") ||
+      lower.includes("creds")
+    ) {
+      actions.push({
+        type: "click",
+        target: "Sign in",
+        thought: "Clicking Sign in / Login button to submit authentication and enter application dashboard.",
+        description: "Click Sign in button",
+      })
+      actions.push({
+        type: "inspect",
+        thought: "Inspecting authenticated dashboard layout and navigation after login.",
+        description: "Inspect post-login dashboard",
+      })
+      return {
+        planSummary: "Submitting login authentication and auditing post-login dashboard.",
+        actions,
+      }
+    }
+
     if (lower.includes("click") || lower.includes("toggle") || lower.includes("switch")) {
       const match = command.match(/click\s+(?:on\s+)?["']?([^"'\n,]+)["']?/i)
       const targetName = match ? match[1].trim() : "interactive element"
