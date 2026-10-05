@@ -1,6 +1,7 @@
 {
-  "name": "design-workflow-tracker",
+  "name": "open-design-ai",
   "version": "1.0.0",
+  "description": "Open-Source Design Review Platform & Autonomous Web Application Testing Simulator",
   "private": true,
   "type": "module",
   "scripts": {

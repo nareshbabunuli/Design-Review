@@ -3,12 +3,13 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Design Review — Multi-Project Comparison Tool',
+  title: 'Open Design AI — Design Review & Autonomous Testing Suite',
   description:
-    'Compare design revisions, track client feedback, and generate polished review presentations for your agency projects.',
+    'Compare Figma designs with live screens, collect client feedback, and run autonomous end-to-end AI testing simulations on your web applications.',
   generator: 'Next.js',
   icons: {
     icon: [
+      { url: '/logo.png', type: 'image/png', sizes: '512x512' },
       { url: '/icon.svg', type: 'image/svg+xml' },
       { url: '/favicon.jpg', type: 'image/jpeg', sizes: '32x32' },
     ],
@@ -32,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="light bg-slate-100" suppressHydrationWarning>
       <head>
-        <link rel="preload" href="/screenshots/simulator-preview.png" as="image" type="image/png" />
+        <link rel="preload" href="/screenshots/dashboard-preview.png" as="image" type="image/png" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

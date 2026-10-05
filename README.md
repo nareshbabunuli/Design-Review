@@ -1,4 +1,4 @@
-# 🎨 Design Review & Autonomous AI Simulator Engine
+# 🎨 Open Design AI
 
 > **Open-Source Design Review Platform & Autonomous Web Application Testing Simulator**  
 > Streamline UI sign-offs with Figma comparisons, and automate systematic end-to-end application testing using autonomous AI browser agents.
@@ -18,12 +18,12 @@
 > This project is free and open source under the **MIT License with Commons Clause & Mandatory Attribution**.  
 > - **Free to use & self-host**: You can freely use, run, and self-host this software for yourself, your team, and client engagements.
 > - **Author credit required**: Any public deployment or fork must include visible, clickable attribution:  
->   *"Powered by Design Review & AI Simulator by [Naresh Babu Nuli](https://github.com/nareshbabunuli/Design-Review)"*.
+>   *"Powered by Open Design AI by [Naresh Babu Nuli](https://github.com/nareshbabunuli/Design-Review)"*.
 > - **Anti-SaaS Clause**: You may **not** take this codebase, rebrand it, and sell it as a commercial SaaS product or paid service to third parties.
 
 ---
 
-## ⚡ What is Design Review & AI Simulator?
+## ⚡ What is Open Design AI?
 
 This repository combines two core engineering solutions:
 
@@ -132,7 +132,7 @@ Copyright (c) 2026 **Naresh Babu Nuli**.
 Licensed under the **MIT License with Commons Clause & Mandatory Attribution Condition**.
 
 - ✅ Free for personal use, internal team workflows, and client work.
-- ⚠️ Public deployments and forks must visibly credit the author: *"Powered by Design Review & AI Simulator by Naresh Babu Nuli"*.
+- ⚠️ Public deployments and forks must visibly credit the author: *"Powered by Open Design AI by Naresh Babu Nuli"*.
 - ❌ Reselling as a standalone commercial SaaS or white-label service is strictly prohibited without written consent.
 
 See [LICENSE](LICENSE) for full details. For custom commercial licensing, reach out to [nareshbabu.nuli@gmail.com](mailto:nareshbabu.nuli@gmail.com).
