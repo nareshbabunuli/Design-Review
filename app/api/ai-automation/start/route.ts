@@ -40,7 +40,9 @@ export async function POST(req: NextRequest) {
       aiModel: body.aiModel,
       aiBaseUrl: body.aiBaseUrl,
       mode: body.mode,
+      workflowPrompt: body.workflowPrompt,
       scenarioCount: body.scenarioCount,
+      dummyTestFiles: body.dummyTestFiles,
     })
 
     return NextResponse.json({

@@ -8,6 +8,7 @@
  */
 
 import type { TestScenario, TestScenarioCategory } from "./types"
+import { parseJsonSafe } from "./openrouter"
 
 const UNOROUTER_BASE_URL = "https://api.unorouter.com/v1"
 
@@ -50,7 +51,12 @@ export async function planScenarios(
   const headers = buildHeaders(base, opts.apiKey)
   if (headers) {
     try {
-      const model = opts.model?.trim() || "deepseek-v4-flash:free"
+      const rawModel = opts.model?.trim()
+      const model = isLocalBase(base)
+        ? !rawModel || rawModel === "deepseek-v4-flash:free"
+          ? "fast"
+          : rawModel
+        : rawModel || "deepseek-v4-flash:free"
       const routes = opts.routePaths.length > 0 ? opts.routePaths.join(", ") : "(no routes discovered yet)"
       const prompt = `You are a QA test planner. The target is a web application at ${opts.targetUrl}.
 Known in-app routes: ${routes}.
@@ -79,12 +85,8 @@ Rules: never invent credentials; never touch delete/destroy/purchase/checkout/lo
         const data = await res.json()
         const content: string | undefined = data?.choices?.[0]?.message?.content
         if (content) {
-          const cleaned = String(content)
-            .replace(/^```(?:json)?\s*/i, "")
-            .replace(/```\s*$/i, "")
-            .trim()
-          const parsed = JSON.parse(cleaned)
-          const arr = Array.isArray(parsed) ? parsed : parsed.scenarios
+          const parsed = parseJsonSafe<any>(content)
+          const arr = Array.isArray(parsed) ? parsed : parsed?.scenarios
           if (Array.isArray(arr) && arr.length > 0) {
             const scenarios = arr.slice(0, count).map((s: any, i: number) => ({
               id: uid("scn", i),

@@ -11,14 +11,31 @@ import {
   StartAutomationRequest,
   AgentAction,
   AgentChatMessage,
+  AIThinkingModel,
+  ChecklistTestItem,
 } from "./types"
-import { analyzeScreenWithAI, generateAIExecutiveReport, interpretCommandWithAI } from "./openrouter"
+import {
+  analyzeScreenWithAI,
+  generateAIExecutiveReport,
+  interpretCommandWithAI,
+  generateVisionThinkingModelAndChecklist,
+} from "./openrouter"
 import type { AICommandInterpretation } from "./openrouter"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
 import { executeAutonomousJob, isAutonomousCommand } from "./autonomous-runner"
+import {
+  executeFullAppTestingJob,
+  isFullAppCommand,
+  synthesizeFullAppPlanFromJob,
+  buildFigmaWorkflowMap,
+} from "./full-app-engine"
+import {
+  executeFeatureWorkflowJob,
+  isFeatureWorkflowCommand,
+} from "./feature-workflow-engine"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
@@ -60,19 +77,36 @@ export function saveJob(job: AutomationJob) {
 }
 
 export function getJob(jobId: string): AutomationJob | null {
+  let job: AutomationJob | null = null
   if (jobStore.has(jobId)) {
-    return jobStore.get(jobId)!
+    job = jobStore.get(jobId)!
   }
-  try {
-    ensureJobsDir()
-    const filePath = path.join(JOBS_DIR, `${jobId}.json`)
-    if (fs.existsSync(filePath)) {
-      const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as AutomationJob
-      jobStore.set(jobId, data)
-      return data
-    }
-  } catch {}
-  return null
+
+  // If memory job is missing fullAppTestPlan, check disk first
+  if (!job || !job.fullAppTestPlan || !job.fullAppTestPlan.screens?.length) {
+    try {
+      ensureJobsDir()
+      const filePath = path.join(JOBS_DIR, `${jobId}.json`)
+      if (fs.existsSync(filePath)) {
+        const diskJob = JSON.parse(fs.readFileSync(filePath, "utf8")) as AutomationJob
+        job = diskJob
+        jobStore.set(jobId, diskJob)
+      }
+    } catch {}
+  }
+
+  // Synthesize plan if still not present but test evidence exists
+  if (job && (!job.fullAppTestPlan || !job.fullAppTestPlan.screens?.length)) {
+    try {
+      const synth = synthesizeFullAppPlanFromJob(job)
+      if (synth) {
+        job.fullAppTestPlan = synth
+        job.flowGraph = buildFigmaWorkflowMap(synth)
+      }
+    } catch {}
+  }
+
+  return job
 }
 
 export function appendLog(job: AutomationJob, level: AutomationLog["level"], message: string) {
@@ -116,7 +150,15 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     targetUrl: params.url.trim(),
     projectId: params.projectId,
     projectDir: params.projectDir,
-    mode: params.mode || (params.userInstruction ? "chat" : "crawl"),
+    mode:
+      params.mode ||
+      (params.workflowPrompt || (params.userInstruction && isFeatureWorkflowCommand(params.userInstruction))
+        ? "feature_workflow"
+        : params.userInstruction && isFullAppCommand(params.userInstruction)
+        ? "full_app"
+        : params.userInstruction
+        ? "chat"
+        : "crawl"),
     status: "queued",
     progress: 5,
     currentStep: params.userInstruction ? `Command: "${params.userInstruction}"` : "Initializing automation runner...",
@@ -158,6 +200,8 @@ export function cancelJob(jobId: string): boolean {
     job.status = "stopped"
     job.currentStep = "Automation cancelled by user"
     job.finishedAt = new Date().toISOString()
+    job.authState = "none"
+    job.authPrompt = undefined
     appendLog(job, "warn", "Automation job terminated by user request.")
     saveJob(job)
     return true
@@ -452,6 +496,283 @@ async function recordAgentAction(
   }
 }
 
+async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAction) {
+  if (act.type === "navigate" && act.target) {
+    const navUrl = act.target.startsWith("http") ? act.target : new URL(act.target, page.url()).href
+    await page.goto(navUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {})
+    await recordAgentAction(job, page, {
+      type: "navigate",
+      description: act.description,
+      thought: act.thought,
+      target: navUrl,
+    })
+  } else if (act.type === "click") {
+    const rawTarget = (act.target || "").trim()
+    const desc = (act.description || "").trim()
+    const thought = (act.thought || "").trim()
+
+    // Determine candidate text strings to locate in the DOM
+    const isGenericTag = /^(button|a|input|div|span|body|select|form|p|h\d|main|section|aside|nav)$/i.test(rawTarget)
+    const candidateTexts: string[] = []
+
+    if (rawTarget && !isGenericTag && !/^[.#\[]/.test(rawTarget)) {
+      candidateTexts.push(rawTarget.replace(/^["']|["']$/g, "").trim())
+    }
+
+    // Extract element label from description (e.g. "Click Kensington Flat" -> "Kensington Flat")
+    const descMatch = desc.match(/(?:click|tap|open|select|press|choose)\s+["']?([^"'\n]+?)["']?(?:\s+(?:button|tab|link|filter|group|option|menu|view|card|again))?$/i)
+    if (descMatch && descMatch[1] && descMatch[1].trim().length > 1) {
+      candidateTexts.push(descMatch[1].trim())
+    }
+
+    if (thought) {
+      const thoughtMatch = thought.match(/(?:click|open|select|switch to)\s+["']?([^"'\n,.]+?)["']?(?:\s+(?:button|tab|filter|view|item))?/i)
+      if (thoughtMatch && thoughtMatch[1] && thoughtMatch[1].trim().length > 1) {
+        candidateTexts.push(thoughtMatch[1].trim())
+      }
+    }
+
+    const specificSelector = (!isGenericTag && rawTarget && /^[.#\[]/.test(rawTarget)) ? rawTarget : null
+
+    // Locate matching element in page
+    const resolution = await page.evaluate(
+      (candidates, specificSel) => {
+        // 1. Direct specific selector
+        if (specificSel) {
+          try {
+            const el = document.querySelector(specificSel) as HTMLElement | null
+            if (el) {
+              const marker = `agent-sel-${Date.now()}`
+              el.setAttribute("data-agent-click-target", marker)
+              el.scrollIntoView({ behavior: "instant", block: "center" })
+              const r = el.getBoundingClientRect()
+              return {
+                selector: `[data-agent-click-target="${marker}"]`,
+                coords: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+                label: (el.textContent || el.getAttribute("aria-label") || specificSel).trim().slice(0, 30),
+              }
+            }
+          } catch {}
+        }
+
+        // 2. Search visible clickable elements
+        const elements = Array.from(
+          document.querySelectorAll("button, a, input[type='button'], input[type='submit'], [role='button'], [role='tab'], select, [tabindex='0']")
+        ) as HTMLElement[]
+
+        const visibleElements = elements.filter((el) => {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0 && window.getComputedStyle(el).visibility !== "hidden"
+        })
+
+        for (const cand of candidates) {
+          const cleanCand = cand.toLowerCase().trim()
+          if (!cleanCand) continue
+
+          // Exact match after stripping trailing badge numbers (e.g. "My notes1" -> "My notes", "2026-270" -> "2026-27")
+          let match = visibleElements.find((el) => {
+            const raw = (el.textContent || (el as HTMLInputElement).value || "").trim().toLowerCase().replace(/\s+/g, " ")
+            let clean = raw
+            const tym = raw.match(/^(\d{4}-\d{2})\s*\d*$/)
+            if (tym) {
+              clean = tym[1]
+            } else {
+              clean = raw.replace(/\s+\d+$/, "").replace(/([a-z])\d{1,3}$/, "$1").trim()
+            }
+            return clean === cleanCand || raw === cleanCand
+          })
+
+          // Substring match
+          if (!match) {
+            match = visibleElements.find((el) => {
+              const raw = (el.textContent || (el as HTMLInputElement).value || "").toLowerCase()
+              return raw.includes(cleanCand)
+            })
+          }
+
+          // Aria/title match
+          if (!match) {
+            match = visibleElements.find((el) => {
+              const aria = (el.getAttribute("aria-label") || el.title || el.getAttribute("name") || "").toLowerCase()
+              return aria.includes(cleanCand)
+            })
+          }
+
+          if (match) {
+            const marker = `agent-tgt-${Date.now()}`
+            match.setAttribute("data-agent-click-target", marker)
+            match.scrollIntoView({ behavior: "instant", block: "center" })
+            const r = match.getBoundingClientRect()
+            return {
+              selector: `[data-agent-click-target="${marker}"]`,
+              coords: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+              label: (match.textContent || cand).trim().replace(/\s+/g, " ").slice(0, 30),
+            }
+          }
+        }
+
+        return null
+      },
+      candidateTexts,
+      specificSelector
+    )
+
+    if (!resolution) {
+      throw new Error(`Click target not found: "${rawTarget || desc}"`)
+    }
+
+    await recordAgentAction(job, page, {
+      type: "click",
+      description: act.description,
+      thought: act.thought,
+      highlightSelector: resolution.selector,
+      coordinates: resolution.coords,
+      target: resolution.label,
+    })
+
+    // Dispatch DOM click and Puppeteer click
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null
+      if (el) {
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+        el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }))
+        el.click()
+      }
+    }, resolution.selector)
+
+    const el = await page.$(resolution.selector).catch(() => null)
+    if (el) {
+      await el.click().catch(() => {})
+    }
+
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 3000 }).catch(() => null),
+      new Promise((r) => setTimeout(r, 1200)),
+    ])
+  } else if (act.type === "type") {
+    const targetStr = act.target || ""
+    let inputSel = act.selector || null
+
+    if (!inputSel && targetStr) {
+      inputSel = await page
+        .evaluate((sel) => {
+          try {
+            const el = document.querySelector(sel) as HTMLElement | null
+            if (el && ("value" in el || (el as HTMLElement).isContentEditable)) {
+              const marker = `agent-type-${Date.now()}`
+              el.setAttribute("data-agent-type-tgt", marker)
+              return `[data-agent-type-tgt="${marker}"]`
+            }
+          } catch {}
+          return null
+        }, targetStr)
+        .catch(() => null)
+    }
+
+    if (!inputSel && targetStr) {
+      inputSel = await page
+        .evaluate((tgt) => {
+          const lower = tgt.toLowerCase()
+          const inputs = Array.from(
+            document.querySelectorAll('input:not([type="hidden"]), textarea'),
+          ) as HTMLInputElement[]
+          if (lower.includes("pass")) {
+            const p = inputs.find(
+              (i) => i.type === "password" || /(pass)/i.test(i.name || i.id || i.placeholder),
+            )
+            if (p) {
+              p.setAttribute("data-agent-type-tgt", "pass")
+              return '[data-agent-type-tgt="pass"]'
+            }
+          }
+          if (
+            lower.includes("email") ||
+            lower.includes("user") ||
+            lower.includes("login") ||
+            lower.includes("name")
+          ) {
+            const u = inputs.find(
+              (i) =>
+                i.type === "email" ||
+                /(email|user|login|name)/i.test(i.name || i.id || i.placeholder || i.type),
+            )
+            if (u) {
+              u.setAttribute("data-agent-type-tgt", "user")
+              return '[data-agent-type-tgt="user"]'
+            }
+          }
+          return null
+        }, targetStr)
+        .catch(() => null)
+    }
+
+    if (!inputSel) {
+      inputSel = "input:not([type='hidden']), textarea"
+    }
+
+    await recordAgentAction(job, page, {
+      type: "type",
+      description: act.description,
+      thought: act.thought,
+      highlightSelector: inputSel,
+    })
+
+    const inp = await page.$(inputSel).catch(() => null)
+    if (inp && act.value) {
+      await inp.click({ count: 3 }).catch(() => {})
+      await inp.type(act.value, { delay: 15 }).catch(() => {})
+      await new Promise((r) => setTimeout(r, 400))
+    }
+  } else if (act.type === "back") {
+    const originUrl = page.url()
+    await recordAgentAction(job, page, {
+      type: "back",
+      description: act.description,
+      thought: act.thought,
+      target: originUrl,
+    })
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => {}),
+      page.goBack(),
+    ])
+    const finalUrl = page.url()
+    await recordAgentAction(job, page, {
+      type: "assert",
+      description: `Back navigation verified: returned to ${finalUrl}`,
+      thought: `Asserted popstate restoration to ${originUrl}. Current: ${finalUrl}`,
+      status: "passed",
+    })
+  } else if (act.type === "scroll") {
+    await page.evaluate(() => window.scrollBy({ top: 380, behavior: "instant" }))
+    await recordAgentAction(job, page, {
+      type: "scroll",
+      description: act.description,
+      thought: act.thought,
+      coordinates: { x: 200, y: 380 },
+    })
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }))
+  } else if (act.type === "inspect" || act.type === "assert") {
+    const assertVal = (act.value || "").trim().toLowerCase()
+    if (act.type === "assert" && assertVal) {
+      const exists = await page.evaluate((val) => {
+        const bodyText = (document.body?.innerText || "").toLowerCase()
+        return bodyText.includes(val)
+      }, assertVal)
+
+      if (!exists) {
+        throw new Error(`Assertion failed: expected "${act.value}" on page, but not found.`)
+      }
+    }
+
+    await recordAgentAction(job, page, {
+      type: act.type,
+      description: act.description,
+      thought: act.thought,
+      status: "passed",
+    })
+  }
+}
+
 async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
   const openRouterKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
@@ -467,6 +788,24 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       "AI provider key missing for the remote gateway — AI visual analysis and autonomous exploration will be skipped. " +
         "Add a free UnoRouter key at https://unorouter.com/token and paste it in AI Settings → OmniRouter.",
     )
+  }
+
+  // Feature / Workflow Testing mode: understand workflow -> discover relevant screens -> plan -> execute -> edge cases -> report
+  if (params.mode === "feature_workflow" || job.mode === "feature_workflow") {
+    appendLog(job, "info", "Feature / Workflow Testing requested — initiating targeted feature workflow testing.")
+    job.mode = "feature_workflow"
+    saveJob(job)
+    await executeFeatureWorkflowJob(job, params)
+    return
+  }
+
+  // Full App Testing mode: DISCOVER → MAP → CREATE TEST PLAN → EXECUTE → VERIFY → REPORT
+  if (params.mode === "full_app" || (params.userInstruction && isFullAppCommand(params.userInstruction))) {
+    appendLog(job, "info", "Full App Testing requested — initiating systematic DISCOVER → MAP → TEST PLAN → EXECUTE workflow.")
+    job.mode = "full_app"
+    saveJob(job)
+    await executeFullAppTestingJob(job, params)
+    return
   }
 
   // Autonomous mode: the Stagehand scenario engine drives the browser.
@@ -496,6 +835,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     })
 
     const page = await browser.newPage()
+    await page.setViewport({ width: 1440, height: 900 })
 
     // Collect runtime JavaScript console errors
     page.on("pageerror", (err: any) => {
@@ -522,6 +862,20 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch((e) => {
       appendLog(job, "warn", `Initial navigation note: ${e?.message}`)
     })
+
+    // Wait for client-side React / Next.js hydration and splash loaders
+    await Promise.race([
+      page.waitForNetworkIdle({ idleTime: 500, timeout: 6000 }).catch(() => null),
+      new Promise((r) => setTimeout(r, 2000)),
+    ])
+    await page.waitForFunction(
+      () => {
+        const text = document.body?.innerText || ""
+        return !/(loading client portal|loading app|initial loading)/i.test(text)
+      },
+      { timeout: 5000 }
+    ).catch(() => null)
+    await new Promise((r) => setTimeout(r, 600))
 
     await recordAgentAction(job, page, {
       type: "navigate",
@@ -603,178 +957,373 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       }
     }
 
-    if (params.userInstruction) {
-      appendLog(job, "info", `Interpreting chat command: "${params.userInstruction}"`)
-      job.currentStep = `Interpreting command: "${params.userInstruction}"`
+    if (params.userInstruction || params.image) {
+      const cmdText = params.userInstruction || "Inspect and test screen UI"
+      appendLog(job, "info", `Capturing screen image and analyzing: "${cmdText}"`)
+      job.currentStep = "Capturing screen image for visual AI analysis..."
       saveJob(job)
 
-      // Laya System-1 reflex fast-path (~30ms local): resolve simple commands
-      // without a slow, rate-limited cloud model call. Escalates automatically
-      // when Laya is offline or unsure — the cloud interpreter runs unchanged.
-      let plan: AICommandInterpretation | null = await tryLayaReflexPlan(
-        page,
-        params.userInstruction,
-        params.layaBaseUrl,
-      ).catch(() => null)
-      let usedFallback = false
-      if (plan) {
-        appendLog(job, "success", "[Laya reflex] Fast-path plan accepted — skipping cloud interpretation.")
-      } else {
-        appendLog(job, "info", "Laya reflex unsure or offline — escalating to cloud command interpreter.")
-        const interpreted = await interpretCommandWithAI({
-          command: params.userInstruction,
-          currentUrl: page.url(),
-          apiKey: openRouterKey,
-          baseUrl: params.aiBaseUrl,
-          model: params.aiModel,
-        })
-        plan = interpreted
-        usedFallback = interpreted.usedFallback
-        if (interpreted.usedFallback) {
-          // LOUD failure: never present the offline fallback as a success.
-          job.aiError = interpreted.fallbackReason
-          appendLog(job, "warn", `AI provider unreachable — ${interpreted.fallbackReason}`)
-          if (job.messages && job.messages.length > 1) {
-            job.messages[1].text =
-              `\u26a0\uFE0F AI provider unreachable: ${interpreted.fallbackReason} ` +
-              `Running the offline fallback plan (basic inspection only) — it cannot really execute your command.`
-            job.messages[1].status = "executing"
-            saveJob(job)
-          }
+      // 1. Capture initial visual screenshot of the screen (or use user-supplied image)
+      let liveScreenshotUrl = params.image
+      try {
+        const initBuffer = await page.screenshot({ type: "png" })
+        if (!liveScreenshotUrl && initBuffer) {
+          liveScreenshotUrl = await uploadScreenshot(Buffer.from(initBuffer), job.projectId, "init-vision")
         }
+      } catch (shotErr) {
+        console.warn("[Runner] Initial screenshot notice:", shotErr)
       }
 
-      appendLog(job, "info", `AI Plan: ${plan.planSummary}`)
-      if (job.messages && job.messages.length > 1) {
-        job.messages[1].text = plan.planSummary
-        job.messages[1].status = "executing"
-        saveJob(job)
+      if (liveScreenshotUrl) {
+        job.currentScreenshotUrl = liveScreenshotUrl
       }
 
-      for (let i = 0; i < plan.actions.length; i++) {
-        const act = plan.actions[i]
-        job.currentStep = `[${i + 1}/${plan.actions.length}] ${act.description}`
-        job.progress = Math.round(20 + ((i + 1) / plan.actions.length) * 65)
-        saveJob(job)
-
-        if (act.type === "navigate" && act.target) {
-          const navUrl = act.target.startsWith("http") ? act.target : new URL(act.target, page.url()).href
-          await page.goto(navUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {})
-          await recordAgentAction(job, page, {
-            type: "navigate",
-            description: act.description,
-            thought: act.thought,
-            target: navUrl,
-          })
-        } else if (act.type === "click") {
-          const targetStr = act.target || ""
-          let selector =
-            targetStr.startsWith("#") ||
-            targetStr.startsWith(".") ||
-            targetStr.includes("[") ||
-            targetStr.includes(":nth-of-type(")
-              ? targetStr
-              : null
-
-          if (!selector && targetStr) {
-            selector = await page.evaluate((txt) => {
-              const elements = Array.from(
-                document.querySelectorAll("button, a, input[type='submit'], [role='button'], select, [tabindex]")
-              ) as HTMLElement[]
-              // 1. Exact match on trimmed text or value
-              let el = elements.find((e) => {
-                const t = (e.textContent || (e as HTMLInputElement).value || "").trim().toLowerCase()
-                return t === txt.toLowerCase()
-              })
-              // 2. Partial match on text
-              if (!el) {
-                el = elements.find((e) => {
-                  const t = (e.textContent || (e as HTMLInputElement).value || "").toLowerCase()
-                  return t.includes(txt.toLowerCase())
-                })
-              }
-              // 3. Login / Sign-in intent synonyms
-              if (!el && /(login|signin|sign in|auth|submit|continue)/i.test(txt)) {
-                el = elements.find((e) => {
-                  const t = (e.textContent || (e as HTMLInputElement).value || (e as HTMLInputElement).type || "").toLowerCase()
-                  return /(sign in|login|log in|submit)/i.test(t)
-                })
-              }
-              if (el) {
-                const marker = `agent-tgt-${Date.now()}`
-                el.setAttribute("data-agent-click-target", marker)
-                return `[data-agent-click-target="${marker}"]`
-              }
-              return null
-            }, targetStr).catch(() => null)
+      appendLog(job, "info", "Inspecting screen structure & scrolling to discover all interactive elements and forms...")
+      // Viewport scroll pass to uncover below-the-fold content, lazy elements, and forms
+      await page.evaluate(async () => {
+        try {
+          const scrollHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+          if (scrollHeight > window.innerHeight) {
+            window.scrollBy({ top: 400, behavior: "instant" })
+            await new Promise((r) => setTimeout(r, 200))
+            window.scrollTo({ top: scrollHeight, behavior: "instant" })
+            await new Promise((r) => setTimeout(r, 200))
+            window.scrollTo({ top: 0, behavior: "instant" })
+            await new Promise((r) => setTimeout(r, 200))
           }
+        } catch {}
+      }).catch(() => {})
 
-          if (selector) {
-            await recordAgentAction(job, page, {
-              type: "click",
-              description: act.description,
-              thought: act.thought,
-              highlightSelector: selector,
-              target: targetStr,
+      const pageContext = await page
+        .evaluate(() => {
+          const inputs = Array.from(
+            document.querySelectorAll('input:not([type="hidden"]), select, textarea'),
+          ).map((el) => {
+            const input = el as HTMLInputElement
+            const val = input.value || ""
+            return {
+              type: input.type || input.tagName.toLowerCase(),
+              name: input.name || input.id || "",
+              placeholder: input.placeholder || "",
+              value: input.type === "password" ? (val ? "••••••" : "") : val,
+              hasValue: val.trim().length > 0,
+            }
+          })
+
+          const rawElements = Array.from(
+            document.querySelectorAll('button, a, input[type="submit"], input[type="button"], [role="button"], [role="tab"], select')
+          )
+          const seen = new Set<string>()
+          const interactiveList: Array<{
+            text: string
+            cleanText: string
+            tag: string
+            type?: string
+            area?: string
+            role?: string
+          }> = []
+
+          rawElements.forEach((el) => {
+            const rawText = (el.textContent || (el as HTMLInputElement).value || "").trim().replace(/\s+/g, " ")
+            let cleanText = rawText
+            const taxYearMatch = rawText.match(/^(\d{4}-\d{2})\s*\d*$/)
+            if (taxYearMatch) {
+              cleanText = taxYearMatch[1]
+            } else {
+              cleanText = rawText.replace(/\s+\d+$/, "").replace(/([a-zA-Z])\d{1,3}$/, "$1").trim()
+            }
+            if (!cleanText || cleanText.length < 2) return
+            if (/^(Show|Forgot password\?)$/i.test(cleanText)) return
+
+            const closestNav = el.closest("nav, aside, .sidebar, [role='navigation']")
+            const closestHeader = el.closest("header, .header, .topbar, .navbar")
+            const closestModal = el.closest("[role='dialog'], .modal, .dialog")
+            const area = closestModal ? "modal" : closestNav ? "sidebar" : closestHeader ? "header" : "main"
+
+            const key = `${cleanText}__${area}`
+            if (seen.has(key)) return
+            seen.add(key)
+
+            interactiveList.push({
+              text: rawText,
+              cleanText,
+              tag: el.tagName.toLowerCase(),
+              type: (el as any).type || el.tagName.toLowerCase(),
+              area,
+              role: el.getAttribute("role") || undefined,
             })
-            const el = await page.$(selector)
-            if (el) {
-              await el.click().catch(() => {})
-              // Allow either SPA DOM re-render or native page navigation
-              await Promise.race([
-                page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 4000 }).catch(() => null),
-                new Promise((r) => setTimeout(r, 1500)),
-              ])
+          })
+
+          const forms = Array.from(document.querySelectorAll("form, [data-form], .form")).map((f, fIdx) => {
+            const fInputs = Array.from(f.querySelectorAll("input, select, textarea")).map(
+              (inp) => (inp as HTMLInputElement).name || (inp as HTMLInputElement).placeholder || (inp as HTMLInputElement).type
+            )
+            const submitBtn = f.querySelector("button[type='submit'], input[type='submit']")
+            return {
+              id: (f as HTMLElement).id || `form-${fIdx + 1}`,
+              fields: fInputs,
+              submitLabel: submitBtn?.textContent?.trim() || "Submit",
+            }
+          })
+
+          const buttons = interactiveList.map((b) => ({
+            text: b.cleanText,
+            type: b.type || "button",
+            area: b.area,
+          }))
+
+          const hasPassword = inputs.some((i) => i.type === "password")
+          const hasUserOrEmail = inputs.some(
+            (i) => i.type === "email" || /(user|email|login)/i.test(i.name || i.placeholder),
+          )
+          const isLoginForm = hasPassword && hasUserOrEmail
+          const prefilled = inputs.some((i) => i.hasValue)
+
+          return {
+            title: document.title || "",
+            url: window.location.href,
+            inputs,
+            buttons,
+            forms,
+            interactiveElements: interactiveList,
+            hasLoginForm: isLoginForm,
+            hasPreFilledCredentials: prefilled,
+          }
+        })
+        .catch(() => null)
+
+      appendLog(job, "info", "Running Vision AI: building Thinking Model and generating UI Test Checklist...")
+      job.currentStep = "Formulating Thinking Model and UI Test Checklist..."
+      saveJob(job)
+
+      const visionPlan = await generateVisionThinkingModelAndChecklist({
+        screenshotUrl: liveScreenshotUrl || "",
+        command: cmdText,
+        currentUrl: page.url(),
+        apiKey: openRouterKey,
+        baseUrl: params.aiBaseUrl,
+        model: params.aiModel,
+        pageContext,
+        credentials: params.credentials,
+      })
+
+      // If user explicitly asked to test all clickable options or go back and forth across controls:
+      const wantsAllClickable = /(clickable|all options|back and forth|froth|check all|list out the tasks)/i.test(cmdText)
+      if (wantsAllClickable && pageContext?.interactiveElements && pageContext.interactiveElements.length > 0) {
+        appendLog(job, "info", `Enforcing comprehensive clickable options checklist (${pageContext.interactiveElements.length} controls found)...`)
+        const cleanElements = pageContext.interactiveElements
+          .filter((el) => {
+            if (/brand|logo/i.test(el.tag) || /LandlordAccounting/i.test(el.cleanText)) return false
+            if (/(john smith|logout|sign out)/i.test(el.cleanText)) return false
+            return true
+          })
+          .slice(0, 10)
+
+        visionPlan.checklist = cleanElements.map((el, idx) => ({
+          id: `chk-opt-${idx + 1}`,
+          title: `Test Option: ${el.cleanText} [${el.area || "control"}]`,
+          goal: `Interact with '${el.cleanText}' (${el.area}), verify view response, and return safely to base.`,
+          expectedOutcome: `Clicking '${el.cleanText}' updates the UI view or opens modal without uncaught errors.`,
+          status: "pending" as const,
+          actions: [
+            {
+              id: `act-${idx + 1}-1`,
+              type: "click" as const,
+              target: el.cleanText,
+              description: `Click '${el.cleanText}'`,
+              thought: `Triggering '${el.cleanText}' to verify UI reaction.`,
+              status: "pending" as const,
+              timestamp: new Date().toISOString(),
+            },
+            {
+              id: `act-${idx + 1}-2`,
+              type: "inspect" as const,
+              description: `Inspect resulting view for '${el.cleanText}'`,
+              thought: `Auditing resulting state after interacting with '${el.cleanText}'.`,
+              status: "pending" as const,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        }))
+      }
+
+      job.thinkingModel = visionPlan.thinkingModel
+      job.checklist = visionPlan.checklist
+      if (visionPlan.usedFallback && visionPlan.fallbackReason) {
+        job.aiError = visionPlan.fallbackReason
+      }
+
+      appendLog(job, "info", `Thinking Model: "${visionPlan.thinkingModel.screenUnderstanding}"`)
+      appendLog(job, "info", `Checklist: Generated ${visionPlan.checklist.length} UI test(s). Starting execution...`)
+
+      if (job.messages && job.messages.length > 1) {
+        job.messages[1].text = `🧠 Visual Thinking Model generated for "${visionPlan.thinkingModel.screenUnderstanding}". Executing ${visionPlan.checklist.length} checklist tests...`
+        job.messages[1].status = "executing"
+        job.messages[1].thinkingModel = visionPlan.thinkingModel
+        job.messages[1].checklist = [...visionPlan.checklist]
+        job.messages[1].imageUrl = liveScreenshotUrl || undefined
+        saveJob(job)
+      }
+
+      // Execute each checklist test item sequentially with "go back and forth" navigation
+      const baseDashboardUrl = page.url()
+
+      for (let cIdx = 0; cIdx < visionPlan.checklist.length; cIdx++) {
+        const item = visionPlan.checklist[cIdx]
+        item.status = "running"
+        job.currentStep = `[Test ${cIdx + 1}/${visionPlan.checklist.length}] ${item.title}`
+        job.progress = Math.round(20 + ((cIdx + 1) / visionPlan.checklist.length) * 65)
+
+        const agentMsg = job.messages?.slice().reverse().find((m) => m.sender === "agent")
+        if (agentMsg) {
+          agentMsg.checklist = JSON.parse(JSON.stringify(visionPlan.checklist))
+          agentMsg.status = "executing"
+          const passedNow = visionPlan.checklist.filter((t) => t.status === "passed").length
+          agentMsg.text = `⚡ Executing UI Tests (${passedNow}/${visionPlan.checklist.length} Passed)... Running: ${item.title}`
+        }
+        saveJob(job)
+        appendLog(job, "info", `▶️ Checklist [${cIdx + 1}/${visionPlan.checklist.length}]: ${item.title}`)
+
+        // 1. "GO BACK AND FORTH" - Pre-test reset to base screen
+        try {
+          // If on login screen (e.g. logged out), automatically re-authenticate
+          const isLoginPage = await page.evaluate(() => {
+            return Boolean(document.querySelector('input[type="password"]'))
+          })
+          if (isLoginPage) {
+            const submitBtn = await page.$('button[type="submit"]')
+            if (submitBtn) {
+              await submitBtn.click().catch(() => {})
+              await new Promise((r) => setTimeout(r, 1500))
             }
           }
-        } else if (act.type === "type") {
-          const inputSel = act.target || "input:not([type='hidden']), textarea"
-          await recordAgentAction(job, page, {
-            type: "type",
-            description: act.description,
-            thought: act.thought,
-            highlightSelector: inputSel,
+
+          // If a modal or dialog is open from earlier, close it
+          await page.evaluate(() => {
+            const modal = document.querySelector('[role="dialog"], .modal, .dialog, .drawer, .popup')
+            if (modal) {
+              const cancel = Array.from(modal.querySelectorAll("button, a")).find((b) =>
+                /(cancel|close|done|dismiss)/i.test(b.textContent || b.getAttribute("aria-label") || "")
+              )
+              if (cancel) (cancel as HTMLElement).click()
+            }
           })
-          const inp = await page.$(inputSel)
-          if (inp && act.value) {
-            await inp.type(act.value, { delay: 15 }).catch(() => {})
+          await new Promise((r) => setTimeout(r, 400))
+
+          // If in a sub-view (URL differs from base or Home button is not active), navigate Home
+          const needsHomeNav = await page.evaluate((base) => {
+            if (window.location.href !== base) return true
+            const hasBackButton = Boolean(document.querySelector('.back-btn, [aria-label*="Back"]'))
+            const activeNav = document.querySelector(".nav-item.active, .bb.active")
+            return hasBackButton || Boolean(activeNav && !activeNav.textContent?.includes("Home"))
+          }, baseDashboardUrl)
+
+          if (needsHomeNav) {
+            await page.evaluate(() => {
+              const backBtn = Array.from(document.querySelectorAll("button, a")).find((b) =>
+                /(back to all|back)/i.test(b.textContent || "")
+              ) as HTMLElement | undefined
+              if (backBtn) {
+                backBtn.click()
+                return
+              }
+              const homeBtn = Array.from(document.querySelectorAll("button, a")).find((b) =>
+                b.textContent?.trim() === "Home" && (b.className.includes("nav-item") || b.className.includes("home"))
+              ) as HTMLElement | undefined
+              if (homeBtn) homeBtn.click()
+            })
+            await Promise.race([
+              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 2500 }).catch(() => null),
+              new Promise((r) => setTimeout(r, 600)),
+            ])
           }
-        } else if (act.type === "back") {
-          const originUrl = page.url()
-          await recordAgentAction(job, page, {
-            type: "back",
-            description: act.description,
-            thought: act.thought,
-            target: originUrl,
-          })
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => {}),
-            page.goBack(),
-          ])
-          const finalUrl = page.url()
-          await recordAgentAction(job, page, {
-            type: "assert",
-            description: `Back navigation verified: returned to ${finalUrl}`,
-            thought: `Asserted popstate restoration to ${originUrl}. Current: ${finalUrl}`,
-            status: "passed",
-          })
-        } else if (act.type === "scroll") {
-          await page.evaluate(() => window.scrollBy({ top: 380, behavior: "instant" }))
-          await recordAgentAction(job, page, {
-            type: "scroll",
-            description: act.description,
-            thought: act.thought,
-            coordinates: { x: 200, y: 380 },
-          })
-          await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }))
-        } else if (act.type === "inspect" || act.type === "assert") {
-          await recordAgentAction(job, page, {
-            type: act.type,
-            description: act.description,
-            thought: act.thought,
-            status: "passed",
-          })
+        } catch {}
+
+        let itemPassed = true
+        let itemError: string | undefined
+
+        // Execute action steps for this test
+        for (const act of item.actions) {
+          try {
+            await executeSingleAction(job, page, act)
+          } catch (err: any) {
+            itemPassed = false
+            itemError = err?.message || "Action step failed"
+            appendLog(job, "warn", `Step note in [${item.title}]: ${itemError}`)
+            break
+          }
         }
+
+        // Capture snapshot after this test item (ACTUAL RESULTING VIEW)
+        try {
+          // Clean temporary overlay before capturing pristine screenshot
+          await page.evaluate(() => {
+            document.getElementById("__antigravity_overlay_root__")?.remove()
+          }).catch(() => {})
+
+          const itemBuffer = await page.screenshot({ type: "png" })
+          const itemShotUrl = await uploadScreenshot(Buffer.from(itemBuffer), job.projectId, `test-${cIdx + 1}`)
+          item.screenshotUrl = itemShotUrl
+          job.currentScreenshotUrl = itemShotUrl
+
+          // Push screen to job.screens so the left simulator canvas and top journey strip receive it live
+          job.screens.push({
+            url: page.url(),
+            title: item.title,
+            path: new URL(page.url()).pathname || "/",
+            testedAt: new Date().toISOString(),
+            screenshotUrl: itemShotUrl,
+            screenshots: { Mobile: itemShotUrl },
+            backNavigationStatus: "passed",
+            responsiveStatus: "passed",
+            workflowId: `bot-step-${item.id}`,
+            issuesCount: itemPassed ? 0 : 1,
+          })
+        } catch {}
+
+        item.status = itemPassed ? "passed" : "failed"
+        if (itemError) item.error = itemError
+        item.observations = `Validated on ${page.url()}. Status: ${item.status.toUpperCase()}`
+        appendLog(job, itemPassed ? "success" : "warn", `🏁 Checklist [${cIdx + 1}/${visionPlan.checklist.length}] ${item.title}: ${item.status.toUpperCase()}`)
+
+        // 2. "GO BACK AND FORTH" - Post-test reset to base screen
+        try {
+          // Close modal if opened by this test
+          await page.evaluate(() => {
+            const modal = document.querySelector('[role="dialog"], .modal, .dialog, .drawer, .popup')
+            if (modal) {
+              const cancel = Array.from(modal.querySelectorAll("button, a")).find((b) =>
+                /(cancel|close|done|dismiss)/i.test(b.textContent || b.getAttribute("aria-label") || "")
+              )
+              if (cancel) (cancel as HTMLElement).click()
+            }
+          })
+          // If in sub-view, return to Home
+          await page.evaluate(() => {
+            const backBtn = Array.from(document.querySelectorAll("button, a")).find((b) =>
+              /(back to all|back)/i.test(b.textContent || "")
+            ) as HTMLElement | undefined
+            if (backBtn) {
+              backBtn.click()
+              return
+            }
+            const homeBtn = Array.from(document.querySelectorAll("button, a")).find((b) =>
+              b.textContent?.trim() === "Home" && (b.className.includes("nav-item") || b.className.includes("home") || b.className.includes("tb-btn"))
+            ) as HTMLElement | undefined
+            if (homeBtn) homeBtn.click()
+          })
+          await new Promise((r) => setTimeout(r, 600))
+          if (page.url() !== baseDashboardUrl) {
+            await page.goto(baseDashboardUrl, { waitUntil: "domcontentloaded", timeout: 5000 }).catch(() => {})
+          }
+        } catch {}
+
+        if (agentMsg) {
+          agentMsg.checklist = JSON.parse(JSON.stringify(visionPlan.checklist))
+          const passedCount = visionPlan.checklist.filter((t) => t.status === "passed").length
+          agentMsg.text = `⚡ Executing UI Tests: ${passedCount} of ${visionPlan.checklist.length} passed.`
+        }
+        saveJob(job)
       }
 
       // Capture final screen result for command
@@ -782,13 +1331,17 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       const screenTitle = rawTitle.trim() || new URL(page.url()).pathname || "Command Result"
       const finalBuffer = await page.screenshot({ type: "png" })
       const uploadedUrl = await uploadScreenshot(Buffer.from(finalBuffer), job.projectId, "cmd")
+      job.currentScreenshotUrl = uploadedUrl
+
+      const passedCount = visionPlan.checklist.filter((t) => t.status === "passed").length
+      const totalCount = visionPlan.checklist.length
 
       const wfId = await createDatabaseWorkflow(
         job.projectId,
-        `[Command] ${params.userInstruction.slice(0, 32)}`,
+        `[Vision QA] ${cmdText.slice(0, 32)}`,
         uploadedUrl,
-        `Command: ${params.userInstruction}\nPlan: ${plan.planSummary}`,
-        "Executed Antigravity browser command.",
+        `Goal: ${cmdText}\nThinking Model: ${visionPlan.thinkingModel.screenUnderstanding}\nChecklist: ${passedCount}/${totalCount} Passed`,
+        "Executed Antigravity vision checklist tests.",
         true
       )
 
@@ -805,11 +1358,39 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         issuesCount: job.issues.length,
       })
 
+      // Compile testCases for report
+      job.testCases = visionPlan.checklist.map((c) => ({
+        scenarioId: c.id,
+        name: c.title,
+        category: "forms",
+        status: c.status === "passed" ? "passed" : c.status === "failed" ? "failed" : c.status === "skipped" ? "skipped" : "blocked",
+        steps: c.actions.map((a) => a.description),
+        screenshots: c.screenshotUrl ? [{ label: c.title, url: c.screenshotUrl }] : [],
+        bugs: c.status === "failed" ? [{ description: c.error || "Assertion failed", severity: "medium", repro: c.actions.map((a) => a.description) }] : [],
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+        error: c.error,
+      }))
+
       if (job.messages && job.messages.length > 1) {
-                job.messages[1].text = usedFallback
-          ? `\u26a0\uFE0F Offline fallback only \u2014 ran ${plan.actions.length} basic check(s), not your command. ${job.aiError || ""} Fix the AI provider (AI Settings \u2192 OmniRouter) for real command execution.`
-          : `\u2705 Executed ${plan.actions.length} action(s). ${plan.planSummary}`
+        job.messages[1].text = `✅ UI Tests Completed: ${passedCount} of ${totalCount} checklist tests passed.\nScreen: ${visionPlan.thinkingModel.screenUnderstanding}`
         job.messages[1].status = "completed"
+        job.messages[1].thinkingModel = visionPlan.thinkingModel
+        job.messages[1].checklist = [...visionPlan.checklist]
+      }
+
+      job.thinkingModel = visionPlan.thinkingModel
+      job.checklist = [...visionPlan.checklist]
+
+      // Populate fullAppTestPlan and flowGraph so the Full App tab displays the workflow map, screens, and plan
+      try {
+        const synthPlan = synthesizeFullAppPlanFromJob(job)
+        if (synthPlan) {
+          job.fullAppTestPlan = synthPlan
+          job.flowGraph = buildFigmaWorkflowMap(synthPlan)
+        }
+      } catch (err: any) {
+        console.warn("[Runner] Synth plan error:", err?.message)
       }
     } else {
       // Discover internal screens

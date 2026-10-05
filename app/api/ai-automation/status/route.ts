@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getJob, cancelJob } from "@/lib/ai-automation/runner"
+import { getJob, cancelJob, saveJob } from "@/lib/ai-automation/runner"
 
 export async function GET(req: NextRequest) {
   try {
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { jobId, action } = await req.json()
+    const { jobId, action, username, password } = await req.json()
 
     if (!jobId) {
       return NextResponse.json({ error: "Missing jobId" }, { status: 400 })
@@ -35,12 +35,36 @@ export async function POST(req: NextRequest) {
 
     if (action === "stop") {
       const stopped = cancelJob(jobId)
-      return NextResponse.json({ success: stopped, message: stopped ? "Job stopped" : "Job not found or already completed" })
+      const updated = getJob(jobId)
+      return NextResponse.json({
+        success: stopped,
+        message: stopped ? "Job stopped" : "Job not found or already completed",
+        job: updated,
+      })
     }
 
     const job = getJob(jobId)
     if (!job) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 })
+    }
+
+    if (action === "provide_credentials") {
+      if (!username || !password) {
+        return NextResponse.json({ error: "username and password required" }, { status: 400 })
+      }
+      job.pendingCredentials = { username: String(username), password: String(password) }
+      job.authState = "logged_in"
+      job.authPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({ success: true, job })
+    }
+
+    if (action === "skip_auth") {
+      job.pendingCredentials = { skip: true }
+      job.authState = "skipped"
+      job.authPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({ success: true, job })
     }
 
     return NextResponse.json({ success: true, job })

@@ -41,6 +41,8 @@ import {
   Minimize,
   ChevronUp,
   FolderKanban,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import { createClient } from "@/lib/supabase/client"
@@ -76,6 +78,8 @@ type DeviceCategory = (typeof DEVICE_CATEGORIES)[number]
 export interface WorkflowSimulatorProps {
   project: Project
   initialWorkflowId?: string | null
+  initialLiveMode?: boolean
+  initialUrl?: string
   isOwner?: boolean
   canEdit?: boolean
   userRole?: "client" | "freelancer" | "owner" | "developer" | null
@@ -92,6 +96,8 @@ export interface WorkflowSimulatorProps {
   isFullscreen?: boolean
   onToggleFullscreen?: (val?: boolean) => void
   onNavigateView?: (mode: "dashboard" | "editor" | "simulator") => void
+  hideLeftView?: boolean
+  onToggleHideLeftView?: (val?: boolean) => void
 }
 
 interface Annotation {
@@ -161,6 +167,8 @@ function ToolbarButton({
 export function WorkflowSimulator({
   project,
   initialWorkflowId,
+  initialLiveMode,
+  initialUrl,
   isOwner = false,
   canEdit = false,
   userRole = "owner",
@@ -173,6 +181,8 @@ export function WorkflowSimulator({
   isFullscreen: isFullscreenProp,
   onToggleFullscreen,
   onNavigateView,
+  hideLeftView: hideLeftViewProp,
+  onToggleHideLeftView,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
 
@@ -184,10 +194,10 @@ export function WorkflowSimulator({
   })
 
   useEffect(() => {
-    if (initialWorkflowId && workflows.some((w) => w.id === initialWorkflowId)) {
+    if (initialWorkflowId) {
       setActiveWorkflowId(initialWorkflowId)
     }
-  }, [initialWorkflowId, workflows])
+  }, [initialWorkflowId])
 
   const currentWorkflow = useMemo(() => {
     return workflows.find((w) => w.id === activeWorkflowId) || workflows[0]
@@ -240,6 +250,29 @@ export function WorkflowSimulator({
   const [mobileComparePane, setMobileComparePane] = useState<"both" | "design" | "live">("both")
   const [overlayOpacity, setOverlayOpacity] = useState<number>(50)
 
+  // Left View visibility state (hideLeftView)
+  const [internalHideLeftView, setInternalHideLeftView] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("simulator_hide_left_view") === "true"
+    }
+    return false
+  })
+
+  const isLeftViewHidden = hideLeftViewProp !== undefined ? hideLeftViewProp : internalHideLeftView
+
+  const toggleHideLeftView = useCallback((val?: boolean) => {
+    const next = typeof val === "boolean" ? val : !isLeftViewHidden
+    if (onToggleHideLeftView) {
+      onToggleHideLeftView(next)
+    } else {
+      setInternalHideLeftView(next)
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem("simulator_hide_left_view", String(next))
+    }
+    triggerToast(next ? "Left view hidden: Full Live Screen" : "Left view restored: Split Comparison")
+  }, [isLeftViewHidden, onToggleHideLeftView])
+
   // Viewport / device state
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>("m-iphone-16-pro")
   const [viewportWidth, setViewportWidth] = useState<number>(393)
@@ -251,24 +284,39 @@ export function WorkflowSimulator({
 
   // Live browser navigation
   const defaultUrl = useMemo(() => {
+    if (initialUrl) return initialUrl
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("simulator_active_url")
       if (saved) return saved
     }
     return "http://localhost:8081"
-  }, [])
+  }, [initialUrl])
 
   const [urlInput, setUrlInput] = useState<string>(defaultUrl)
   const [currentUrl, setCurrentUrl] = useState<string>(defaultUrl)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
+  useEffect(() => {
+    if (initialUrl && initialUrl !== currentUrl) {
+      setCurrentUrl(initialUrl)
+      setUrlInput(initialUrl)
+    }
+  }, [initialUrl])
+
   const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => {
+    if (typeof initialLiveMode === "boolean") return initialLiveMode
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("simulator_is_live_mode")
       if (saved !== null) return saved === "true"
     }
     return true
   })
+
+  useEffect(() => {
+    if (typeof initialLiveMode === "boolean") {
+      setIsLiveCanvas(initialLiveMode)
+    }
+  }, [initialLiveMode])
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false)
   const [showJourneyModal, setShowJourneyModal] = useState(false)
   const [authConfig, setAuthConfig] = useState<{
@@ -672,7 +720,7 @@ export function WorkflowSimulator({
     const effectiveW = metrics.totalWidth
     const effectiveH = metrics.totalHeight
 
-    if (compareMode === "side-by-side") {
+    if (compareMode === "side-by-side" && !isLeftViewHidden) {
       const panelAWidth = workspaceSize.width * (splitRatio / 100) - 24
       const panelBWidth = workspaceSize.width * ((100 - splitRatio) / 100) - 24
       const scaleA = Math.min(panelAWidth / viewportWidth, availH / viewportHeight)
@@ -682,7 +730,7 @@ export function WorkflowSimulator({
     const availW = workspaceSize.width - 32
     const scale = Math.min(availW / effectiveW, availH / effectiveH)
     return Math.max(0.15, Math.min(1.0, Number(scale.toFixed(2))))
-  }, [workspaceSize, splitRatio, viewportWidth, viewportHeight, compareMode, currentFrameType, showDeviceFrame])
+  }, [workspaceSize, splitRatio, viewportWidth, viewportHeight, compareMode, currentFrameType, showDeviceFrame, isLeftViewHidden])
 
   const currentScale = useMemo(() => {
     if (zoomMode === "fit") return autoFitScale
@@ -1489,7 +1537,23 @@ export function WorkflowSimulator({
             <span className="sm:hidden">Diff</span>
             <span className="hidden sm:inline">Difference</span>
           </ToolbarButton>
-          
+
+          {/* Hide/Show Left View Button */}
+          {compareMode === "side-by-side" && (
+            <button
+              type="button"
+              onClick={() => toggleHideLeftView()}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+                isLeftViewHidden
+                  ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                  : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
+              }`}
+              title={isLeftViewHidden ? "Show Left Spec View" : "Hide Left View & Expand Screen to Full Width"}
+            >
+              {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+              <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
+            </button>
+          )}
         </div>
 
         {/* Right: Options + Capture + Fullscreen */}
@@ -1536,17 +1600,6 @@ export function WorkflowSimulator({
           >
             <Camera className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Area" : "Capture App Screen"}</span>
-          </button>
-
-          {/* Capture full journey (multi-page workflow) */}
-          <button
-            type="button"
-            onClick={() => setShowJourneyModal(true)}
-            className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 dark:border-indigo-500/40 dark:text-indigo-300 dark:bg-indigo-500/15 dark:hover:bg-indigo-500/25"
-            title="Capture a multi-page journey (User / Admin / Client workflows)"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Capture Journey</span>
           </button>
 
           {/* Upload exact screenshot button */}
@@ -1679,6 +1732,22 @@ export function WorkflowSimulator({
             >
               Fit
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode("manual")
+                setManualZoom(100)
+                triggerToast("Zoom set to 100% (Actual Size)")
+              }}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
+                zoomMode === "manual" && manualZoom === 100
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+              }`}
+              title="100% Actual Size"
+            >
+              100%
+            </button>
             <div className="h-3 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5" />
             <button
               type="button"
@@ -1788,8 +1857,8 @@ export function WorkflowSimulator({
           <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
             {/* PANEL A: FIGMA SPEC */}
             <section
-              style={{ width: mobileComparePane === "design" ? "100%" : `${splitRatio}%` }}
-              className={`${mobileComparePane === "live" ? "hidden sm:flex" : "flex"} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
+              style={{ width: isLeftViewHidden ? "0%" : (mobileComparePane === "design" ? "100%" : `${splitRatio}%`) }}
+              className={`${isLeftViewHidden ? "hidden" : (mobileComparePane === "live" ? "hidden sm:flex" : "flex")} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
             >
               <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1925,25 +1994,27 @@ export function WorkflowSimulator({
               </div>
             </section>
 
-            <div
-              onMouseDown={() => setIsDraggingSplit(true)}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize split panels"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft") setSplitRatio((r) => Math.max(20, r - 2))
-                if (e.key === "ArrowRight") setSplitRatio((r) => Math.min(80, r + 2))
-              }}
-              className="w-2.5 bg-slate-200 dark:bg-[#14161f] hover:bg-indigo-600 focus-visible:bg-indigo-600 transition-colors cursor-col-resize flex items-center justify-center relative z-20 shrink-0 border-x border-slate-300 dark:border-[#1e222e] focus:outline-none"
-            >
-              <div className="h-8 w-1 bg-slate-400 dark:bg-[#373d50] rounded-full" />
-            </div>
+            {!isLeftViewHidden && (
+              <div
+                onMouseDown={() => setIsDraggingSplit(true)}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize split panels"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft") setSplitRatio((r) => Math.max(20, r - 2))
+                  if (e.key === "ArrowRight") setSplitRatio((r) => Math.min(80, r + 2))
+                }}
+                className="w-2.5 bg-slate-200 dark:bg-[#14161f] hover:bg-indigo-600 focus-visible:bg-indigo-600 transition-colors cursor-col-resize flex items-center justify-center relative z-20 shrink-0 border-x border-slate-300 dark:border-[#1e222e] focus:outline-none"
+              >
+                <div className="h-8 w-1 bg-slate-400 dark:bg-[#373d50] rounded-full" />
+              </div>
+            )}
 
             {/* PANEL B: LIVE INTERACTIVE BROWSER */}
             <section
-              style={{ width: mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
-              className={`${mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
+              style={{ width: isLeftViewHidden || mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
+              className={`${!isLeftViewHidden && mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors flex-1`}
             >
               {/* Sleek Browser Toolbar */}
               <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors overflow-x-auto custom-scrollbar">
@@ -2108,43 +2179,52 @@ export function WorkflowSimulator({
                   showStatusBar={showDeviceStatusBar}
                   screenRef={secondScreenRef}
                 >
-                  {/* The Live Iframe is always kept alive in the layout tree */}
+                  {/* The Live Iframe is kept in tree unless an AI bot screen screenshot is being shown */}
                   <iframe
                     ref={iframeRef}
                     src={currentUrl}
                     title="Live App Preview"
                     className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
                     style={
-                      isLiveCanvas
+                      isLiveCanvas &&
+                      currentWorkflow?.id !== "live-bot-action-feed" &&
+                      !currentWorkflow?.id?.startsWith("action-step-") &&
+                      !currentWorkflow?.id?.startsWith("bot-screen-")
                         ? {}
                         : {
-                          position: "absolute",
-                          opacity: 0,
-                          pointerEvents: "none",
-                          zIndex: -1,
-                        }
+                            position: "absolute",
+                            opacity: 0,
+                            pointerEvents: "none",
+                            zIndex: -1,
+                          }
                     }
                     sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                    allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone"
+                    allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
                   />
 
                   {/* Area Selection Box Overlay for live screen */}
-                  {isLiveCanvas && (
-                    <AreaSelectionOverlay
-                      isActive={isAreaSelectionActive}
-                      containerWidth={viewportWidth}
-                      containerHeight={viewportHeight}
-                      scale={currentScale}
-                      selectionBoxRef={selectionBoxRef}
-                      onCapture={(box) => handleLiveScreenCapture(false, box)}
-                      onCaptureFullScreen={() => handleLiveScreenCapture(true)}
-                      onClose={() => setIsAreaSelectionActive(false)}
-                      isCapturing={isCapturing}
-                    />
-                  )}
+                  {isLiveCanvas &&
+                    currentWorkflow?.id !== "live-bot-action-feed" &&
+                    !currentWorkflow?.id?.startsWith("action-step-") &&
+                    !currentWorkflow?.id?.startsWith("bot-screen-") && (
+                      <AreaSelectionOverlay
+                        isActive={isAreaSelectionActive}
+                        containerWidth={viewportWidth}
+                        containerHeight={viewportHeight}
+                        scale={currentScale}
+                        selectionBoxRef={selectionBoxRef}
+                        onCapture={(box) => handleLiveScreenCapture(false, box)}
+                        onCaptureFullScreen={() => handleLiveScreenCapture(true)}
+                        onClose={() => setIsAreaSelectionActive(false)}
+                        isCapturing={isCapturing}
+                      />
+                    )}
 
                   {/* The Saved App Screenshot View */}
-                  {!isLiveCanvas && (
+                  {(!isLiveCanvas ||
+                    currentWorkflow?.id === "live-bot-action-feed" ||
+                    currentWorkflow?.id?.startsWith("action-step-") ||
+                    currentWorkflow?.id?.startsWith("bot-screen-")) && (
                     <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
                       {currentWorkflow?.designB ? (
                         <>
@@ -2383,8 +2463,8 @@ export function WorkflowSimulator({
       </div>
 
 
-      {/* Floating Fullscreen button below (Bottom-Right Corner) */}
-      <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 select-none">
+      {/* Floating Fullscreen button below (Scoped inside workspace canvas, clear of activity rail and status bar) */}
+      <div className="absolute bottom-5 left-5 z-30 flex items-center gap-2 select-none">
         <button
           type="button"
           onClick={toggleFullscreen}
