@@ -177,6 +177,37 @@ const FEATURES = [
   },
 ]
 
+const AI_PROVIDERS = [
+  {
+    name: "OmniRouter",
+    description: "Multi-provider gateway with free flagship models",
+    models: ["DeepSeek V4 Flash", "GPT-5.5 Free", "Gemini 2.0 Flash"],
+    badge: "Recommended",
+    badgeColor: "bg-green-500",
+  },
+  {
+    name: "OpenRouter",
+    description: "100+ models from various providers",
+    models: ["Claude 3.5 Sonnet", "GPT-4o", "Llama 3.1 70B"],
+    badge: "Popular",
+    badgeColor: "bg-blue-500",
+  },
+  {
+    name: "LLMA",
+    description: "Optimized large language model inference",
+    models: ["LLMA 3.1 70B", "LLMA 3.1 8B", "LLMA 2 70B"],
+    badge: null,
+    badgeColor: "",
+  },
+  {
+    name: "Local LLM",
+    description: "Run models locally with Ollama or LM Studio",
+    models: ["Llama 3.2", "Mistral", "CodeLlama"],
+    badge: "Free",
+    badgeColor: "bg-purple-500",
+  },
+]
+
 const STEPS = [
   { step: "1", title: "Import Figma ZIP", description: "Drop exported Figma .zip archives to extract and select your design screens instantly." },
   { step: "2", title: "Set Live Simulator", description: "Attach live staging URLs and configure device frames side-by-side." },
@@ -530,6 +561,85 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
               </Reveal>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ─── AI PROVIDERS ─── */}
+      <section className="py-28 px-6 relative z-10 border-y border-slate-200/30 dark:border-white/5 bg-slate-50/30 dark:bg-white/[0.02]">
+        <div className="mx-auto max-w-6xl">
+          <Reveal direction="up">
+            <div className="text-center mb-16">
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-6 shadow-sm">
+                <Sparkles className="h-3.5 w-3.5 text-[#0071e3]" />
+                Flexible AI Integration
+              </div>
+              <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
+                Choose Your AI Provider
+              </h2>
+              <p className="text-slate-500 dark:text-slate-400 max-w-2xl mx-auto text-lg">
+                Connect to any AI provider — from free cloud models to completely local inference. Your tests, your infrastructure.
+              </p>
+            </div>
+          </Reveal>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {AI_PROVIDERS.map((provider, i) => (
+              <Reveal key={i} delay={i * 100} direction="up">
+                <div className="group relative flex flex-col p-8 rounded-[24px] glass-panel transition-all duration-500 hover:shadow-xl hover:border-[#0071e3]/30 dark:hover:border-[#0071e3]/30 cursor-default overflow-hidden">
+                  {/* Subtle gradient background on hover */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#0071e3]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                  
+                  <div className="relative z-10">
+                    <div className="flex items-start justify-between mb-4">
+                      <h3 className="text-xl font-semibold tracking-tight group-hover:text-[#0071e3] transition-colors duration-300">
+                        {provider.name}
+                      </h3>
+                      {provider.badge && (
+                        <span className={`${provider.badgeColor} text-white text-xs font-medium px-2.5 py-1 rounded-full shadow-sm`}>
+                          {provider.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed mb-4">
+                      {provider.description}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {provider.models.map((model, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center text-xs font-medium px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 border border-slate-200/50 dark:border-white/10"
+                        >
+                          {model}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+
+          <Reveal direction="up" delay={400}>
+            <div className="mt-12 text-center">
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                All providers support the same powerful testing features — choose based on your cost, privacy, and performance requirements.
+              </p>
+              <div className="flex items-center justify-center gap-6 text-xs text-slate-400 dark:text-slate-500">
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <span>Free tiers available</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <span>Local inference support</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                  <span>Easy provider switching</span>
+                </div>
+              </div>
+            </div>
+          </Reveal>
         </div>
       </section>
 
