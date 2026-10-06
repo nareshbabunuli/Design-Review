@@ -5,50 +5,63 @@
 
 import type { PageType } from "./types"
 
-const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || "http://127.0.0.1:8000"
+const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || ""
 
-interface PredictPayload {
+export interface LayaPredictPayload {
   state: string
   questions: Record<
     string,
     | { type: "noul"; instructions: string }
     | { type: "choice"; instructions: string; criteria: Record<string, string> }
+    | { type: "score"; instructions: string; criteria: string[] }
   >
 }
 
 async function predict(
   baseUrl: string,
-  payload: PredictPayload
+  payload: LayaPredictPayload
 ): Promise<Record<string, any> | null> {
-  try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 4000)
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/systemone`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-    clearTimeout(timer)
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
+  if (!baseUrl || !baseUrl.trim()) return null
+  const cleanBase = baseUrl.replace(/\/$/, "")
+  const endpoints = [`${cleanBase}/v1/systemone`, `${cleanBase}/predict`]
+
+  for (const url of endpoints) {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 4000)
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (res.ok) {
+        return await res.json()
+      }
+    } catch {
+      // try fallback endpoint
+    }
   }
+  return null
 }
 
 export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boolean> {
-  try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 1500)
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/health`, {
-      signal: controller.signal,
-    }).catch(() => null)
-    clearTimeout(timer)
-    return !!res?.ok
-  } catch {
-    return false
+  if (!baseUrl || !baseUrl.trim()) return false
+  const cleanBase = baseUrl.replace(/\/$/, "")
+  const healthEndpoints = [`${cleanBase}/health`, `${cleanBase}/`]
+  for (const url of healthEndpoints) {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 1500)
+      const res = await fetch(url, {
+        signal: controller.signal,
+      }).catch(() => null)
+      clearTimeout(timer)
+      if (res?.ok) return true
+    } catch {}
   }
+  return false
 }
 
 export async function classifyPage(
@@ -94,9 +107,10 @@ export async function classifyPage(
   }
 
   const answers = result.answers
-  const pageType = (answers.page_type?.label || answers.page_type || "other") as PageType
-  const readyProb = answers.ready?.probability ?? answers.ready ?? 0.8
-  const blockingProb = answers.blocking?.probability ?? answers.blocking ?? 0
+  const pageTypeRaw = answers.page_type?.choice || answers.page_type?.label || answers.page_type || "other"
+  const pageType = (typeof pageTypeRaw === "string" ? pageTypeRaw : String(pageTypeRaw)) as PageType
+  const readyProb = answers.ready?.noul ?? answers.ready?.probability ?? answers.ready ?? 0.8
+  const blockingProb = answers.blocking?.noul ?? answers.blocking?.probability ?? answers.blocking ?? 0
 
   return {
     pageType: [
@@ -144,7 +158,8 @@ export async function pickNextLink(
 
   if (!result?.answers?.next) return candidates[0].href
 
-  const label = result.answers.next.label || result.answers.next
+  const nextAns = result.answers.next
+  const label = nextAns?.choice || nextAns?.label || nextAns || ""
   const match = String(label).match(/opt_(\d+)/)
   if (match) {
     const idx = parseInt(match[1], 10)
@@ -154,3 +169,11 @@ export async function pickNextLink(
 }
 
 export { DEFAULT_LAYA_URL }
+
+/** Shared low-level call: POST { state, questions } to a Laya server, with endpoint fallback. */
+export async function layaPredict(
+  baseUrl: string,
+  payload: LayaPredictPayload,
+): Promise<Record<string, any> | null> {
+  return predict(baseUrl, payload)
+}

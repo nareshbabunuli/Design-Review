@@ -1,0 +1,406 @@
+export type AutomationViewport = {
+  name: string
+  width: number
+  height: number
+}
+
+export type AutomationIssue = {
+  id: string
+  screenUrl: string
+  screenTitle: string
+  type: "back_navigation" | "responsive_overflow" | "broken_asset" | "js_error" | "layout_shift"
+  severity: "low" | "medium" | "high" | "blocker"
+  viewport?: string
+  description: string
+  expected?: string
+  actual?: string
+  timestamp: string
+}
+
+export type DiscoveredScreen = {
+  url: string
+  title: string
+  path: string
+  pageType?: string
+  testedAt: string
+  screenshotUrl?: string
+  screenshots: Record<string, string> // viewport name -> publicUrl or base64
+  backNavigationStatus: "passed" | "failed" | "skipped"
+  responsiveStatus: "passed" | "warning" | "failed"
+  workflowId?: string
+  issuesCount: number
+  issues?: AutomationIssue[]
+  aiAnalysis?: {
+    uxScore: number
+    summary: string
+  }
+}
+
+export type AutomationJobStatus = "queued" | "running" | "completed" | "failed" | "stopped"
+
+export type TestScenarioCategory =
+  | "navigation"
+  | "auth"
+  | "forms"
+  | "validation"
+  | "error-handling"
+  | "content"
+  | "edge"
+
+export type TestScenario = {
+  id: string
+  name: string
+  category: TestScenarioCategory
+  goal: string
+  /** Natural-language instruction handed to the browser agent for this scenario. */
+  instruction: string
+  needsAuth: boolean
+  fillsForms: boolean
+  expectedOutcome: string
+}
+
+export type TestCaseBug = {
+  description: string
+  severity: "low" | "medium" | "high" | "blocker"
+  repro: string[]
+}
+
+export type TestCaseScreenshot = {
+  label: string
+  url: string
+}
+
+export type TestCaseResult = {
+  scenarioId: string
+  name: string
+  category: TestScenarioCategory
+  status: "passed" | "failed" | "blocked" | "skipped"
+  steps: string[]
+  screenshots: TestCaseScreenshot[]
+  bugs: TestCaseBug[]
+  startedAt: string
+  finishedAt: string
+  error?: string
+}
+
+export type FlowGraphNode = {
+  id: string
+  url: string
+  title: string
+  screenshotUrl?: string
+  scenarioId?: string
+}
+
+export type FlowGraphEdge = {
+  from: string
+  to: string
+  label: string
+}
+
+export type FlowGraph = {
+  nodes: FlowGraphNode[]
+  edges: FlowGraphEdge[]
+}
+
+export type AutomationLog = {
+  timestamp: string
+  level: "info" | "success" | "warn" | "error"
+  message: string
+}
+
+export type AutomationReport = {
+  totalScreensTested: number
+  passedScreens: number
+  failedScreens: number
+  totalIssues: number
+  backNavigationScore: number // 0-100 percentage
+  responsiveScore: number // 0-100 percentage
+  summary: string
+  recommendations: string[]
+  issues?: AutomationIssue[]
+  chainedWorkflowId?: string
+  /** Autonomous runs: per-scenario results (15 test cases). */
+  testCases?: TestCaseResult[]
+  /** Autonomous runs: Figma-style node/edge flow of visited screens. */
+  flowGraph?: FlowGraph
+  /** Autonomous runs: session recording (webm) URL. */
+  recordingUrl?: string
+  aiExecutiveSummary?: {
+    executiveSummary: string
+    keyStrengths: string[]
+    criticalFixes: string[]
+    overallScore: number
+  }
+}
+
+export type AIThinkingModel = {
+  screenUnderstanding: string
+  identifiedElements: Array<{
+    name: string
+    type: "input" | "button" | "link" | "checkbox" | "select" | "text" | "other"
+    selector?: string
+    purpose: string
+  }>
+  riskAssessment: string[]
+  strategy: string
+}
+
+export type ChecklistTestItem = {
+  id: string
+  title: string
+  goal: string
+  expectedOutcome: string
+  status: "pending" | "running" | "passed" | "failed" | "skipped"
+  actions: AgentAction[]
+  observations?: string
+  screenshotUrl?: string
+  error?: string
+}
+
+export type AgentChatMessage = {
+  id: string
+  sender: "user" | "agent"
+  text: string
+  timestamp: string
+  actionsPlanned?: AgentAction[]
+  actionsExecuted?: {
+    type: string
+    selector?: string
+    description?: string
+  }[]
+  status?: "thinking" | "executing" | "completed" | "error"
+  imageUrl?: string
+  thinkingModel?: AIThinkingModel
+  checklist?: ChecklistTestItem[]
+}
+
+export type AgentAction = {
+  id: string
+  type: "navigate" | "click" | "type" | "back" | "resize" | "inspect" | "scroll" | "assert"
+  description: string
+  thought?: string
+  target?: string
+  selector?: string
+  value?: string
+  coordinates?: { x: number; y: number }
+  observation?: string
+  status?: "pending" | "running" | "passed" | "failed"
+  durationMs?: number
+  timestamp: string
+  screenshotUrl?: string
+}
+
+export type ActionableElementType =
+  | "button"
+  | "clickable"
+  | "link"
+  | "text"
+  | "form"
+  | "input"
+  | "select"
+  | "checkbox"
+  | "radio"
+  | "toggle"
+  | "tab"
+  | "menu"
+  | "file_upload"
+  | "other"
+
+export type ActionableElement = {
+  id: string
+  name: string
+  type: ActionableElementType
+  selector?: string
+  inputType?: string
+  accept?: string
+  placeholder?: string
+  value?: string
+  isRequired?: boolean
+  options?: string[]
+  formId?: string
+  tested?: boolean
+  testStatus?: "passed" | "failed" | "blocked" | "pending"
+  isInteractive?: boolean
+  error?: string
+}
+
+export type AppScreenNode = {
+  id: string // Unique: S001, S002, S003...
+  name: string // Human readable: Login, Register, Dashboard, etc.
+  url: string
+  path: string
+  screenshotUrl?: string
+  actionableElements: ActionableElement[]
+  forms: Array<{
+    id: string
+    name?: string
+    fields: string[]
+    submitButton?: string
+  }>
+  isNewDiscovery?: boolean
+  isLoginWall?: boolean
+  discoveredAt: string
+}
+
+export type AppWorkflowTransition = {
+  id: string
+  fromScreenId: string // e.g. "S001"
+  toScreenId: string // e.g. "S002"
+  action: string // e.g. "Click Register", "Submit Login Form"
+  actionType: "click" | "form_submit" | "navigation" | "modal_open"
+  triggerSelector?: string
+}
+
+export type TestPlanStep = {
+  id: string
+  screenId: string
+  screenName: string
+  stepIndex: number
+  actionType: "fill" | "click" | "upload" | "select" | "toggle" | "verify" | "navigate"
+  targetName: string
+  targetSelector?: string
+  syntheticValue?: string
+  fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
+  expectedResult: string
+  actualResult?: string
+  status: "pending" | "running" | "passed" | "failed" | "blocked"
+  screenshotUrl?: string
+  evidenceTimestamp?: string
+  error?: string
+  isNewDiscovery?: boolean
+}
+
+export type FullAppTestPlan = {
+  id: string
+  targetUrl: string
+  screens: AppScreenNode[]
+  transitions: AppWorkflowTransition[]
+  steps: TestPlanStep[]
+  requiredFileTypes: Array<{
+    type: "image" | "pdf" | "document" | "video" | "csv" | "other"
+    count: number
+    providedFileUrl?: string
+    providedFileName?: string
+  }>
+  status: "discovery" | "planned" | "testing" | "completed" | "error"
+  coverage: {
+    screensTested: number
+    totalScreens: number
+    actionsTested: number
+    totalActions: number
+    formsTested: number
+    totalForms: number
+    percentage: number
+  }
+}
+
+export type AutomationJob = {
+  id: string
+  targetUrl: string
+  projectId: string
+  status: AutomationJobStatus
+  progress: number // 0 to 100
+  currentStep: string
+  currentAction?: AgentAction
+  currentScreenshotUrl?: string
+  actionHistory?: AgentAction[]
+  messages?: AgentChatMessage[]
+  startedAt: string
+  finishedAt?: string
+  credentialsProvided: boolean
+  viewports: AutomationViewport[]
+  maxScreens: number
+  logs: AutomationLog[]
+  screens: DiscoveredScreen[]
+  issues: AutomationIssue[]
+  report?: AutomationReport
+  aiModel?: string
+  aiBaseUrl?: string
+  layaBaseUrl?: string
+  role?: string
+  chainedWorkflowId?: string
+  error?: string
+  projectDir?: string
+  /** "autonomous" routes the job through the Stagehand scenario engine; "full_app" routes to systematic engine; "feature_workflow" runs targeted feature testing. */
+  mode?: "chat" | "crawl" | "autonomous" | "full_app" | "feature_workflow"
+  /** Autonomous runs: planned scenarios, per-scenario results, flow graph, recording. */
+  scenarios?: TestScenario[]
+  testCases?: TestCaseResult[]
+  flowGraph?: FlowGraph
+  recordingUrl?: string
+  /** Vision-driven thinking model & interactive UI checklist */
+  thinkingModel?: AIThinkingModel
+  checklist?: ChecklistTestItem[]
+  /** Systematic Full App Testing & Feature Workflow architecture */
+  fullAppTestPlan?: FullAppTestPlan
+  testingPhase?: "discovery" | "planning" | "files" | "executing" | "reporting"
+  dummyTestFiles?: Record<string, { name: string; url: string; type: string }>
+  /** Feature / Workflow Testing mode fields */
+  workflowName?: string
+  featureWorkflowSpec?: FeatureWorkflowSpec
+  edgeCasesTested?: FeatureWorkflowEdgeCase[]
+  workflowClarification?: { question: string; options?: string[] }
+  /** Login-wall handling: engine pauses in "awaiting_credentials" until the UI supplies creds or skips. */
+  authState?: "none" | "awaiting_credentials" | "logged_in" | "login_failed" | "skipped"
+  authPrompt?: string
+  pendingCredentials?: { username?: string; password?: string; skip?: boolean }
+  /** Last AI-provider error surfaced loudly to the user (never a silent fallback). */
+  aiError?: string
+}
+
+export type FeatureWorkflowEdgeCase = {
+  id: string
+  name: string
+  type: "missing_field" | "invalid_format" | "boundary" | "duplicate" | "valid"
+  description: string
+  expectedBehavior: string
+  status?: "pending" | "running" | "passed" | "failed" | "blocked"
+  actualResult?: string
+  screenshotUrl?: string
+  error?: string
+}
+
+export type FeatureWorkflowSpec = {
+  workflowName: string
+  userGoal: string
+  startingPoint: string
+  expectedOutcome: string
+  likelyScreens: string[]
+  requiredActions: string[]
+  formsInvolved: string[]
+  syntheticDataRequired: Record<string, string>
+  possibleBranches: string[]
+  validationStates: string[]
+  edgeCases: FeatureWorkflowEdgeCase[]
+  clarificationQuestion?: string
+  isAmbiguous?: boolean
+}
+
+export type StartAutomationRequest = {
+  url: string
+  projectId: string
+  projectDir?: string
+  userInstruction?: string
+  workflowPrompt?: string
+  role?: string
+  layaBaseUrl?: string
+  credentials?: {
+    username?: string
+    password?: string
+    token?: string
+  }
+  viewports?: AutomationViewport[]
+  maxScreens?: number
+  checkBackNavigation?: boolean
+  checkResponsive?: boolean
+  openRouterApiKey?: string
+  aiModel?: string
+  aiBaseUrl?: string
+  /** "autonomous" runs Stagehand; "full_app" runs systematic discovery->plan->execute; "feature_workflow" tests specific user workflow; default is crawl/chat. */
+  mode?: "autonomous" | "crawl" | "chat" | "full_app" | "feature_workflow"
+  scenarioCount?: number
+  /** User-provided image (data URI or URL) for vision inspection */
+  image?: string
+  dummyTestFiles?: Record<string, { name: string; url: string; type: string }>
+}
+

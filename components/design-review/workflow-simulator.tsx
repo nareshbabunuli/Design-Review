@@ -1,0 +1,3142 @@
+"use client"
+
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import {
+  Monitor,
+  Smartphone,
+  Tablet,
+  Laptop,
+  Camera,
+  ZoomIn,
+  ZoomOut,
+  Layers,
+  Columns,
+  SplitSquareVertical,
+  CheckCircle2,
+  X,
+  Plus,
+  Lock,
+  Key,
+  Globe,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Grid,
+  Sparkles,
+  Trash2,
+  ArrowLeft,
+  ArrowRight,
+  RefreshCw,
+  ExternalLink,
+  Info,
+  FileText,
+  AlertCircle,
+  Upload,
+  Crop,
+  Copy,
+  CopyPlus,
+  Check,
+  Maximize,
+  Minimize,
+  ChevronUp,
+  FolderKanban,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react"
+import type { Project, Workflow } from "@/lib/design-review-types"
+import { createClient } from "@/lib/supabase/client"
+import { AreaSelectionOverlay } from "./area-selection-overlay"
+import { CapturedResultModal } from "./captured-result-modal"
+import { JourneyCaptureModal } from "./journey-capture-modal"
+import {
+  DeviceFrame,
+  EXTENDED_DEVICE_PRESETS,
+  DevicePresetExtended,
+  DeviceFrameType,
+  FrameFinish,
+  getDeviceFrameMetrics,
+} from "./device-frame"
+
+// ============================================================================
+// Types & Constants
+// ============================================================================
+
+export type CaptureMode = "clean-app" | "framed-device"
+export type CaptureScope = "full" | "selection"
+
+export interface NativeCrop {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const DEVICE_CATEGORIES = ["Desktop", "Laptop", "Tablet", "Mobile", "Custom"] as const
+type DeviceCategory = (typeof DEVICE_CATEGORIES)[number]
+
+export interface WorkflowSimulatorProps {
+  project: Project
+  initialWorkflowId?: string | null
+  initialLiveMode?: boolean
+  initialUrl?: string
+  isOwner?: boolean
+  canEdit?: boolean
+  userRole?: "client" | "freelancer" | "owner" | "developer" | null
+  onSelectWorkflow?: (workflowId: string) => void
+  onDuplicateWorkflow?: (workflowId: string) => Promise<void>
+  onUpdateField?: (
+    workflowId: string,
+    field: "ourNotes" | "clientMessage" | "clientTaskDone" | "reason" | "figmaUrl" | "designA" | "designB",
+    value: string | boolean | null
+  ) => void
+  onOpenPresentation?: () => void
+  theme?: "light" | "dark"
+  onToggleTheme?: () => void
+  isFullscreen?: boolean
+  onToggleFullscreen?: (val?: boolean) => void
+  onNavigateView?: (mode: "dashboard" | "editor" | "simulator") => void
+  hideLeftView?: boolean
+  onToggleHideLeftView?: (val?: boolean) => void
+}
+
+interface Annotation {
+  id: number
+  x: number
+  y: number
+  title: string
+  expected: string
+  actual: string
+  severity: "Low" | "Medium" | "High" | "Blocker"
+  resolved: boolean
+  author: string
+  createdAt: string
+}
+
+interface CapturedScreenshot {
+  id: string
+  timestamp: string
+  dimensions: string
+  url: string
+  mode: string
+}
+
+const SEVERITY_STYLES: Record<Annotation["severity"], { badge: string; pin: string }> = {
+  Low: { badge: "bg-slate-500/20 text-slate-300 border border-slate-500/30", pin: "bg-slate-400 text-black" },
+  Medium: { badge: "bg-amber-500/20 text-amber-400 border border-amber-500/30", pin: "bg-amber-500 text-black" },
+  High: { badge: "bg-rose-500/20 text-rose-400 border border-rose-500/30", pin: "bg-rose-500 text-white" },
+  Blocker: { badge: "bg-rose-600/30 text-rose-300 border border-rose-500/50", pin: "bg-rose-600 text-white" },
+}
+
+// Small helper for consistent text-button styling across the header/toolbar
+function ToolbarButton({
+  active,
+  onClick,
+  title,
+  children,
+  variant = "default",
+}: {
+  active?: boolean
+  onClick: () => void
+  title: string
+  children: React.ReactNode
+  variant?: "default" | "primary"
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={`px-2 sm:px-2.5 py-1 rounded text-[10px] sm:text-[11px] font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400 ${active
+          ? variant === "primary"
+            ? "bg-indigo-600 text-white border border-indigo-600"
+            : "bg-indigo-50 border border-indigo-200 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/40 dark:text-indigo-300"
+          : "text-slate-500 dark:text-[#8e95a5] hover:text-slate-700 dark:hover:text-[#e2e4ea] border border-slate-200 dark:border-[#272b38] hover:border-slate-300 dark:hover:border-[#3b4254] bg-transparent"
+        }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ============================================================================
+// Main Component
+// ============================================================================
+
+export function WorkflowSimulator({
+  project,
+  initialWorkflowId,
+  initialLiveMode,
+  initialUrl,
+  isOwner = false,
+  canEdit = false,
+  userRole = "owner",
+  onSelectWorkflow,
+  onDuplicateWorkflow,
+  onUpdateField,
+  onOpenPresentation,
+  theme = "dark",
+  onToggleTheme,
+  isFullscreen: isFullscreenProp,
+  onToggleFullscreen,
+  onNavigateView,
+  hideLeftView: hideLeftViewProp,
+  onToggleHideLeftView,
+}: WorkflowSimulatorProps) {
+  const workflows = project.workflows || []
+
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string>(() => {
+    if (initialWorkflowId && workflows.some((w) => w.id === initialWorkflowId)) {
+      return initialWorkflowId
+    }
+    return workflows[0]?.id || ""
+  })
+
+  useEffect(() => {
+    if (initialWorkflowId) {
+      setActiveWorkflowId(initialWorkflowId)
+    }
+  }, [initialWorkflowId])
+
+  const currentWorkflow = useMemo(() => {
+    return workflows.find((w) => w.id === activeWorkflowId) || workflows[0]
+  }, [workflows, activeWorkflowId])
+
+  const handleSelectWorkflow = useCallback(
+    (id: string) => {
+      setActiveWorkflowId(id)
+      onSelectWorkflow?.(id)
+    },
+    [onSelectWorkflow]
+  )
+
+  const currentWorkflowIndex = useMemo(() => {
+    return Math.max(0, workflows.findIndex((w) => w.id === activeWorkflowId))
+  }, [workflows, activeWorkflowId])
+
+  const handlePrevWorkflow = useCallback(() => {
+    if (currentWorkflowIndex > 0) {
+      const prevWf = workflows[currentWorkflowIndex - 1]
+      handleSelectWorkflow(prevWf.id)
+    }
+  }, [currentWorkflowIndex, workflows, handleSelectWorkflow])
+
+  const handleNextWorkflow = useCallback(() => {
+    if (currentWorkflowIndex < workflows.length - 1) {
+      const nextWf = workflows[currentWorkflowIndex + 1]
+      handleSelectWorkflow(nextWf.id)
+    }
+  }, [currentWorkflowIndex, workflows, handleSelectWorkflow])
+
+  // Screen Info (Notes & Reason) Modal state
+  const [showInfoModal, setShowInfoModal] = useState<boolean>(false)
+  const [notesDraft, setNotesDraft] = useState<string>("")
+  const [reasonDraft, setReasonDraft] = useState<string>("")
+  const [isSavedRecently, setIsSavedRecently] = useState<boolean>(false)
+
+  useEffect(() => {
+    setNotesDraft(currentWorkflow?.ourNotes || "")
+    setReasonDraft(currentWorkflow?.reason || "")
+  }, [currentWorkflow?.id, currentWorkflow?.ourNotes, currentWorkflow?.reason])
+
+  // Split layout state
+  const [splitRatio, setSplitRatio] = useState<number>(50)
+  const [isSwapped, setIsSwapped] = useState<boolean>(false)
+  const [isDraggingSplit, setIsDraggingSplit] = useState<boolean>(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const [compareMode, setCompareMode] = useState<"side-by-side" | "overlay" | "difference">("side-by-side")
+  const [mobileComparePane, setMobileComparePane] = useState<"both" | "design" | "live">("both")
+  const [overlayOpacity, setOverlayOpacity] = useState<number>(50)
+
+  // Left View visibility state (hideLeftView)
+  const [internalHideLeftView, setInternalHideLeftView] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("simulator_hide_left_view") === "true"
+    }
+    return false
+  })
+
+  const isLeftViewHidden = hideLeftViewProp !== undefined ? hideLeftViewProp : internalHideLeftView
+
+  const toggleHideLeftView = useCallback((val?: boolean) => {
+    const next = typeof val === "boolean" ? val : !isLeftViewHidden
+    if (onToggleHideLeftView) {
+      onToggleHideLeftView(next)
+    } else {
+      setInternalHideLeftView(next)
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem("simulator_hide_left_view", String(next))
+    }
+    triggerToast(next ? "Left view hidden: Full Live Screen" : "Left view restored: Split Comparison")
+  }, [isLeftViewHidden, onToggleHideLeftView])
+
+  // Viewport / device state
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>("m-iphone-16-pro")
+  const [viewportWidth, setViewportWidth] = useState<number>(393)
+  const [viewportHeight, setViewportHeight] = useState<number>(852)
+  const [isCustomPreset, setIsCustomPreset] = useState<boolean>(false)
+  const [showDeviceFrame, setShowDeviceFrame] = useState<boolean>(true)
+  const [frameFinish, setFrameFinish] = useState<FrameFinish>("titanium")
+  const [showDeviceStatusBar, setShowDeviceStatusBar] = useState<boolean>(true)
+
+  // Live browser navigation
+  const defaultUrl = useMemo(() => {
+    if (initialUrl) return initialUrl
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("simulator_active_url")
+      if (saved) return saved
+    }
+    return "http://localhost:8081"
+  }, [initialUrl])
+
+  const [urlInput, setUrlInput] = useState<string>(defaultUrl)
+  const [currentUrl, setCurrentUrl] = useState<string>(defaultUrl)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  useEffect(() => {
+    if (initialUrl && initialUrl !== currentUrl) {
+      setCurrentUrl(initialUrl)
+      setUrlInput(initialUrl)
+    }
+  }, [initialUrl])
+
+  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => {
+    if (typeof initialLiveMode === "boolean") return initialLiveMode
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("simulator_is_live_mode")
+      if (saved !== null) return saved === "true"
+    }
+    return true
+  })
+
+  useEffect(() => {
+    if (typeof initialLiveMode === "boolean") {
+      setIsLiveCanvas(initialLiveMode)
+    }
+  }, [initialLiveMode])
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false)
+  const [showJourneyModal, setShowJourneyModal] = useState(false)
+  const [authConfig, setAuthConfig] = useState<{
+    type: "login" | "cookie" | "token"
+    username?: string
+    password?: string
+    cookie?: string
+    token?: string
+  }>(() => {
+    if (typeof window === "undefined") return { type: "login", username: "", password: "" }
+    try {
+      const saved = localStorage.getItem("simulator_auth_credentials")
+      return saved ? JSON.parse(saved) : { type: "login", username: "", password: "" }
+    } catch {
+      return { type: "login", username: "", password: "" }
+    }
+  })
+
+  // Fullscreen, Copy Figma states
+  const [internalFullscreen, setInternalFullscreen] = useState<boolean>(false)
+  const isFullscreen = isFullscreenProp ?? internalFullscreen
+  const [copiedFigma, setCopiedFigma] = useState<boolean>(false)
+  const [showQuickDock, setShowQuickDock] = useState<boolean>(true)
+
+  // Toast queue
+  const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([])
+  const toastIdRef = useRef(0)
+  const triggerToast = useCallback((msg: string) => {
+    const id = ++toastIdRef.current
+    setToastQueue((q) => [...q, { id, message: msg }])
+    setTimeout(() => setToastQueue((q) => q.filter((t) => t.id !== id)), 3200)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    const next = !isFullscreen
+    if (onToggleFullscreen) {
+      onToggleFullscreen(next)
+    } else {
+      setInternalFullscreen(next)
+    }
+    if (next) {
+      triggerToast("Total header hidden (Fullscreen mode)")
+    } else {
+      triggerToast("Total header restored")
+    }
+  }, [isFullscreen, onToggleFullscreen, triggerToast])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isFullscreen) {
+        if (onToggleFullscreen) {
+          onToggleFullscreen(false)
+        } else {
+          setInternalFullscreen(false)
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [isFullscreen, onToggleFullscreen])
+
+  const [navHistory, setNavHistory] = useState<string[]>([defaultUrl])
+  const [navIndex, setNavIndex] = useState<number>(0)
+
+  const [isDuplicating, setIsDuplicating] = useState(false)
+
+  const handleDuplicateScreen = useCallback(async () => {
+    if (!currentWorkflow) return
+    setIsDuplicating(true)
+    try {
+      if (onDuplicateWorkflow) {
+        await onDuplicateWorkflow(currentWorkflow.id)
+        triggerToast("Screen duplicated successfully!")
+      } else {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from("workflows")
+          .insert({
+            project_id: currentWorkflow.projectId || project.id,
+            title: `${currentWorkflow.title} (Copy)`,
+            design_a: currentWorkflow.designA,
+            design_b: currentWorkflow.designB,
+            figma_url: currentWorkflow.figmaUrl,
+            our_notes: currentWorkflow.ourNotes,
+            reason: currentWorkflow.reason,
+            client_message: currentWorkflow.clientMessage,
+            client_task_done: currentWorkflow.clientTaskDone,
+            is_done: currentWorkflow.isDone,
+          })
+          .select("*")
+          .single()
+
+        if (error) throw error
+        if (data && onSelectWorkflow) {
+          onSelectWorkflow(data.id)
+        }
+        triggerToast("Screen duplicated successfully!")
+      }
+    } catch (err: any) {
+      console.error("Error duplicating screen:", err)
+      triggerToast(err?.message || "Failed to duplicate screen")
+    } finally {
+      setIsDuplicating(false)
+    }
+  }, [currentWorkflow, onDuplicateWorkflow, project.id, onSelectWorkflow, triggerToast])
+
+  const handleCopyFigmaImage = useCallback(async () => {
+    if (!currentWorkflow?.designA) {
+      triggerToast("No Figma spec image available to copy")
+      return
+    }
+    try {
+      const res = await fetch(currentWorkflow.designA)
+      const blob = await res.blob()
+
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard && navigator.clipboard.write) {
+        let pngBlob = blob
+        if (blob.type !== "image/png") {
+          const img = new Image()
+          img.crossOrigin = "anonymous"
+          await new Promise((resolve, reject) => {
+            img.onload = resolve
+            img.onerror = reject
+            img.src = currentWorkflow.designA!
+          })
+          const canvas = document.createElement("canvas")
+          canvas.width = img.naturalWidth || img.width
+          canvas.height = img.naturalHeight || img.height
+          const ctx = canvas.getContext("2d")
+          if (ctx) {
+            ctx.drawImage(img, 0, 0)
+            pngBlob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b || blob), "image/png"))
+          }
+        }
+
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "image/png": pngBlob,
+          }),
+        ])
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec image copied to clipboard!")
+        return
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentWorkflow.designA)
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec URL copied to clipboard!")
+      }
+    } catch (err) {
+      console.warn("Direct blob clipboard copy notice, falling back to URL copy:", err)
+      if (navigator.clipboard && navigator.clipboard.writeText && currentWorkflow?.designA) {
+        await navigator.clipboard.writeText(currentWorkflow.designA)
+        setCopiedFigma(true)
+        setTimeout(() => setCopiedFigma(false), 2000)
+        triggerToast("Figma Spec URL copied to clipboard!")
+      } else {
+        triggerToast("Could not copy to clipboard")
+      }
+    }
+  }, [currentWorkflow, triggerToast])
+
+  const handleSaveInfo = useCallback(() => {
+    if (!currentWorkflow || !onUpdateField) return
+    onUpdateField(currentWorkflow.id, "ourNotes", notesDraft)
+    onUpdateField(currentWorkflow.id, "reason", reasonDraft)
+    setIsSavedRecently(true)
+    triggerToast("Notes & reason updated")
+    setTimeout(() => setIsSavedRecently(false), 2000)
+  }, [currentWorkflow, onUpdateField, notesDraft, reasonDraft, triggerToast])
+
+  // Browser navigation actions
+  const navigateTo = useCallback(
+    (rawUrl: string) => {
+      let target = rawUrl.trim()
+      if (!target) return
+      if (/^\d+$/.test(target)) {
+        target = `http://localhost:${target}`
+      } else if (/^:\d+/.test(target)) {
+        target = `http://localhost${target}`
+      } else if (!/^https?:\/\//i.test(target)) {
+        target = `http://${target}`
+      }
+
+      // Guard against self-embedding infinite loops (port 3000 is this app)
+      if (typeof window !== "undefined" && (target.includes("localhost:3000") || target.includes("127.0.0.1:3000"))) {
+        triggerToast("⚠️ Port 3000 is this review tool! Use your target app's port (e.g. :8081).")
+        return
+      }
+
+      // Friendly note for third-party websites that block iframes
+      const isExternal = /^https?:\/\//i.test(target) && !target.includes("localhost") && !target.includes("127.0.0.1")
+      if (isExternal) {
+        triggerToast("Note: Many external sites block iframe embedding. Use ↗ to open directly.")
+      }
+
+      setUrlInput(target)
+      setIsLiveCanvas(true)
+
+      if (target === currentUrl) {
+        if (iframeRef.current) {
+          try {
+            iframeRef.current.contentWindow?.location.reload()
+          } catch (e) {
+            const src = iframeRef.current.src
+            iframeRef.current.src = src
+          }
+        }
+      } else {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("simulator_active_url", target)
+        }
+        setCurrentUrl(target)
+        setNavHistory((prev) => [...prev.slice(0, navIndex + 1), target])
+        setNavIndex((prev) => prev + 1)
+      }
+    },
+    [currentUrl, navIndex]
+  )
+
+  const handleGoBack = useCallback(() => {
+    if (navIndex > 0) {
+      const prevUrl = navHistory[navIndex - 1]
+      setNavIndex(navIndex - 1)
+      setUrlInput(prevUrl)
+      setCurrentUrl(prevUrl)
+      triggerToast("Back")
+    }
+  }, [navIndex, navHistory, triggerToast])
+
+  const handleGoForward = useCallback(() => {
+    if (navIndex < navHistory.length - 1) {
+      const nextUrl = navHistory[navIndex + 1]
+      setNavIndex(navIndex + 1)
+      setUrlInput(nextUrl)
+      setCurrentUrl(nextUrl)
+      triggerToast("Forward")
+    }
+  }, [navIndex, navHistory, triggerToast])
+
+  const handleRefresh = useCallback(() => {
+    if (iframeRef.current) {
+      try {
+        iframeRef.current.contentWindow?.location.reload()
+      } catch (e) {
+        const src = iframeRef.current.src
+        iframeRef.current.src = src
+      }
+    }
+    triggerToast("Reloaded preview")
+  }, [triggerToast])
+
+  const [showGrid, setShowGrid] = useState<boolean>(true)
+  const [showOptions, setShowOptions] = useState<boolean>(false)
+
+  // Screenshots
+  const [capturedScreenshots, setCapturedScreenshots] = useState<CapturedScreenshot[]>([])
+  const [pendingScreenshot, setPendingScreenshot] = useState<File | null>(null)
+  const [pendingScreenshotUrl, setPendingScreenshotUrl] = useState<string | null>(null)
+  const [isSavingScreenshot, setIsSavingScreenshot] = useState<boolean>(false)
+  const [isCapturing, setIsCapturing] = useState<boolean>(false)
+
+  // Interactive Area Selection & Native Live Snip
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("clean-app")
+  const [isAreaSelectionActive, setIsAreaSelectionActive] = useState<boolean>(false)
+  const selectionBoxRef = useRef<HTMLDivElement>(null)
+  const [capturedResultUrl, setCapturedResultUrl] = useState<string | null>(null)
+  const [isResultModalOpen, setIsResultModalOpen] = useState<boolean>(false)
+  const [isSavingResult, setIsSavingResult] = useState<boolean>(false)
+
+  // Global Escape key handler to dismiss overlays, modals, and pin placement
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isAreaSelectionActive) {
+          e.preventDefault()
+          setIsAreaSelectionActive(false)
+        } else if (isResultModalOpen) {
+          e.preventDefault()
+          setIsResultModalOpen(false)
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown)
+    }
+  }, [isAreaSelectionActive, isResultModalOpen])
+
+  // Annotations
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+
+  const [activeAnnotationId, setActiveAnnotationId] = useState<number | null>(null)
+  const [isAddingAnnotation, setIsAddingAnnotation] = useState<boolean>(false)
+  const [newAnnotationCoords, setNewAnnotationCoords] = useState<{ x: number; y: number } | null>(null)
+  const [annotationDraft, setAnnotationDraft] = useState<{
+    title: string
+    expected: string
+    actual: string
+    severity: Annotation["severity"]
+  }>({ title: "", expected: "", actual: "", severity: "Medium" })
+
+  // Debug mode state
+  const [isDebugMode, setIsDebugMode] = useState<boolean>(false)
+  const [debugInfo, setDebugInfo] = useState<{
+    lastCapture?: string
+    lastSave?: string
+    errors: string[]
+  }>({ errors: [] })
+
+  const openIssueCount = annotations.filter((a) => !a.resolved).length
+
+  // Right rail is a single source of truth: "new" draft or "inspect" existing.
+  // This replaces two independently-positioned floating cards that could overlap.
+  const railMode: "none" | "new" | "inspect" = newAnnotationCoords
+    ? "new"
+    : activeAnnotationId
+      ? "inspect"
+      : "none"
+
+  const currentPreset = useMemo(() => {
+    return EXTENDED_DEVICE_PRESETS.find((p) => p.id === selectedPresetId) || null
+  }, [selectedPresetId])
+
+  const currentFrameType: DeviceFrameType = useMemo(() => {
+    if (isCustomPreset || !showDeviceFrame) return "none"
+    return currentPreset?.frameType || "iphone-dynamic-island"
+  }, [isCustomPreset, showDeviceFrame, currentPreset])
+
+  const handlePresetSelect = (preset: DevicePresetExtended) => {
+    setSelectedPresetId(preset.id)
+    setIsCustomPreset(false)
+    setViewportWidth(preset.width)
+    setViewportHeight(preset.height)
+  }
+
+  const handleCustomDimensionChange = (w: string | number, h: string | number) => {
+    setIsCustomPreset(true)
+    setSelectedPresetId(null)
+    setViewportWidth(Math.max(320, Number(w) || 320))
+    setViewportHeight(Math.max(480, Number(h) || 480))
+  }
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingSplit || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const relativeX = e.clientX - rect.left
+      let ratio = (relativeX / rect.width) * 100
+      if (isSwapped) ratio = 100 - ratio
+      ratio = Math.min(Math.max(ratio, 20), 80)
+      setSplitRatio(ratio)
+    }
+    const handleMouseUp = () => {
+      if (isDraggingSplit) setIsDraggingSplit(false)
+    }
+    if (isDraggingSplit) {
+      window.addEventListener("mousemove", handleMouseMove)
+      window.addEventListener("mouseup", handleMouseUp)
+    }
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+  }, [isDraggingSplit, isSwapped])
+
+  // Auto-fit sizing
+  const [workspaceSize, setWorkspaceSize] = useState<{ width: number; height: number }>({ width: 1200, height: 700 })
+  const [zoomMode, setZoomMode] = useState<"fit" | "manual">("fit")
+  const [manualZoom, setManualZoom] = useState<number>(100)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) {
+          setWorkspaceSize({ width: rect.width, height: rect.height })
+        }
+      }
+    }
+    updateDimensions()
+    const ro = new ResizeObserver(updateDimensions)
+    ro.observe(containerRef.current)
+    window.addEventListener("resize", updateDimensions)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener("resize", updateDimensions)
+    }
+  }, [])
+
+  const autoFitScale = useMemo(() => {
+    if (!workspaceSize.width || !workspaceSize.height) return 0.58
+    // Leave 84px headroom for headers, browser address bar (h-9), and container padding
+    const availH = Math.max(120, workspaceSize.height - 84)
+    const metrics = getDeviceFrameMetrics(currentFrameType, viewportWidth, viewportHeight, showDeviceFrame)
+    const effectiveW = metrics.totalWidth
+    const effectiveH = metrics.totalHeight
+
+    if (compareMode === "side-by-side" && !isLeftViewHidden) {
+      const panelAWidth = workspaceSize.width * (splitRatio / 100) - 24
+      const panelBWidth = workspaceSize.width * ((100 - splitRatio) / 100) - 24
+      const scaleA = Math.min(panelAWidth / viewportWidth, availH / viewportHeight)
+      const scaleB = Math.min(panelBWidth / effectiveW, availH / effectiveH)
+      return Math.max(0.15, Math.min(1.0, Number(Math.min(scaleA, scaleB).toFixed(2))))
+    }
+    const availW = workspaceSize.width - 32
+    const scale = Math.min(availW / effectiveW, availH / effectiveH)
+    return Math.max(0.15, Math.min(1.0, Number(scale.toFixed(2))))
+  }, [workspaceSize, splitRatio, viewportWidth, viewportHeight, compareMode, currentFrameType, showDeviceFrame, isLeftViewHidden])
+
+  const currentScale = useMemo(() => {
+    if (zoomMode === "fit") return autoFitScale
+    return Math.max(0.2, manualZoom / 100)
+  }, [zoomMode, autoFitScale, manualZoom])
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const secondScreenRef = useRef<HTMLDivElement>(null)
+
+  const handleExactScreenshotSelect = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    if (!file.type.startsWith("image/")) {
+      triggerToast("Please choose an image file.")
+      event.target.value = ""
+      return
+    }
+
+    if (pendingScreenshotUrl) {
+      URL.revokeObjectURL(pendingScreenshotUrl)
+    }
+
+    const localPreviewUrl = URL.createObjectURL(file)
+
+    setPendingScreenshot(file)
+    setPendingScreenshotUrl(localPreviewUrl)
+
+    event.target.value = ""
+  }
+
+  // Allow pasting screenshots from the OS clipboard (e.g. Snipping Tool)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      // Don't intercept paste if user is typing in an input or textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            if (pendingScreenshotUrl) {
+              URL.revokeObjectURL(pendingScreenshotUrl);
+            }
+            const localPreviewUrl = URL.createObjectURL(file);
+            setPendingScreenshot(file);
+            setPendingScreenshotUrl(localPreviewUrl);
+            triggerToast("Screenshot pasted! Review and save it.");
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [pendingScreenshotUrl, triggerToast]);
+
+  const saveExactScreenshot = async () => {
+    console.log("[DEBUG] saveExactScreenshot started", {
+      currentWorkflow: currentWorkflow?.id,
+      pendingScreenshot: pendingScreenshot?.name,
+      pendingScreenshotSize: pendingScreenshot?.size
+    })
+
+    // Validate before proceeding
+    const validation = validateScreenshotSave(currentWorkflow, pendingScreenshotUrl, "designB")
+    if (validation.issues.length > 0) {
+      console.error("[DEBUG] Save validation failed:", validation.issues)
+      triggerToast(`Cannot save: ${validation.issues.join(", ")}`)
+      return
+    }
+
+    if (!currentWorkflow || !pendingScreenshot) {
+      console.warn("[DEBUG] saveExactScreenshot early return", {
+        hasCurrentWorkflow: !!currentWorkflow,
+        hasPendingScreenshot: !!pendingScreenshot
+      })
+      return
+    }
+
+    setIsSavingScreenshot(true)
+
+    try {
+      const supabase = createClient()
+      console.log("[DEBUG] Created Supabase client for exact screenshot upload")
+
+      const extension = pendingScreenshot.name.split(".").pop()?.toLowerCase() || "png"
+      const filePath = [
+        "workflows",
+        currentWorkflow.id,
+        `exact-screenshot-${Date.now()}.${extension}`,
+      ].join("/")
+
+      console.log("[DEBUG] Uploading to Supabase storage", {
+        filePath,
+        fileType: pendingScreenshot.type,
+        fileSize: pendingScreenshot.size
+      })
+
+      const { error: uploadError } = await supabase.storage
+        .from("designs")
+        .upload(filePath, pendingScreenshot, {
+          contentType: pendingScreenshot.type,
+          cacheControl: "3600",
+          upsert: false,
+        })
+
+      if (uploadError) {
+        console.error("[DEBUG] Supabase storage upload failed:", uploadError)
+        throw uploadError
+      }
+
+      console.log("[DEBUG] Supabase storage upload successful")
+
+      const { data } = supabase.storage
+        .from("designs")
+        .getPublicUrl(filePath)
+
+      const fullPublicUrl = `${data.publicUrl}?v=${Date.now()}`
+      console.log("[DEBUG] Generated public URL:", fullPublicUrl)
+
+      console.log("[DEBUG] Calling onUpdateField with designB for exact screenshot", {
+        workflowId: currentWorkflow.id,
+        field: "designB",
+        value: fullPublicUrl
+      })
+
+      // Add retry logic for critical operations  
+      let retryCount = 0
+      const maxRetries = 3
+      let lastError: any = null
+
+      while (retryCount < maxRetries) {
+        try {
+          await onUpdateField?.(
+            currentWorkflow.id,
+            "designB",
+            fullPublicUrl
+          )
+          console.log("[DEBUG] onUpdateField completed successfully for exact screenshot on attempt", retryCount + 1)
+          break // Success - exit retry loop
+        } catch (error) {
+          lastError = error
+          retryCount++
+          console.warn(`[DEBUG] onUpdateField attempt ${retryCount} failed:`, error)
+
+          if (retryCount < maxRetries) {
+            console.log(`[DEBUG] Retrying in ${retryCount * 1000}ms...`)
+            await new Promise(resolve => setTimeout(resolve, retryCount * 1000))
+          }
+        }
+      }
+
+      // If all retries failed, throw the last error
+      if (retryCount >= maxRetries && lastError) {
+        console.error("[DEBUG] All retry attempts failed for exact screenshot")
+        throw lastError
+      }
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${viewportWidth} × ${viewportHeight}`,
+        url: fullPublicUrl,
+        mode: compareMode,
+      }
+
+      console.log("[DEBUG] Adding exact screenshot to capture history", newCapture)
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+      setIsLiveCanvas(false)
+      triggerToast("Exact screenshot saved successfully.")
+
+      if (pendingScreenshotUrl) {
+        URL.revokeObjectURL(pendingScreenshotUrl)
+      }
+
+      setPendingScreenshot(null)
+      setPendingScreenshotUrl(null)
+      console.log("[DEBUG] saveExactScreenshot completed successfully")
+    } catch (error) {
+      console.error("[DEBUG] Exact screenshot save failed:", error)
+      console.error("[DEBUG] Exact screenshot error details:", {
+        message: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : "Unknown",
+        stack: error instanceof Error ? error.stack : undefined
+      })
+      triggerToast(`Screenshot upload failed: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      console.log("[DEBUG] saveExactScreenshot finished, setting isSavingScreenshot to false")
+      setIsSavingScreenshot(false)
+    }
+  }
+
+  // Debug validation helper
+  const validateScreenshotSave = (workflow: Workflow | null, url: string | null, field: "designA" | "designB") => {
+    const validation = {
+      hasWorkflow: !!workflow,
+      workflowId: workflow?.id || null,
+      hasUrl: !!url,
+      urlValid: url ? (url.startsWith("http") || url.startsWith("data:")) : false,
+      hasOnUpdateField: !!onUpdateField,
+      field,
+      issues: [] as string[]
+    }
+
+    if (!validation.hasWorkflow) validation.issues.push("No current workflow selected")
+    if (!validation.hasUrl) validation.issues.push(`No ${field} URL provided`)
+    if (validation.hasUrl && !validation.urlValid) validation.issues.push(`Invalid ${field} URL format`)
+    if (!validation.hasOnUpdateField) validation.issues.push("onUpdateField callback not provided")
+
+    console.log(`[DEBUG] Screenshot save validation for ${field}:`, validation)
+    return validation
+  }
+
+  const cancelExactScreenshot = () => {
+    console.log("[DEBUG] cancelExactScreenshot called")
+
+    if (pendingScreenshotUrl) {
+      URL.revokeObjectURL(pendingScreenshotUrl)
+      console.log("[DEBUG] Revoked pending screenshot URL")
+    }
+
+    setPendingScreenshot(null)
+    setPendingScreenshotUrl(null)
+
+    console.log("[DEBUG] Cleared all pending screenshot state")
+    triggerToast("Screenshot upload cancelled")
+  }
+
+  const handleCaptureLiveFrame = async (crop?: NativeCrop) => {
+    console.log("[DEBUG] handleCaptureLiveFrame started", {
+      currentWorkflow: currentWorkflow?.id,
+      isCapturing,
+      currentUrl,
+      viewportWidth,
+      viewportHeight,
+      crop,
+      captureMode,
+    })
+
+    if (!currentWorkflow || isCapturing) {
+      console.warn("[DEBUG] handleCaptureLiveFrame early return", {
+        hasCurrentWorkflow: !!currentWorkflow,
+        isCapturing,
+      })
+      return
+    }
+
+    setIsCapturing(true)
+    triggerToast(crop ? "Capturing selected area…" : "Capturing full app screen…")
+
+    try {
+      const supabase = createClient()
+      let finalUrl: string | null = null
+
+      console.log("[DEBUG] Running server-side capture with credentials...")
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const SCREENSHOT_TOKEN = "screenshot_bypass_dev_token_12345"
+      const captureUrl = currentUrl.includes("?")
+        ? `${currentUrl}&screenshot_token=${SCREENSHOT_TOKEN}`
+        : `${currentUrl}?screenshot_token=${SCREENSHOT_TOKEN}`
+
+      const savedCredsStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+      const credentials = savedCredsStr ? JSON.parse(savedCredsStr) : (authConfig.username || authConfig.cookie || authConfig.token ? authConfig : null)
+
+      const res = await fetch("/api/capture-screenshot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token && {
+            Authorization: `Bearer ${session.access_token}`,
+          }),
+        },
+        body: JSON.stringify({
+          url: captureUrl,
+          width: viewportWidth,
+          height: viewportHeight,
+          workflowId: currentWorkflow.id,
+          credentials,
+          accessToken: session?.access_token,
+          refreshToken: session?.refresh_token,
+          session: session,
+          rawStorageKey: Object.keys(window.localStorage).find(
+            (k) => k.includes("auth-token") || k.includes("supabase")
+          ),
+          crop: crop
+            ? {
+              x: Math.round(crop.x),
+              y: Math.round(crop.y),
+              width: Math.round(crop.width),
+              height: Math.round(crop.height),
+            }
+            : undefined,
+          captureMode,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok || !data.publicUrl) {
+        const errorMsg = data.error || "Capture failed"
+        console.error("[DEBUG] Capture API failed", { data, error: errorMsg })
+        throw new Error(errorMsg)
+      }
+
+      finalUrl = `${data.publicUrl}?v=${Date.now()}`
+
+      const capW = crop ? Math.round(crop.width) : viewportWidth
+      const capH = crop ? Math.round(crop.height) : viewportHeight
+
+      // 3. AUTOMATICALLY ADD SCREENSHOT TO WORKFLOW DESIGN B!
+      if (finalUrl && onUpdateField) {
+        console.log("[DEBUG] Automatically saving screenshot to designB", {
+          workflowId: currentWorkflow.id,
+          field: "designB",
+          value: finalUrl,
+        })
+
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+
+        const newCapture: CapturedScreenshot = {
+          id: `snap-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          dimensions: `${capW} × ${capH}`,
+          url: finalUrl,
+          mode: compareMode,
+        }
+
+        console.log("[DEBUG] Adding new capture to history", newCapture)
+        setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+        // Update preview modal and deactivate area selection
+        setCapturedResultUrl(finalUrl)
+        setIsResultModalOpen(true)
+        setIsAreaSelectionActive(false)
+
+        // Automatically switch view to show the newly saved App Screenshot!
+        setIsLiveCanvas(false)
+        triggerToast(
+          crop
+            ? `Area captured & saved to Design B! (${capW} × ${capH}px)`
+            : `App screen captured & saved to Design B! (${capW} × ${capH}px)`
+        )
+
+        setDebugInfo((prev) => ({
+          ...prev,
+          lastCapture: new Date().toISOString(),
+          lastSave: new Date().toISOString(),
+        }))
+      }
+    } catch (err: any) {
+      console.error("[DEBUG] Live frame capture failed:", err)
+      const errorMsg = `Capture failed: ${err?.message || "Unknown error"}`
+      setDebugInfo((prev) => ({
+        ...prev,
+        errors: [errorMsg, ...prev.errors.slice(0, 4)],
+      }))
+      triggerToast(errorMsg)
+    } finally {
+      setIsCapturing(false)
+    }
+  }
+
+  // Persistent live stream reference so the user only authorizes once per session
+  const activeStreamRef = useRef<MediaStream | null>(null)
+
+  useEffect(() => {
+    return () => {
+      activeStreamRef.current?.getTracks().forEach((t) => t.stop())
+      activeStreamRef.current = null
+    }
+  }, [])
+
+  // Primary capture: Instant 0-second live screen capture from active tab
+  const handleLiveScreenCapture = async (
+    forceFullScreen = false,
+    cropBox?: NativeCrop
+  ) => {
+    if (!currentWorkflow || isCapturing) return
+    setIsCapturing(true)
+    triggerToast(cropBox && !forceFullScreen ? "Capturing selected area…" : "Capturing live app screen…")
+
+    // 1. Temporarily disable CSS transitions so fit-mode snap does not animate/zoom during capture
+    const styleTag = document.createElement("style")
+    styleTag.id = "capture-no-transitions"
+    styleTag.textContent = "* { transition: none !important; animation: none !important; }"
+    document.head.appendChild(styleTag)
+
+    const prevZoom = zoomMode
+
+    try {
+      // 2. Ensure device is fully fitted and centered inside view so bottom nav is never cut off
+      if (zoomMode !== "fit") {
+        setZoomMode("fit")
+      }
+
+      if (secondScreenRef.current) {
+        secondScreenRef.current.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior })
+      }
+
+      // Wait 2 animation frames so the layout renders without animation
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      await new Promise((r) => setTimeout(r, 60))
+
+      // 3. Reuse active media stream if available, otherwise prompt user once
+      let stream = activeStreamRef.current
+      const isStreamActive =
+        stream && stream.active && stream.getVideoTracks().some((t) => t.readyState === "live")
+
+      if (!isStreamActive) {
+        triggerToast("Select this tab in the browser prompt to start live capture...")
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: "browser",
+            width: { ideal: 3840, max: 3840 },
+            height: { ideal: 2160, max: 2160 },
+            frameRate: { ideal: 30 },
+          },
+          preferCurrentTab: true,
+          selfBrowserSurface: "include",
+          systemAudio: "exclude",
+        } as any)
+
+        activeStreamRef.current = stream
+
+        stream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            if (activeStreamRef.current === stream) {
+              activeStreamRef.current = null
+            }
+          }
+        })
+      }
+
+      const video = document.createElement("video")
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+      await video.play()
+
+      // Brief delay to ensure stable video frame buffer
+      await new Promise((r) => setTimeout(r, 60))
+
+      // 4. Exact screen dimensions of the device selected
+      const deviceW = viewportWidth
+      const deviceH = viewportHeight
+
+      // Crop coordinates in device space (0 to viewportWidth, 0 to viewportHeight)
+      const box =
+        !forceFullScreen && isAreaSelectionActive && cropBox
+          ? cropBox
+          : { x: 0, y: 0, width: deviceW, height: deviceH }
+
+      // 5. Find the exact element to capture
+      const targetEl =
+        captureMode === "framed-device"
+          ? (secondScreenRef.current?.closest(".device-chassis") as HTMLElement) ||
+            secondScreenRef.current?.parentElement ||
+            secondScreenRef.current ||
+            iframeRef.current
+          : iframeRef.current || secondScreenRef.current
+
+      if (!targetEl) {
+        throw new Error("Could not find live preview element")
+      }
+      const targetRect = targetEl.getBoundingClientRect()
+
+      // 6. Temporarily hide fake frame overlays (status bar, dynamic island, home bar)
+      // and selection overlay if clean-app mode is active
+      const overlayEls = document.querySelectorAll(
+        captureMode === "clean-app"
+          ? ".device-frame-overlay, #area-selection-overlay-root"
+          : "#area-selection-overlay-root"
+      )
+      overlayEls.forEach((el) => ((el as HTMLElement).style.opacity = "0"))
+
+      const screenContainer = document.querySelector("[data-device-screen='true']") as HTMLElement | null
+      const prevRadius = screenContainer?.style.borderRadius
+      if (screenContainer && captureMode === "clean-app") screenContainer.style.borderRadius = "0px"
+
+      await new Promise((r) => requestAnimationFrame(r))
+      await new Promise((r) => setTimeout(r, 40))
+
+      // 7. Calculate exact coordinates within the stream accounting for tab letterboxing
+      const tabW = window.innerWidth
+      const tabH = window.innerHeight
+      const videoW = video.videoWidth
+      const videoH = video.videoHeight
+
+      // Uniform fit scale and offset applied by browser when streaming tab into video track
+      const fitScale = Math.min(videoW / tabW, videoH / tabH)
+      const renderW = tabW * fitScale
+      const renderH = tabH * fitScale
+      const offsetX = (videoW - renderW) / 2
+      const offsetY = (videoH - renderH) / 2
+
+      // Map device crop coordinates to rendered screen pixels within targetRect
+      const screenScaleX = targetRect.width / deviceW
+      const screenScaleY = targetRect.height / deviceH
+
+      const screenX = targetRect.left + box.x * screenScaleX
+      const screenY = targetRect.top + box.y * screenScaleY
+      const screenW = box.width * screenScaleX
+      const screenH = box.height * screenScaleY
+
+      // Precise pixel coordinates inside video buffer with letterbox offset compensation
+      const sx = Math.max(0, Math.min(Math.round(offsetX + screenX * fitScale), videoW - 1))
+      const sy = Math.max(0, Math.min(Math.round(offsetY + screenY * fitScale), videoH - 1))
+      const sWidth = Math.max(1, Math.min(Math.round(screenW * fitScale), videoW - sx))
+      const sHeight = Math.max(1, Math.min(Math.round(screenH * fitScale), videoH - sy))
+
+      // 8. Output canvas matching the EXACT dimensions of the selected device / selection!
+      const destW = Math.round(box.width)
+      const destH = Math.round(box.height)
+
+      const canvas = document.createElement("canvas")
+      canvas.width = destW
+      canvas.height = destH
+      const ctx = canvas.getContext("2d")
+      if (!ctx) throw new Error("Could not initialize canvas context")
+
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = "high"
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, destW, destH)
+
+      // Restore overlays and border radius
+      overlayEls.forEach((el) => ((el as HTMLElement).style.opacity = "1"))
+      if (screenContainer && prevRadius !== undefined) screenContainer.style.borderRadius = prevRadius
+
+      const dataUrl = canvas.toDataURL("image/png", 1.0)
+
+      // 9. Convert to blob and upload directly to Supabase storage
+      let finalUrl = dataUrl
+      try {
+        const res = await fetch(dataUrl)
+        const blob = await res.blob()
+        const file = new File([blob], `live-capture-${Date.now()}.png`, { type: "image/png" })
+
+        const supabase = createClient()
+        const filePath = `workflows/${currentWorkflow.id}/live-capture-${Date.now()}.png`
+
+        const { error: uploadError } = await supabase.storage
+          .from("designs")
+          .upload(filePath, file, {
+            contentType: "image/png",
+            cacheControl: "3600",
+            upsert: false,
+          })
+
+        if (!uploadError) {
+          const { data: pubData } = supabase.storage.from("designs").getPublicUrl(filePath)
+          finalUrl = `${pubData.publicUrl}?v=${Date.now()}`
+        }
+      } catch (uploadErr) {
+        console.warn("[DEBUG] Storage upload notice:", uploadErr)
+      }
+
+      // Automatically save to Design B in workflow
+      if (onUpdateField) {
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+      }
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${destW} × ${destH}`,
+        url: finalUrl,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+      setCapturedResultUrl(finalUrl)
+      setIsResultModalOpen(true)
+      setIsAreaSelectionActive(false)
+      setIsLiveCanvas(false)
+
+      triggerToast(
+        box.width < deviceW || box.height < deviceH
+          ? `Area captured & saved to Design B! (${destW} × ${destH}px)`
+          : `Live screen captured & saved to Design B! (${destW} × ${destH}px)`
+      )
+    } catch (err: any) {
+      console.error("Live capture error:", err)
+      if (err.name !== "NotAllowedError") {
+        triggerToast(`Capture error: ${err?.message || "Unknown error"}`)
+      }
+    } finally {
+      document.getElementById("capture-no-transitions")?.remove()
+      if (prevZoom !== "fit") {
+        setZoomMode(prevZoom)
+      }
+      setIsCapturing(false)
+    }
+  }
+
+  const handleSaveCapturedResult = async () => {
+    if (!capturedResultUrl || !currentWorkflow) return
+    setIsSavingResult(true)
+    try {
+      if (capturedResultUrl.startsWith("http") && !capturedResultUrl.startsWith("blob:")) {
+        if (onUpdateField) {
+          await onUpdateField(currentWorkflow.id, "designB", capturedResultUrl)
+        }
+        setIsResultModalOpen(false)
+        triggerToast("Screenshot saved to Design B!")
+        return
+      }
+
+      const res = await fetch(capturedResultUrl)
+      const blob = await res.blob()
+      const file = new File([blob], `live-snip-${Date.now()}.png`, { type: "image/png" })
+
+      const supabase = createClient()
+      const filePath = `workflows/${currentWorkflow.id}/live-snip-${Date.now()}.png`
+
+      const { error: uploadError } = await supabase.storage
+        .from("designs")
+        .upload(filePath, file, {
+          contentType: "image/png",
+          cacheControl: "3600",
+          upsert: false,
+        })
+
+      if (uploadError) throw uploadError
+
+      const { data } = supabase.storage.from("designs").getPublicUrl(filePath)
+      const finalUrl = `${data.publicUrl}?v=${Date.now()}`
+
+      if (onUpdateField) {
+        await onUpdateField(currentWorkflow.id, "designB", finalUrl)
+      }
+
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${viewportWidth} × ${viewportHeight}`,
+        url: finalUrl,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev) => [newCapture, ...prev])
+
+      setIsResultModalOpen(false)
+      triggerToast("Screenshot saved to Design B!")
+    } catch (err: any) {
+      console.error("Save capture error:", err)
+      triggerToast(`Save failed: ${err?.message || "Unknown error"}`)
+    } finally {
+      setIsSavingResult(false)
+    }
+  }
+
+  const handleBrowserCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isAddingAnnotation) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 100)
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 100)
+    setActiveAnnotationId(null)
+    setNewAnnotationCoords({ x, y })
+    setAnnotationDraft({ title: "", expected: "", actual: "", severity: "Medium" })
+  }
+
+  const handleSaveAnnotation = () => {
+    if (!annotationDraft.title.trim() || !newAnnotationCoords) return
+    const newId = annotations.length > 0 ? Math.max(...annotations.map((a) => a.id)) + 1 : 1
+    const createdItem: Annotation = {
+      id: newId,
+      x: newAnnotationCoords.x,
+      y: newAnnotationCoords.y,
+      title: annotationDraft.title,
+      expected: annotationDraft.expected || "Matches Figma token specification exactly.",
+      actual: annotationDraft.actual || "Differs from design spec.",
+      severity: annotationDraft.severity,
+      resolved: false,
+      author: userRole === "freelancer" ? "Developer" : isOwner ? "Project Owner" : "QA Reviewer",
+      createdAt: "Just now",
+    }
+    setAnnotations((prev) => [...prev, createdItem])
+    setActiveAnnotationId(newId)
+    setNewAnnotationCoords(null)
+    setIsAddingAnnotation(false)
+    triggerToast(`Marker #${String(newId).padStart(2, "0")} created`)
+  }
+
+  // Global Escape key closes any open rail/modal — keyboard parity for mouse users
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNewAnnotationCoords(null)
+        setActiveAnnotationId(null)
+        setIsAddingAnnotation(false)
+        setShowInfoModal(false)
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
+
+  return (
+    <div className="flex flex-col h-full w-full bg-slate-100 dark:bg-[#0b0c10] text-slate-800 dark:text-[#e2e4ea] select-none font-sans overflow-hidden transition-colors duration-150 relative">
+      {/* ================= TOP HEADER: identity + primary mode switch only (Hidden in Fullscreen) ================= */}
+      {!isFullscreen && (
+        <header className="min-h-12 h-auto border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 z-20 shrink-0 transition-colors overflow-visible">
+        
+        {/* Left: workflow selector and navigation - Hidden on mobile */}
+        <div className="hidden md:flex items-center gap-1.5 sm:gap-2 order-0 shrink-0">
+          {/* Back to dashboard button */}
+          {onNavigateView && (
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && onNavigateView) {
+                  onNavigateView("dashboard")
+                }
+              }}
+              className="p-1.5 rounded-lg text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+              title="Back to dashboard"
+              aria-label="Back to dashboard"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Workflow selector dropdown */}
+          <div className="relative">
+            <select
+              value={activeWorkflowId}
+              onChange={(e) => handleSelectWorkflow(e.target.value)}
+              className="appearance-none bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-3 py-1.5 pr-8 text-xs sm:text-sm font-medium text-slate-800 dark:text-[#d1d5db] cursor-pointer hover:bg-slate-50 dark:hover:bg-[#202430] transition shadow-xs max-w-[140px] sm:max-w-[200px]"
+              aria-label="Select workflow"
+            >
+              {workflows.map((wf, idx) => (
+                <option key={wf.id} value={wf.id}>
+                  {wf.title || `Screen ${idx + 1}`}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 dark:text-[#6b7280] pointer-events-none" />
+          </div>
+
+          {/* Workflow navigation arrows - Hidden on mobile */}
+          <div className="hidden sm:flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md overflow-hidden shadow-xs">
+            <button
+              type="button"
+              onClick={handlePrevWorkflow}
+              disabled={currentWorkflowIndex === 0}
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Previous workflow"
+              aria-label="Previous workflow"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
+            <button
+              type="button"
+              onClick={handleNextWorkflow}
+              disabled={currentWorkflowIndex >= workflows.length - 1}
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Next workflow"
+              aria-label="Next workflow"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Center: primary comparison mode */}
+        <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-0.5 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
+          <ToolbarButton active={compareMode === "side-by-side"} onClick={() => setCompareMode("side-by-side")} title="Compare designs side by side" variant="primary">
+            <span className="sm:hidden">Side</span>
+            <span className="hidden sm:inline">Side by Side</span>
+          </ToolbarButton>
+          <ToolbarButton
+            active={compareMode === "overlay"}
+            onClick={() => {
+              setCompareMode("overlay")
+              setShowOptions(true)
+            }}
+            title="Overlay design on top of the live app"
+            variant="primary"
+          >
+            Overlay
+          </ToolbarButton>
+          <ToolbarButton
+            active={compareMode === "difference"}
+            onClick={() => {
+              setCompareMode("difference")
+              setShowOptions(true)
+            }}
+            title="Highlight pixel differences"
+            variant="primary"
+          >
+            <span className="sm:hidden">Diff</span>
+            <span className="hidden sm:inline">Difference</span>
+          </ToolbarButton>
+
+          {/* Hide/Show Left View Button */}
+          {compareMode === "side-by-side" && (
+            <button
+              type="button"
+              onClick={() => toggleHideLeftView()}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+                isLeftViewHidden
+                  ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                  : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
+              }`}
+              title={isLeftViewHidden ? "Show Left Spec View" : "Hide Left View & Expand Screen to Full Width"}
+            >
+              {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+              <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
+            </button>
+          )}
+        </div>
+
+        {/* Right: Options + Capture + Fullscreen */}
+        <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0 order-2 ml-auto">
+          {/* Options toggle with checkbox */}
+          <label
+            className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer select-none focus-within:ring-2 focus-within:ring-indigo-400 ${showOptions
+                ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-600/20 dark:border-indigo-500/60 dark:text-indigo-300 ring-1 ring-indigo-500/20"
+                : "bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-[#e2e4ea] shadow-xs"
+              }`}
+            title="Toggle options panel"
+          >
+            <input
+              type="checkbox"
+              checked={showOptions}
+              onChange={(e) => setShowOptions(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-indigo-600 cursor-pointer border-slate-300 dark:border-[#272b38] bg-white dark:bg-[#0d0e14]"
+              aria-label="Toggle options visibility"
+            />
+            <span className="hidden sm:inline">Options</span>
+          </label>
+
+          {/* Primary Live Capture */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isAreaSelectionActive && selectionBoxRef.current) {
+                const style = window.getComputedStyle(selectionBoxRef.current)
+                const left = parseFloat(style.left) || 0
+                const top = parseFloat(style.top) || 0
+                const width = parseFloat(style.width) || viewportWidth
+                const height = parseFloat(style.height) || viewportHeight
+                handleLiveScreenCapture(false, { x: left, y: top, width, height })
+              } else {
+                handleLiveScreenCapture(false)
+              }
+            }}
+            disabled={isCapturing || isSavingScreenshot}
+            className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white rounded-lg flex items-center gap-1.5 transition shadow-xs cursor-pointer disabled:opacity-50 ${isAreaSelectionActive
+                ? "bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400 shadow-emerald-500/20"
+                : "bg-indigo-600 hover:bg-indigo-500"
+              }`}
+            title={isAreaSelectionActive ? "Capture the selected area from live screen" : "Capture full app screen (clean, full height including bottom navigation)"}
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isCapturing ? "Capturing…" : isAreaSelectionActive ? "Capture Area" : "Capture App Screen"}</span>
+          </button>
+
+          {/* Upload exact screenshot button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSavingScreenshot}
+            className="hidden sm:flex p-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg items-center justify-center transition shadow-xs cursor-pointer disabled:opacity-50"
+            title="Upload exact screenshot image"
+            aria-label="Upload exact screenshot image"
+          >
+            <Upload className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Collapse / Hide Total Header Arrow Button */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="hidden sm:flex p-1.5 text-xs font-semibold rounded-lg items-center gap-1 transition shadow-xs cursor-pointer bg-slate-100 hover:bg-slate-200 dark:bg-[#181a22] dark:hover:bg-[#202430] border border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white"
+            title="Hide Total Header (Fullscreen Canvas)"
+            aria-label="Hide Total Header"
+          >
+            <ChevronUp className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="hidden xl:inline text-[10px]">Hide Header</span>
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={handleExactScreenshotSelect}
+          />
+        </div>
+      </header>
+      )}
+
+      {/* ================= OPTIONS PANEL: all secondary controls live here now (Hidden in Fullscreen) ================= */}
+      {!isFullscreen && showOptions && (
+        <div className="border-b border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#14161f] px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-nowrap sm:flex-wrap items-center gap-x-2 sm:gap-x-5 gap-y-1 text-xs z-20 shrink-0 transition-colors overflow-x-auto sm:overflow-visible custom-scrollbar">
+          {/* Device preset */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="hidden sm:inline text-slate-600 dark:text-[#8e95a5] text-[11px] font-medium">
+              Device
+            </span>
+            <select
+              value={isCustomPreset ? "custom" : selectedPresetId || ""}
+              onChange={(e) => {
+                if (e.target.value === "custom") {
+                  setIsCustomPreset(true)
+                  setSelectedPresetId(null)
+                } else {
+                  const p = EXTENDED_DEVICE_PRESETS.find((x) => x.id === e.target.value)
+                  if (p) handlePresetSelect(p)
+                }
+              }}
+              className="bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs text-slate-800 dark:text-[#d1d5db] font-medium cursor-pointer max-w-[220px] sm:max-w-[260px] shadow-xs transition-colors"
+            >
+              {(
+                [
+                  "Latest Flagships",
+                  "Notch Era",
+                  "Old & Classic Phones",
+                  "Tablets",
+                  "Laptops",
+                  "Desktops",
+                ] as const
+              ).map((group) => (
+                <optgroup key={group} label={group}>
+                  {EXTENDED_DEVICE_PRESETS.filter((p) => p.group === group).map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name} ({preset.width} × {preset.height})
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+              <option value="custom">Custom Dimensions…</option>
+            </select>
+            {isCustomPreset && (
+              <div className="flex items-center gap-1.5 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2 py-1 shadow-xs transition-colors">
+                <label className="text-slate-500 dark:text-[#6b7280] text-[11px]" htmlFor="viewport-w">W</label>
+                <input
+                  id="viewport-w"
+                  type="number"
+                  value={viewportWidth}
+                  onChange={(e) => handleCustomDimensionChange(e.target.value, viewportHeight)}
+                  className="w-14 bg-transparent border-b border-slate-300 dark:border-[#3b4254] text-center font-mono text-[11px] text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                />
+                <span className="text-slate-500 dark:text-[#6b7280] text-[11px]">×</span>
+                <label className="text-slate-500 dark:text-[#6b7280] text-[11px]" htmlFor="viewport-h">H</label>
+                <input
+                  id="viewport-h"
+                  type="number"
+                  value={viewportHeight}
+                  onChange={(e) => handleCustomDimensionChange(viewportWidth, e.target.value)}
+                  className="w-14 bg-transparent border-b border-slate-300 dark:border-[#3b4254] text-center font-mono text-[11px] text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Device Frame & Finish Controls */}
+          {showDeviceFrame && currentFrameType !== "none" && (
+            <div className="flex items-center gap-1.5 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2 py-1 shadow-xs transition-colors">
+              <span className="text-slate-600 dark:text-[#8e95a5] text-[11px] font-medium">Finish:</span>
+              <select
+                value={frameFinish}
+                onChange={(e) => setFrameFinish(e.target.value as FrameFinish)}
+                className="bg-transparent text-xs text-slate-800 dark:text-[#d1d5db] font-medium cursor-pointer focus:outline-none"
+                aria-label="Device frame finish"
+              >
+                <option value="titanium" className="bg-white dark:bg-[#181a20] text-slate-900 dark:text-white">Titanium</option>
+                <option value="silver" className="bg-white dark:bg-[#181a20] text-slate-900 dark:text-white">Silver</option>
+                <option value="gold" className="bg-white dark:bg-[#181a20] text-slate-900 dark:text-white">Gold</option>
+                <option value="midnight" className="bg-white dark:bg-[#181a20] text-slate-900 dark:text-white">Midnight</option>
+              </select>
+            </div>
+          )}
+
+          {/* Zoom */}
+          <div className="flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-lg p-0.5 shadow-xs transition-colors">
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode("fit")
+                triggerToast("Auto-fitted both screens to view")
+              }}
+              className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${zoomMode === "fit" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                }`}
+            >
+              Fit
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode("manual")
+                setManualZoom(100)
+                triggerToast("Zoom set to 100% (Actual Size)")
+              }}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${
+                zoomMode === "manual" && manualZoom === 100
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+              }`}
+              title="100% Actual Size"
+            >
+              100%
+            </button>
+            <div className="h-3 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5" />
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode("manual")
+                setManualZoom(Math.max(25, Math.round(currentScale * 100) - 10))
+              }}
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono text-[11px] px-1 text-slate-700 dark:text-[#c5c9d5] min-w-[38px] text-center font-medium">
+              {Math.round(currentScale * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setZoomMode("manual")
+                setManualZoom(Math.min(200, Math.round(currentScale * 100) + 10))
+              }}
+              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Split ratio — moved here from header, only relevant in side-by-side */}
+          {compareMode === "side-by-side" && (
+            <div className="flex items-center gap-1 bg-white dark:bg-[#181a22] p-0.5 rounded border border-slate-300 dark:border-[#272b38] text-[11px] shadow-xs transition-colors">
+              {[40, 50, 60].map((ratio) => (
+                <button
+                  key={ratio}
+                  type="button"
+                  onClick={() => setSplitRatio(ratio)}
+                  className={`px-2 py-1 rounded transition cursor-pointer ${splitRatio === ratio ? "bg-slate-200 dark:bg-[#2b3040] text-slate-900 dark:text-white font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
+                >
+                  {ratio}/{100 - ratio}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setIsSwapped(!isSwapped)}
+                className={`px-2 py-1 rounded transition flex items-center gap-1 border-l border-slate-300 dark:border-[#272b38] cursor-pointer ${isSwapped ? "text-indigo-600 dark:text-indigo-400 font-semibold" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                title="Swap left and right panels"
+              >
+                <SplitSquareVertical className="w-3 h-3" />
+                Swap
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowGrid(!showGrid)}
+            aria-pressed={showGrid}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showGrid ? "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
+          >
+            Redlines
+          </button>
+
+          {/* Snip Area Selection Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!isLiveCanvas) setIsLiveCanvas(true)
+              setIsAreaSelectionActive((prev) => !prev)
+            }}
+            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${isAreaSelectionActive
+                ? "bg-indigo-600 border-indigo-400 text-white shadow-indigo-500/25 ring-1 ring-indigo-400"
+                : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+              }`}
+            title={isAreaSelectionActive ? "Disable selection overlay" : "Enable selection area on live screen (drag & resize to crop)"}
+          >
+            <Crop className="w-3.5 h-3.5" />
+            <span>{isAreaSelectionActive ? "Disable Selection" : "Selection Area"}</span>
+          </button>
+
+          {compareMode !== "side-by-side" && (
+            <div className="flex items-center gap-2 bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-2.5 py-1 shadow-xs transition-colors">
+              <label htmlFor="blend-slider" className="text-[11px] text-slate-600 dark:text-[#8e95a5]">
+                {compareMode === "overlay" ? "Blend" : "Diff"}
+              </label>
+              <input
+                id="blend-slider"
+                type="range"
+                min="0"
+                max="100"
+                value={overlayOpacity}
+                onChange={(e) => setOverlayOpacity(Number(e.target.value))}
+                className="w-20 h-1.5 bg-slate-200 dark:bg-[#2a2f3f] rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              />
+              <span className="font-mono text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 min-w-[32px] text-right">{overlayOpacity}%</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================= MAIN WORKSPACE ================= */}
+      <div className="flex-1 flex overflow-hidden relative">
+        <main ref={containerRef} className="flex-1 flex relative overflow-hidden bg-slate-200/80 dark:bg-[#090a0e] transition-colors">
+
+          <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
+            {/* PANEL A: FIGMA SPEC */}
+            <section
+              style={{ width: isLeftViewHidden ? "0%" : (mobileComparePane === "design" ? "100%" : `${splitRatio}%`) }}
+              className={`${isLeftViewHidden ? "hidden" : (mobileComparePane === "live" ? "hidden sm:flex" : "flex")} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
+            >
+              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {/* Dashboard Link - Only in fullscreen when top header is hidden */}
+                  {isFullscreen && onNavigateView && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== "undefined" && onNavigateView) {
+                          onNavigateView("dashboard")
+                        }
+                      }}
+                      className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
+                      title="Return to Dashboard"
+                    >
+                      <FolderKanban className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  {/* Screen Switcher - Show only on mobile or in fullscreen mode when top header dropdown is hidden */}
+                  <div className={`${isFullscreen ? "flex" : "flex md:hidden"} items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0`}>
+                    <button
+                      type="button"
+                      onClick={handlePrevWorkflow}
+                      disabled={currentWorkflowIndex <= 0}
+                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      title="Previous screen (←)"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                    </button>
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#a259ff] mx-0.5 shrink-0" />
+                    <span
+                      className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 px-1 max-w-[120px] sm:max-w-[160px] truncate"
+                      title={currentWorkflow?.title || "Screen"}
+                    >
+                      {currentWorkflow?.title || "Screen"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleNextWorkflow}
+                      disabled={currentWorkflowIndex >= workflows.length - 1}
+                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      title="Next screen (→)"
+                    >
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {/* Duplicate Screen Button */}
+                  {currentWorkflow && (
+                    <button
+                      type="button"
+                      onClick={handleDuplicateScreen}
+                      disabled={isDuplicating}
+                      className="hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                      title="Duplicate this screen"
+                    >
+                      <CopyPlus className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                      <span>{isDuplicating ? "Duplicating…" : "Duplicate"}</span>
+                    </button>
+                  )}
+
+                  {/* Copy Image to Clipboard */}
+                  {currentWorkflow?.designA && (
+                    <button
+                      type="button"
+                      onClick={handleCopyFigmaImage}
+                      className="hidden sm:flex p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white items-center transition cursor-pointer shadow-xs shrink-0"
+                      title="Copy Figma spec image to clipboard"
+                    >
+                      {copiedFigma ? (
+                        <Check className="w-3 h-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3 h-3 text-slate-500 dark:text-[#8e95a5]" />
+                      )}
+                    </button>
+                  )}
+
+                  <div className="hidden sm:block h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
+
+                  {/* Enable Frame Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowDeviceFrame(!showDeviceFrame)}
+                    className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                      showDeviceFrame
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                        : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
+                    }`}
+                    title="Toggle phone device frame"
+                  >
+                    <Smartphone className="w-3 h-3" />
+                    <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
+                  </button>
+                </div>
+
+                <div className="hidden sm:block font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
+                  {viewportWidth}×{viewportHeight}px
+                </div>
+              </div>
+
+              <div className={`flex-1 relative p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#0c0d12] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
+                <DeviceFrame
+                  frameType="none"
+                  finish={frameFinish}
+                  width={viewportWidth}
+                  height={viewportHeight}
+                  scale={currentScale}
+                  showFrame={false}
+                  showStatusBar={false}
+                >
+                  {showGrid && (
+                    <div className="absolute inset-0 pointer-events-none z-20 border border-indigo-500/30">
+                      <div className="absolute top-4 left-4 text-[9px] font-mono text-indigo-400/80 bg-indigo-950/70 px-1 rounded">padding: 32px</div>
+                      <div className="absolute top-0 bottom-0 left-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                      <div className="absolute top-0 bottom-0 right-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                    </div>
+                  )}
+                  {currentWorkflow?.designA ? (
+                    <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={currentWorkflow.designA}
+                        alt="Figma spec design"
+                        className="w-full h-full object-contain select-none pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                        style={{ imageRendering: "-webkit-optimize-contrast" }}
+                      />
+                    </div>
+                  ) : (
+                    <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
+                  )}
+                </DeviceFrame>
+              </div>
+            </section>
+
+            {!isLeftViewHidden && (
+              <div
+                onMouseDown={() => setIsDraggingSplit(true)}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize split panels"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft") setSplitRatio((r) => Math.max(20, r - 2))
+                  if (e.key === "ArrowRight") setSplitRatio((r) => Math.min(80, r + 2))
+                }}
+                className="w-2.5 bg-slate-200 dark:bg-[#14161f] hover:bg-indigo-600 focus-visible:bg-indigo-600 transition-colors cursor-col-resize flex items-center justify-center relative z-20 shrink-0 border-x border-slate-300 dark:border-[#1e222e] focus:outline-none"
+              >
+                <div className="h-8 w-1 bg-slate-400 dark:bg-[#373d50] rounded-full" />
+              </div>
+            )}
+
+            {/* PANEL B: LIVE INTERACTIVE BROWSER */}
+            <section
+              style={{ width: isLeftViewHidden || mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
+              className={`${!isLeftViewHidden && mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors flex-1`}
+            >
+              {/* Sleek Browser Toolbar */}
+              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors overflow-x-auto custom-scrollbar">
+                {/* Navigation Buttons */}
+                <div className="hidden sm:flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={handleGoBack}
+                    disabled={navIndex === 0}
+                    className={`p-1 rounded transition ${navIndex === 0
+                        ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
+                        : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
+                      }`}
+                    title="Back"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGoForward}
+                    disabled={navIndex >= navHistory.length - 1}
+                    className={`p-1 rounded transition ${navIndex >= navHistory.length - 1
+                        ? "text-slate-300 dark:text-[#3e4452] cursor-not-allowed"
+                        : "text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] cursor-pointer"
+                      }`}
+                    title="Forward"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+                    title="Reload Page"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Address Bar Container */}
+                <div className="flex-1 min-w-[120px] flex items-center bg-slate-50 dark:bg-[#090a0f] border border-slate-300 dark:border-[#222736] focus-within:border-indigo-500 rounded px-2 py-0.5 text-xs transition shadow-xs">
+                  <Lock className="w-3 h-3 text-emerald-500 dark:text-emerald-400 mr-1.5 shrink-0" />
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        navigateTo(urlInput)
+                      }
+                    }}
+                    placeholder="Type port (e.g. 8081) or URL..."
+                    className="bg-transparent w-full text-slate-900 dark:text-[#e2e4ea] focus:outline-none font-mono text-[11px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      navigateTo(urlInput)
+                    }}
+                    className="ml-1 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-700/50 rounded transition cursor-pointer"
+                  >
+                    Go
+                  </button>
+                </div>
+
+                {/* Port Quick Switch */}
+                <div className="hidden xl:flex items-center gap-1 font-mono text-[10px]">
+                  {["8082", "8081", "5173", "8080", "3001"].map((port) => (
+                    <button
+                      key={port}
+                      type="button"
+                      onClick={() => navigateTo(port)}
+                      className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${currentUrl.includes(`:${port}`)
+                          ? "bg-indigo-100 dark:bg-indigo-600/30 border-indigo-300 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-300 font-bold"
+                          : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                    >
+                      :{port}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Open in new tab */}
+                <a
+                  href={currentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hidden sm:block p-1 text-slate-600 dark:text-[#6b7280] hover:text-slate-900 dark:hover:text-white rounded hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer"
+                  title="Open live URL in new tab"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+
+                {/* Auth Credentials Modal Trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsAuthModalOpen(true)}
+                  className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-medium border items-center gap-1 transition cursor-pointer shrink-0 ${authConfig.username || authConfig.cookie || authConfig.token
+                      ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
+                      : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
+                  title="Configure App Credentials for auto-login & screenshot capture"
+                >
+                  <Key className="w-3 h-3" />
+                  <span>Credentials</span>
+                  {(authConfig.username || authConfig.cookie || authConfig.token) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  )}
+                </button>
+
+                {/* Mode Toggle: Live URL view vs Captured Screenshot */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isLiveCanvas
+                    setIsLiveCanvas(next)
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("simulator_is_live_mode", String(next))
+                    }
+                    triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+                  }}
+                  className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border items-center gap-1 transition cursor-pointer shrink-0 ${
+                    isLiveCanvas
+                      ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-600/50 text-purple-700 dark:text-purple-300"
+                      : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-600/50 text-emerald-700 dark:text-emerald-300"
+                  }`}
+                  title={isLiveCanvas ? "Switch to saved screenshot" : "Switch to interactive live preview"}
+                >
+                  {isLiveCanvas ? <Globe className="w-3 h-3" /> : <Camera className="w-3 h-3" />}
+                  <span>{isLiveCanvas ? "Live App" : "Screenshot"}</span>
+                </button>
+
+                {/* Capture button in Panel B for fullscreen mode */}
+                {isFullscreen && (
+                  <button
+                    type="button"
+                    onClick={() => handleLiveScreenCapture(false)}
+                    disabled={isCapturing || isSavingScreenshot}
+                    className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                    title="Capture App Screen"
+                  >
+                    <Camera className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div
+                onClick={handleBrowserCanvasClick}
+                className={`flex-1 p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#07080b] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] relative select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"} ${isAddingAnnotation ? "cursor-crosshair" : "cursor-default"}`}
+              >
+                <DeviceFrame
+                  frameType={currentFrameType}
+                  finish={frameFinish}
+                  width={viewportWidth}
+                  height={viewportHeight}
+                  scale={currentScale}
+                  showFrame={showDeviceFrame}
+                  showStatusBar={showDeviceStatusBar}
+                  screenRef={secondScreenRef}
+                >
+                  {/* The Live Iframe is kept in tree unless an AI bot screen screenshot is being shown */}
+                  <iframe
+                    ref={iframeRef}
+                    src={currentUrl}
+                    title="Live App Preview"
+                    className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
+                    style={
+                      isLiveCanvas &&
+                      currentWorkflow?.id !== "live-bot-action-feed" &&
+                      !currentWorkflow?.id?.startsWith("action-step-") &&
+                      !currentWorkflow?.id?.startsWith("bot-screen-")
+                        ? {}
+                        : {
+                            position: "absolute",
+                            opacity: 0,
+                            pointerEvents: "none",
+                            zIndex: -1,
+                          }
+                    }
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                    allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
+                  />
+
+                  {/* Area Selection Box Overlay for live screen */}
+                  {isLiveCanvas &&
+                    currentWorkflow?.id !== "live-bot-action-feed" &&
+                    !currentWorkflow?.id?.startsWith("action-step-") &&
+                    !currentWorkflow?.id?.startsWith("bot-screen-") && (
+                      <AreaSelectionOverlay
+                        isActive={isAreaSelectionActive}
+                        containerWidth={viewportWidth}
+                        containerHeight={viewportHeight}
+                        scale={currentScale}
+                        selectionBoxRef={selectionBoxRef}
+                        onCapture={(box) => handleLiveScreenCapture(false, box)}
+                        onCaptureFullScreen={() => handleLiveScreenCapture(true)}
+                        onClose={() => setIsAreaSelectionActive(false)}
+                        isCapturing={isCapturing}
+                      />
+                    )}
+
+                  {/* The Saved App Screenshot View */}
+                  {(!isLiveCanvas ||
+                    currentWorkflow?.id === "live-bot-action-feed" ||
+                    currentWorkflow?.id?.startsWith("action-step-") ||
+                    currentWorkflow?.id?.startsWith("bot-screen-")) && (
+                    <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
+                      {currentWorkflow?.designB ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={currentWorkflow.designB}
+                            alt="Saved app screenshot"
+                            className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                            style={{ imageRendering: "-webkit-optimize-contrast" }}
+                          />
+                          <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
+                        </>
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                          No screenshot saved. Click &quot;Capture Live Screen&quot; to capture and save a screenshot.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </DeviceFrame>
+              </div>
+            </section>
+          </div>
+
+          {compareMode !== "side-by-side" && (
+            <div className={`w-full h-full flex items-center justify-center p-4 bg-slate-200/50 dark:bg-[#090a0e] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
+              <DeviceFrame
+                frameType={currentFrameType}
+                finish={frameFinish}
+                width={viewportWidth}
+                height={viewportHeight}
+                scale={currentScale}
+                showFrame={showDeviceFrame}
+                showStatusBar={showDeviceStatusBar}
+              >
+                <div className="absolute inset-0 z-10 select-none overflow-hidden bg-white dark:bg-[#0f1117] flex items-center justify-center">
+                  {currentWorkflow?.designA ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={currentWorkflow.designA}
+                      alt="Figma spec"
+                      className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                      style={{ imageRendering: "-webkit-optimize-contrast" }}
+                    />
+                  ) : (
+                    <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
+                  )}
+                </div>
+                <div
+                  style={{
+                    opacity: compareMode === "overlay" ? overlayOpacity / 100 : 1,
+                    mixBlendMode: compareMode === "difference" ? "difference" : "normal",
+                    filter: compareMode === "difference" ? "contrast(250%) invert(1)" : "none",
+                  }}
+                  className="absolute inset-0 z-20 select-none overflow-hidden bg-white dark:bg-[#0f1117] pointer-events-none transition-opacity duration-75 flex items-center justify-center"
+                >
+                  {currentWorkflow?.designB ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={currentWorkflow.designB}
+                      alt="Saved app screenshot"
+                      className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                      style={{ imageRendering: "-webkit-optimize-contrast" }}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
+                      No screenshot saved. Upload the exact reference image.
+                    </div>
+                  )}
+                </div>
+              </DeviceFrame>
+            </div>
+          )}
+        </main>
+
+        {/* ================= UNIFIED RIGHT RAIL: replaces two overlapping floating cards ================= */}
+        {railMode !== "none" && (
+          <aside className="w-96 shrink-0 border-l border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#141620] flex flex-col animate-in slide-in-from-right-4 duration-200 shadow-xl transition-colors" aria-live="polite">
+            {railMode === "new" && newAnnotationCoords && (
+              <div className="flex flex-col h-full">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-[#222736]">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-600 dark:text-amber-300 font-mono text-xs font-bold">NEW ISSUE</span>
+                    <span className="text-xs text-slate-500 dark:text-[#8e95a5]">X:{newAnnotationCoords.x}% Y:{newAnnotationCoords.y}%</span>
+                  </div>
+                  <button type="button" onClick={() => setNewAnnotationCoords(null)} aria-label="Cancel new issue" className="text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white p-1 rounded hover:bg-slate-100 dark:hover:bg-[#202434] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-3 overflow-y-auto flex-1">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-[#9ca3af] mb-1" htmlFor="issue-title">Issue summary</label>
+                    <input
+                      id="issue-title"
+                      type="text"
+                      placeholder="e.g. Button background token mismatch"
+                      value={annotationDraft.title}
+                      onChange={(e) => setAnnotationDraft({ ...annotationDraft, title: e.target.value })}
+                      className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#2b3042] rounded-lg px-3 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-[#9ca3af] mb-1" htmlFor="issue-expected">Expected (Figma)</label>
+                      <textarea
+                        id="issue-expected"
+                        rows={2}
+                        placeholder="#6366F1, 12px 24px pad"
+                        value={annotationDraft.expected}
+                        onChange={(e) => setAnnotationDraft({ ...annotationDraft, expected: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#2b3042] rounded-lg p-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 resize-none font-mono text-[10px] transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 dark:text-[#9ca3af] mb-1" htmlFor="issue-actual">Actual (Browser)</label>
+                      <textarea
+                        id="issue-actual"
+                        rows={2}
+                        placeholder="#3B82F6, 8px 16px pad"
+                        value={annotationDraft.actual}
+                        onChange={(e) => setAnnotationDraft({ ...annotationDraft, actual: e.target.value })}
+                        className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#2b3042] rounded-lg p-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 resize-none font-mono text-[10px] transition-colors"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] font-medium text-slate-600 dark:text-[#9ca3af] mb-1">Severity</span>
+                    <div className="grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Severity">
+                      {(["Low", "Medium", "High", "Blocker"] as const).map((sev) => (
+                        <button
+                          key={sev}
+                          type="button"
+                          role="radio"
+                          aria-checked={annotationDraft.severity === sev}
+                          onClick={() => setAnnotationDraft({ ...annotationDraft, severity: sev })}
+                          className={`py-1 text-[11px] rounded font-medium border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${annotationDraft.severity === sev
+                              ? sev === "Blocker" || sev === "High"
+                                ? "bg-rose-500/20 border-rose-500 text-rose-600 dark:text-rose-300 font-bold"
+                                : "bg-indigo-500/20 border-indigo-500 text-indigo-700 dark:text-indigo-300 font-bold"
+                              : "bg-slate-50 dark:bg-[#10121a] border-slate-300 dark:border-[#252a3a] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                            }`}
+                        >
+                          {sev}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4 border-t border-slate-200 dark:border-[#222736] flex justify-end gap-2">
+                  <button type="button" onClick={() => setNewAnnotationCoords(null)} className="px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202434] cursor-pointer">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAnnotation}
+                    disabled={!annotationDraft.title.trim()}
+                    className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition cursor-pointer shadow-sm"
+                  >
+                    Create Marker
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {railMode === "inspect" &&
+              (() => {
+                const item = annotations.find((a) => a.id === activeAnnotationId)
+                if (!item) return null
+                const styles = SEVERITY_STYLES[item.severity]
+                return (
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-[#222736]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-500/40">
+                          #{String(item.id).padStart(2, "0")}
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${styles.badge}`}>{item.severity}</span>
+                      </div>
+                      <button type="button" onClick={() => setActiveAnnotationId(null)} aria-label="Close issue detail" className="text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white p-1 rounded hover:bg-slate-100 dark:hover:bg-[#202434] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="p-5 space-y-3 overflow-y-auto flex-1">
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white leading-snug">{item.title}</h3>
+                      <div className="space-y-2 bg-slate-50 dark:bg-[#0c0d14] p-3 rounded-lg border border-slate-200 dark:border-[#202536] font-mono text-[11px] transition-colors">
+                        <div>
+                          <div className="text-[10px] text-indigo-600 dark:text-indigo-400 uppercase font-bold tracking-wider mb-0.5">Expected (Design)</div>
+                          <div className="text-slate-800 dark:text-[#c5c9d5]">{item.expected}</div>
+                        </div>
+                        <div className="border-t border-slate-200 dark:border-[#1c202e] pt-2">
+                          <div className="text-[10px] text-rose-600 dark:text-rose-400 uppercase font-bold tracking-wider mb-0.5">Actual (Code)</div>
+                          <div className="text-slate-800 dark:text-[#c5c9d5]">{item.actual}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-[#717888] pt-1">
+                        <span>By {item.author}</span>
+                        <span>{item.createdAt}</span>
+                      </div>
+                    </div>
+
+                    <div className="px-5 py-4 border-t border-slate-200 dark:border-[#222736] flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnnotations(annotations.map((a) => (a.id === item.id ? { ...a, resolved: !a.resolved } : a)))
+                          triggerToast(item.resolved ? "Issue reopened" : "Issue marked as resolved")
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${item.resolved ? "bg-emerald-50 dark:bg-emerald-600/20 border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "bg-slate-100 hover:bg-slate-200 dark:bg-[#1e2230] dark:hover:bg-[#282e42] text-slate-800 dark:text-white"
+                          }`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {item.resolved ? "Resolved" : "Mark Resolved"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnnotations(annotations.filter((a) => a.id !== item.id))
+                          setActiveAnnotationId(null)
+                          triggerToast("Issue deleted")
+                        }}
+                        className="text-xs text-slate-500 dark:text-[#8e95a5] hover:text-rose-600 dark:hover:text-rose-400 px-2 py-1 cursor-pointer flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
+          </aside>
+        )}
+      </div>
+
+
+      {/* Floating Fullscreen button below (Scoped inside workspace canvas, clear of activity rail and status bar) */}
+      <div className="absolute bottom-5 left-5 z-30 flex items-center gap-2 select-none">
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className={`px-3.5 py-2 rounded-xl shadow-2xl border transition-all cursor-pointer hover:scale-105 flex items-center gap-2 text-xs font-semibold backdrop-blur-md ${
+            isFullscreen
+              ? "bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-400 shadow-indigo-500/30"
+              : "bg-white/95 dark:bg-[#161822]/95 hover:bg-white dark:hover:bg-[#1f2330] text-slate-800 dark:text-slate-100 border-slate-300 dark:border-[#2b3040] shadow-slate-900/10 dark:shadow-black/50"
+          }`}
+          title={isFullscreen ? "Exit Fullscreen (Show Total Header - Esc)" : "Fullscreen (Hide Total Header)"}
+          aria-label="Toggle Fullscreen"
+        >
+          {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />}
+          <span>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
+        </button>
+      </div>
+
+      {/* ================= SCREEN INFO MODAL (Notes & Reason) ================= */}
+      {showInfoModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowInfoModal(false)}
+        >
+          <div
+            className="w-full max-w-xl bg-white dark:bg-[#111319] border border-slate-200 dark:border-[#272b38] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-150 transition-colors"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="info-modal-title"
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#141620] flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <Info className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 id="info-modal-title" className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                    {currentWorkflow?.title ? `Screen Info: ${currentWorkflow.title}` : "Screen Info"}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-[#8e95a5]">
+                    Screen {currentWorkflowIndex + 1} of {workflows.length}
+                  </p>
+                </div>
+              </div>
+
+              {/* Prev / Next controls inside modal */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md p-0.5 shadow-xs transition-colors">
+                  <button
+                    type="button"
+                    onClick={handlePrevWorkflow}
+                    disabled={currentWorkflowIndex <= 0}
+                    title="Previous screen"
+                    className="p-1 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] font-mono text-slate-600 dark:text-[#8e95a5] px-1.5">
+                    {currentWorkflowIndex + 1}/{workflows.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleNextWorkflow}
+                    disabled={currentWorkflowIndex >= workflows.length - 1}
+                    title="Next screen"
+                    className="p-1 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowInfoModal(false)}
+                  className="p-1.5 text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              {/* Section 1: Our Notes */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-[#e2e4ea]">
+                    <FileText className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
+                    <span>Our Notes</span>
+                  </label>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400/90 font-medium px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
+                    Developer Notes
+                  </span>
+                </div>
+
+                {canEdit || isOwner ? (
+                  <textarea
+                    value={notesDraft}
+                    onChange={(e) => setNotesDraft(e.target.value)}
+                    onBlur={() => {
+                      if (currentWorkflow && onUpdateField && notesDraft !== (currentWorkflow.ourNotes || "")) {
+                        onUpdateField(currentWorkflow.id, "ourNotes", notesDraft)
+                      }
+                    }}
+                    rows={4}
+                    placeholder="Developer notes about the design structure, constraints, or UX decisions..."
+                    className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#272b38] focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 rounded-lg p-3 text-xs text-slate-900 dark:text-[#e2e4ea] placeholder-slate-400 dark:placeholder-[#5a6275] focus:outline-none resize-none leading-relaxed transition"
+                  />
+                ) : (
+                  <div className="w-full min-h-[80px] bg-slate-50 dark:bg-[#0d0e14] border border-slate-200 dark:border-[#272b38] rounded-lg p-3 text-xs text-slate-800 dark:text-[#d1d5db] leading-relaxed whitespace-pre-wrap">
+                    {currentWorkflow?.ourNotes || (
+                      <span className="text-slate-400 dark:text-[#646c82] italic">No developer notes provided.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Reason for Final Changes */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-[#e2e4ea]">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+                    <span>Reason</span>
+                  </label>
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400/90 font-medium px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                    Designer Reasoning
+                  </span>
+                </div>
+
+                {canEdit || isOwner ? (
+                  <textarea
+                    value={reasonDraft}
+                    onChange={(e) => setReasonDraft(e.target.value)}
+                    onBlur={() => {
+                      if (currentWorkflow && onUpdateField && reasonDraft !== (currentWorkflow.reason || "")) {
+                        onUpdateField(currentWorkflow.id, "reason", reasonDraft)
+                      }
+                    }}
+                    rows={4}
+                    placeholder="Explain why changes were made or how feedback was addressed..."
+                    className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#272b38] focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 rounded-lg p-3 text-xs text-slate-900 dark:text-[#e2e4ea] placeholder-slate-400 dark:placeholder-[#5a6275] focus:outline-none resize-none leading-relaxed transition"
+                  />
+                ) : (
+                  <div className="w-full min-h-[80px] bg-slate-50 dark:bg-[#0d0e14] border border-slate-200 dark:border-[#272b38] rounded-lg p-3 text-xs text-slate-800 dark:text-[#d1d5db] leading-relaxed whitespace-pre-wrap">
+                    {currentWorkflow?.reason || (
+                      <span className="text-slate-400 dark:text-[#646c82] italic">No reason provided.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#141620] flex items-center justify-between shrink-0">
+              <div className="text-[11px] text-slate-500 dark:text-[#8e95a5]">
+                {isSavedRecently && (
+                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Changes saved
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowInfoModal(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#202430] transition cursor-pointer"
+                >
+                  Close
+                </button>
+                {(canEdit || isOwner) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveInfo}
+                    className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    Save Changes
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= CONFIRM SCREENSHOT MODAL (Manual File Upload Only) ================= */}
+      {pendingScreenshot && pendingScreenshotUrl ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6 animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-slate-900 border border-slate-800 p-5 text-white shadow-2xl">
+            <h2 className="text-base font-semibold">Confirm exact screenshot</h2>
+
+            <p className="mt-1 text-xs text-slate-400">
+              Check the image carefully before saving. This file will be uploaded unchanged.
+            </p>
+
+            <div className="mt-4 overflow-hidden rounded-lg bg-black border border-slate-800 flex items-center justify-center max-h-[60vh]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={pendingScreenshotUrl}
+                alt="Screenshot preview"
+                className="max-h-[60vh] w-full object-contain"
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelExactScreenshot}
+                disabled={isSavingScreenshot}
+                className="rounded-lg px-4 py-2 text-xs text-slate-300 hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={saveExactScreenshot}
+                disabled={isSavingScreenshot}
+                className="rounded-lg bg-lime-500 hover:bg-lime-400 px-4 py-2 text-xs font-bold text-black disabled:opacity-50 transition cursor-pointer flex items-center gap-1.5"
+              >
+                {isSavingScreenshot ? "Saving…" : "Save this screenshot"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ================= DEBUG PANEL ================= */}
+      {isDebugMode && (
+        <div className="h-32 border-t border-slate-200 dark:border-[#1e222d] bg-slate-50 dark:bg-[#0c0d12] px-4 py-3 overflow-y-auto shrink-0 z-20 transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-slate-700 dark:text-[#c5c9d5]">Debug Information</h3>
+            <button
+              type="button"
+              onClick={() => setDebugInfo({ errors: [] })}
+              className="text-[10px] px-2 py-1 rounded bg-slate-200 dark:bg-[#1a1c24] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 text-[11px]">
+            <div>
+              <div className="font-medium text-slate-600 dark:text-[#8e95a5] mb-1">Current State</div>
+              <div className="space-y-1">
+                <div>Workflow: <span className="font-mono">{currentWorkflow?.id?.substring(0, 8)}...</span></div>
+                <div>Capturing: <span className="font-mono">{isCapturing ? "Yes" : "No"}</span></div>
+                <div>Saving: <span className="font-mono">{isSavingScreenshot ? "Yes" : "No"}</span></div>
+                <div>Pending Screenshot: <span className="font-mono">{pendingScreenshot ? "Yes" : "No"}</span></div>
+                <div>onUpdateField: <span className="font-mono">{onUpdateField ? "Available" : "Missing"}</span></div>
+              </div>
+            </div>
+
+            <div>
+              <div className="font-medium text-slate-600 dark:text-[#8e95a5] mb-1">Recent Activity</div>
+              <div className="space-y-1">
+                {debugInfo.lastCapture && (
+                  <div>Last Capture: <span className="font-mono">{new Date(debugInfo.lastCapture).toLocaleTimeString()}</span></div>
+                )}
+                {debugInfo.lastSave && (
+                  <div>Last Save: <span className="font-mono">{new Date(debugInfo.lastSave).toLocaleTimeString()}</span></div>
+                )}
+                {debugInfo.errors.length > 0 && (
+                  <div>
+                    <div className="text-red-600 dark:text-red-400 font-medium">Recent Errors:</div>
+                    {debugInfo.errors.map((error, index) => (
+                      <div key={index} className="text-red-600 dark:text-red-400 font-mono text-[10px] truncate">
+                        {error}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= TOAST QUEUE: stacked instead of overwritten ================= */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2" aria-live="polite">
+        {toastQueue.map((t) => (
+          <div key={t.id} className="bg-[#1e2230] border border-indigo-500/40 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-medium animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{t.message}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ================= CREDENTIALS / AUTH MODAL ================= */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white dark:bg-[#14161f] border border-slate-200 dark:border-[#272b38] rounded-xl shadow-2xl overflow-hidden p-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-[#202433]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <Key className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">App Credentials</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-[#7e8596]">Auto-login or inject cookies for screenshot captures</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAuthModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-md transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex items-center gap-1 my-4 bg-slate-100 dark:bg-[#1b1e2a] p-1 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "login" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "login"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                  }`}
+              >
+                Auto-Login (User/Pass)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "cookie" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "cookie"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                  }`}
+              >
+                Session Cookie
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthConfig(prev => ({ ...prev, type: "token" }))}
+                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "token"
+                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+                  }`}
+              >
+                Bearer Token
+              </button>
+            </div>
+
+            {/* Fields */}
+            {authConfig.type === "login" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Email / Username
+                  </label>
+                  <input
+                    type="text"
+                    value={authConfig.username || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, username: e.target.value }))}
+                    placeholder="e.g. trainer@example.com or admin"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={authConfig.password || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder="••••••••••••"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-[#6b7280]">
+                  Whenever screenshot capture hits a login screen, Puppeteer will automatically fill and submit these credentials.
+                </p>
+              </div>
+            )}
+
+            {authConfig.type === "cookie" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Cookie String
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={authConfig.cookie || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, cookie: e.target.value }))}
+                    placeholder="session=xyz...; token=abc..."
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {authConfig.type === "token" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    JWT / Auth Token
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={authConfig.token || ""}
+                    onChange={(e) => setAuthConfig(prev => ({ ...prev, token: e.target.value }))}
+                    placeholder="ey..."
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-[#181a24] border border-slate-200 dark:border-[#272b38] rounded-lg text-slate-900 dark:text-white focus:outline-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center justify-between mt-5 pt-3 border-t border-slate-100 dark:border-[#202433]">
+              <button
+                type="button"
+                onClick={() => {
+                  const cleared = { type: "login" as const, username: "", password: "", cookie: "", token: "" }
+                  setAuthConfig(cleared)
+                  localStorage.removeItem("simulator_auth_credentials")
+                  triggerToast("Credentials cleared")
+                }}
+                className="text-xs text-rose-500 hover:text-rose-600 transition cursor-pointer"
+              >
+                Clear
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAuthModalOpen(false)}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-[#272b38] text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181a24] transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem("simulator_auth_credentials", JSON.stringify(authConfig))
+                    setIsAuthModalOpen(false)
+                    triggerToast("Credentials saved!")
+                  }}
+                  className="px-4 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition cursor-pointer shadow-xs"
+                >
+                  Save Credentials
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Captured Result Modal */}
+      <CapturedResultModal
+        isOpen={isResultModalOpen}
+        imageUrl={capturedResultUrl}
+        onClose={() => setIsResultModalOpen(false)}
+        onSaveToWorkflow={handleSaveCapturedResult}
+        isSaving={isSavingResult}
+      />
+
+      <JourneyCaptureModal
+        open={showJourneyModal}
+        onClose={() => setShowJourneyModal(false)}
+        projectId={project.id}
+        defaultUrl={currentUrl}
+        defaultWidth={viewportWidth}
+        defaultHeight={viewportHeight}
+        onComplete={(workflowId) => {
+          setShowJourneyModal(false)
+          triggerToast("Journey workflow created")
+          onSelectWorkflow?.(workflowId)
+        }}
+      />
+    </div>
+  )
+}
+
+// ============================================================================
+// Mock content components
+// ============================================================================
+
+function FigmaPrototypeMock({ viewportWidth, viewportHeight, title }: { viewportWidth: number; viewportHeight: number; title: string }) {
+  return (
+    <div style={{ width: `${viewportWidth}px`, minHeight: `${viewportHeight}px` }} className="bg-[#0f1117] text-white flex flex-col select-none">
+      <div className="h-16 border-b border-[#1f2433] px-8 flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 font-bold tracking-tight text-base text-white">
+            <div className="w-6 h-6 rounded bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-xs">◆</div>
+            PulseMetric Pro
+          </div>
+          <div className="flex items-center gap-4 text-xs text-[#9aa0b2]">
+            <span className="text-white font-medium">Dashboard</span>
+            <span>Analytics</span>
+            <span>Audience</span>
+            <span>Integrations</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-full bg-[#1d2230] border border-[#2b3144] flex items-center justify-center text-xs">🔔</div>
+          <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">JD</div>
+        </div>
+      </div>
+      <div className="p-8 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-white">{title}</h1>
+            <p className="text-xs text-[#8e95a5] mt-1">Real-time throughput metrics & conversion funnels across active regions.</p>
+          </div>
+          <button type="button" className="px-6 py-3 rounded-lg bg-[#6366F1] text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 flex items-center gap-2">
+            <Plus className="w-3.5 h-3.5" />
+            Deploy New Cluster
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-5">
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">Active Sessions</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">142,890</div>
+            <div className="text-[11px] text-emerald-400 mt-2 flex items-center gap-1 font-medium">↑ +18.4% vs last week</div>
+          </div>
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">P99 Response Latency</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">42.8 ms</div>
+            <div className="text-[11px] text-emerald-400 mt-2 flex items-center gap-1 font-medium">↓ -4.2ms faster</div>
+          </div>
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">Net Error Rate</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">0.003%</div>
+            <div className="text-[11px] text-[#8c93a8] mt-2">Target: &lt; 0.05%</div>
+          </div>
+        </div>
+        <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a] space-y-4">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-white">Throughput Trends (24h)</span>
+            <span className="text-[#7c8395] font-mono">Sampling: 1s interval</span>
+          </div>
+          <div className="h-36 w-full flex items-end gap-1 pt-4 border-b border-[#212638]">
+            {[42, 58, 65, 72, 60, 85, 92, 78, 64, 52, 69, 81, 95, 88, 76, 68, 74, 82, 91, 86, 79, 94].map((val, i) => (
+              <div key={i} style={{ height: `${val}%` }} className="flex-1 bg-indigo-500/40 rounded-t hover:bg-indigo-400 transition" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LiveDevSandboxMock({
+  annotations,
+  activeAnnotationId,
+  setActiveAnnotationId,
+  newAnnotationCoords,
+  title,
+}: {
+  annotations: Annotation[]
+  activeAnnotationId: number | null
+  setActiveAnnotationId: (id: number) => void
+  newAnnotationCoords: { x: number; y: number } | null
+  title: string
+}) {
+  return (
+    <div className="text-white flex flex-col select-none relative min-h-[900px] bg-[#0f1117]">
+      <div className="h-16 border-b border-[#1f2433] px-8 flex items-center justify-between bg-[#0f1117]">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 font-bold tracking-tight text-base text-white">
+            <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center text-xs">◆</div>
+            PulseMetric Pro
+          </div>
+          <div className="flex items-center gap-4 text-xs text-[#9aa0b2]">
+            <span className="text-white font-medium">Dashboard</span>
+            <span>Analytics</span>
+            <span>Audience</span>
+            <span>Integrations</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-full bg-[#1d2230] border border-[#2b3144] flex items-center justify-center text-xs">🔔</div>
+          <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">JD</div>
+        </div>
+      </div>
+      <div className="p-8 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-white">{title}</h1>
+            <p className="text-xs text-[#8e95a5] mt-1">Real-time throughput metrics & conversion funnels across active regions.</p>
+          </div>
+          <button type="button" className="px-4 py-2 rounded bg-[#3B82F6] text-white font-medium text-xs shadow-md flex items-center gap-2 hover:bg-blue-600 transition">
+            <Plus className="w-3.5 h-3.5" />
+            Deploy New Cluster
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-5">
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">Active Sessions</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">142,890</div>
+            <div className="text-[11px] text-gray-400 mt-2 font-mono">+18% vs last week</div>
+          </div>
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">P99 Response Latency</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">42.8 ms</div>
+            <div className="text-[11px] text-emerald-400 mt-2 flex items-center gap-1 font-medium">↓ -4.2ms faster</div>
+          </div>
+          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
+            <div className="text-xs font-medium text-[#8c93a8]">Net Error Rate</div>
+            <div className="text-2xl font-bold text-white mt-2 font-mono">0.003%</div>
+            <div className="text-[11px] text-[#8c93a8] mt-2">Target: &lt; 0.05%</div>
+          </div>
+        </div>
+        <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a] space-y-4">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-white">Throughput Trends (24h)</span>
+            <span className="text-[#7c8395] font-mono">Sampling: 1s interval</span>
+          </div>
+          <div className="h-36 w-full flex items-end gap-1 pt-4 border-b border-[#212638]">
+            {[42, 58, 65, 72, 60, 85, 92, 78, 64, 52, 69, 81, 95, 88, 76, 68, 74, 82, 91, 86, 79, 94].map((val, i) => (
+              <div key={i} style={{ height: `${val}%` }} className="flex-1 bg-blue-500/40 rounded-t hover:bg-blue-400 transition" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
+    </div>
+  )
+}
+
+// ============================================================================
+// Annotation pins — keyboard accessible, single pulse on creation instead of
+// continuous bounce on every unresolved High/Blocker pin.
+// ============================================================================
+
+function AnnotationPins({
+  annotations,
+  activeAnnotationId,
+  setActiveAnnotationId,
+  newAnnotationCoords,
+}: {
+  annotations: Annotation[]
+  activeAnnotationId: number | null
+  setActiveAnnotationId: (id: number) => void
+  newAnnotationCoords: { x: number; y: number } | null
+}) {
+  return (
+    <>
+      {annotations.map((ann) => {
+        const isSelected = activeAnnotationId === ann.id
+        const styles = SEVERITY_STYLES[ann.severity]
+        return (
+          <button
+            key={ann.id}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setActiveAnnotationId(ann.id)
+            }}
+            style={{ left: `${ann.x}%`, top: `${ann.y}%` }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-pointer group/pin focus:outline-none"
+            aria-label={`Issue ${ann.id}: ${ann.title} (${ann.severity})`}
+          >
+            <div
+              className={`flex items-center justify-center font-mono font-bold text-[11px] px-2 py-1 rounded-full shadow-lg transition-transform hover:scale-110 ${ann.resolved ? "bg-emerald-600 text-white" : styles.pin
+                } ${isSelected ? "ring-2 ring-white scale-110" : "ring-2 ring-black/20"}`}
+            >
+              {String(ann.id).padStart(2, "0")}
+            </div>
+          </button>
+        )
+      })}
+      {newAnnotationCoords && (
+        <div style={{ left: `${newAnnotationCoords.x}%`, top: `${newAnnotationCoords.y}%` }} className="absolute -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none">
+          <div className="w-6 h-6 rounded-full bg-indigo-500 ring-4 ring-indigo-400/50 flex items-center justify-center text-white font-mono text-xs font-bold animate-ping" />
+        </div>
+      )}
+    </>
+  )
+}
+
+export default WorkflowSimulator

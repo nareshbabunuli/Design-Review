@@ -25,6 +25,16 @@ export interface JourneyStep {
   viewport: { width: number; height: number }
   capturedAt: string
   notes?: string
+  issues?: {
+    id: string
+    type: string
+    severity: string
+    description: string
+  }[]
+  aiAnalysis?: {
+    uxScore: number
+    summary: string
+  }
 }
 
 export interface JourneyConfig {

@@ -48,6 +48,8 @@ function buildNotes(config: JourneyConfig, steps: JourneyStep[]): string {
       screenshotUrl: s.screenshotUrl,
       viewport: s.viewport,
       capturedAt: s.capturedAt,
+      issues: s.issues || [],
+      aiAnalysis: s.aiAnalysis || null,
     })),
   }
   return JSON.stringify(meta, null, 2)

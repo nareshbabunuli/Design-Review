@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react"
+import Link from "next/link"
 import {
   FolderKanban,
   Loader2,
@@ -22,6 +23,7 @@ import {
   ChevronDown,
   Sparkles,
   Plug,
+  User,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type {
@@ -239,6 +241,7 @@ export default function Page() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement>(null)
+  const activityProfileRef = useRef<HTMLDivElement>(null)
 
   const handleOpenFigmaImport = (projectId?: string) => {
     setFigmaImportProjectId(projectId || activeProjectId)
@@ -248,7 +251,10 @@ export default function Page() {
   // Close profile dropdown on outside click or Escape
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      const inHeader = profileMenuRef.current?.contains(target)
+      const inActivity = activityProfileRef.current?.contains(target)
+      if (!inHeader && !inActivity) {
         setIsProfileMenuOpen(false)
       }
     }
@@ -324,6 +330,11 @@ export default function Page() {
       const token = params.get("invite")
       if (token) {
         setInviteToken(token)
+        setShowLanding(false)
+      }
+      const viewParam = params.get("view")
+      if (viewParam === "editor" || viewParam === "simulator" || viewParam === "dashboard") {
+        setViewMode(viewParam)
         setShowLanding(false)
       }
     }
@@ -1977,6 +1988,172 @@ export default function Page() {
         />
       )}
 
+      {/* VS Code Left Activity Bar Rail (48px) */}
+      <aside className="w-12 bg-[#090a10] border-r border-slate-800/80 flex flex-col items-center justify-between py-2 shrink-0 z-40 select-none print:hidden">
+        {/* Top: Brand / Home Logo + Navigation View Switchers */}
+        <div className="flex flex-col items-center gap-1.5 w-full">
+          {/* Brand Logo & Back to Dashboard */}
+          <button
+            type="button"
+            onClick={() => setViewMode("dashboard")}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs transition-all cursor-pointer ${
+              viewMode === "dashboard"
+                ? "bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-900/40 ring-2 ring-indigo-400"
+                : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+            }`}
+            title="Dashboard"
+          >
+            <FolderKanban className="h-4 w-4" />
+          </button>
+
+          <div className="w-6 h-px bg-slate-800/80 my-0.5" />
+
+          {/* Editor View Tab */}
+          <button
+            type="button"
+            onClick={() => {
+              if (viewMode === "editor") {
+                setIsMobileSidebarOpen((prev) => !prev)
+              } else {
+                setViewMode("editor")
+              }
+            }}
+            className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
+              viewMode === "editor" ? "text-white" : "text-slate-500 hover:text-slate-200"
+            }`}
+            title="Design Review Editor"
+          >
+            {viewMode === "editor" && (
+              <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
+            )}
+            <Pencil className={`h-5 w-5 transition ${viewMode === "editor" ? "text-indigo-400" : "group-hover:scale-105"}`} />
+          </button>
+
+          {/* Simulator View Tab */}
+          <button
+            type="button"
+            onClick={() => setViewMode("simulator")}
+            className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
+              viewMode === "simulator" ? "text-white" : "text-slate-500 hover:text-slate-200"
+            }`}
+            title="Mobile Simulator Canvas"
+          >
+            {viewMode === "simulator" && (
+              <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
+            )}
+            <Smartphone className={`h-5 w-5 transition ${viewMode === "simulator" ? "text-indigo-400" : "group-hover:scale-105"}`} />
+          </button>
+
+          {/* AI Simulator Route Link */}
+          <Link
+            href="/ai-simulator"
+            className="w-full py-2.5 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-indigo-300 cursor-pointer"
+            title="AI Simulator & Full App Testing"
+          >
+            <Sparkles className="h-5 w-5 transition group-hover:scale-105 text-indigo-400" />
+          </Link>
+        </div>
+
+        {/* Bottom Activity Icons: Theme, Profile */}
+        <div className="flex flex-col items-center gap-2.5 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
+          <div className="scale-85">
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          </div>
+
+          {/* Profile Avatar / Menu Trigger */}
+          <div className="relative" ref={activityProfileRef}>
+            <button
+              type="button"
+              onClick={() => {
+                if (user) {
+                  setIsProfileMenuOpen((prev) => !prev)
+                } else {
+                  setShowLanding(true)
+                }
+              }}
+              className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-[10px] font-bold text-white flex items-center justify-center ring-1 ring-slate-700 hover:ring-indigo-400 transition cursor-pointer"
+              title={user ? (user.email || "Profile") : "Sign in / Account"}
+            >
+              {user ? (user.email ? user.email.slice(0, 2).toUpperCase() : "US") : <User className="h-3.5 w-3.5" />}
+            </button>
+
+            {/* Profile Dropdown Menu in Activity Bar */}
+            {isProfileMenuOpen && user && (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                className="fixed left-14 bottom-3 w-60 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-50 flex flex-col text-xs transition-all animate-in fade-in-50 zoom-in-95 duration-150 origin-bottom-left text-slate-200"
+              >
+                {/* User email info */}
+                <div className="px-3 py-2 border-b border-slate-800 mb-1">
+                  <div className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
+                    Signed in as
+                  </div>
+                  <div className="font-semibold text-white truncate mt-0.5" title={user.email || ""}>
+                    {user.email}
+                  </div>
+                </div>
+
+                {/* Third-Party Integrations */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    setSettingsTab("integrations")
+                    setIsSettingsOpen(true)
+                  }}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
+                >
+                  <Plug className="h-4 w-4 text-purple-400" />
+                  <span>Third-Party Integrations</span>
+                </button>
+
+                {/* Import from Figma shortcut */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    handleOpenFigmaImport()
+                  }}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-purple-400 hover:bg-purple-950/40 transition-colors text-left cursor-pointer font-medium"
+                >
+                  <Sparkles className="h-4 w-4 text-purple-400" />
+                  <span>Import from Figma</span>
+                </button>
+
+                {/* Account Settings */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    setSettingsTab("account")
+                    setIsSettingsOpen(true)
+                  }}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
+                >
+                  <Settings className="h-4 w-4 text-slate-400" />
+                  <span>Account Settings</span>
+                </button>
+
+                <div className="h-px bg-slate-800 my-1" />
+
+                {/* Logout */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    handleSignOut()
+                  }}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-rose-400 hover:bg-rose-950/40 transition-colors text-left font-medium cursor-pointer"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Log out</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
       {/* Sidebar - Shown in editor mode, or as mobile drawer in editor & simulator mode */}
       {(viewMode === "editor" || (viewMode === "simulator" && isMobileSidebarOpen)) && (
         <div
@@ -2056,10 +2233,9 @@ export default function Page() {
 
       {/* Main Workspace Area */}
       <main className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200 ${showReport ? "print:hidden" : ""}`}>
-        {/* Workspace Top Header */}
-        <header className={`h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200 ${
-          viewMode === "simulator" && isSimulatorFullscreen ? "hidden" : ""
-        }`}>
+        {/* Workspace Top Header - Only in Dashboard Mode */}
+        {((viewMode as string) === "dashboard") && (
+          <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200">
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-shrink-0">
             {/* Mobile Sidebar Hamburger Toggle */}
             {(viewMode === "editor" || viewMode === "simulator") && (
@@ -2088,19 +2264,26 @@ export default function Page() {
               <>
               <select
                 value={viewMode}
-                onChange={(e) => setViewMode(e.target.value as "dashboard" | "editor" | "simulator")}
-                className="sm:hidden h-8 max-w-[105px] rounded-lg border border-slate-200 bg-slate-100 px-2 text-xs font-semibold text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                onChange={(e) => {
+                  if (e.target.value === "ai-simulator") {
+                    window.location.href = "/ai-simulator"
+                    return
+                  }
+                  setViewMode(e.target.value as "dashboard" | "editor" | "simulator")
+                }}
+                className="sm:hidden h-8 max-w-[125px] rounded-lg border border-slate-200 bg-slate-100 px-2 text-xs font-semibold text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                 aria-label="Switch workspace view"
               >
                 <option value="dashboard">Dashboard</option>
                 <option value="editor">Editor</option>
                 <option value="simulator">Simulator</option>
+                <option value="ai-simulator">AI Simulator</option>
               </select>
               <div className="hidden sm:flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setViewMode("dashboard")}
-                  className="px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  className="px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                 >
                   Dashboard
                 </button>
@@ -2127,6 +2310,13 @@ export default function Page() {
                   <Smartphone className="h-3.5 w-3.5 hidden sm:block" />
                   <span>Simulator</span>
                 </button>
+                <Link
+                  href="/ai-simulator"
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                >
+                  <Sparkles className="h-3.5 w-3.5 hidden sm:block text-indigo-500" />
+                  <span>AI Simulator</span>
+                </Link>
               </div>
               </>
             ) : null}
@@ -2343,6 +2533,7 @@ export default function Page() {
             ) : null}
           </div>
         </header>
+      )}
 
         {/* Workspace Body Area */}
         <div className={`flex-1 bg-slate-100 dark:bg-slate-950 transition-colors duration-200 ${viewMode === "simulator" ? "overflow-hidden flex flex-col" : "overflow-y-auto overflow-x-hidden"}`}>
