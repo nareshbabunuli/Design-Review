@@ -1,4 +1,7 @@
 allowBuilds:
+  '@google/genai': true
+  bufferutil: true
+  protobufjs: true
   puppeteer: true
 minimumReleaseAgeExclude:
   - '@next/*'
