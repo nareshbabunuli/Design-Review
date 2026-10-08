@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Autonomous UI Testing Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 24px; max-width: 800px; margin: 0 auto; }
+    .card { border: 1px solid #ccc; padding: 16px; margin: 12px 0; border-radius: 8px; }
+    .overlay-container { position: relative; width: 200px; height: 50px; margin: 10px 0; }
+    .covered-btn { width: 100%; height: 100%; }
+    .covering-div { position: absolute; top: 0; left: 0; width: 60%; height: 100%; background: rgba(255,0,0,0.2); }
+    #modal { display: none; border: 2px solid #333; padding: 20px; background: #fff; margin-top: 10px; }
+    #modal.open { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Test Application Fixture</h1>
+
+  <!-- Volatility Trap: Live Clock and Dynamic Ticker -->
+  <div class="card">
+    <h3>Live Volatile Tickers</h3>
+    <div>Current time: <span id="clock" role="timer">12:00:00</span></div>
+    <div>Live visitor count: <span id="ticker" aria-live="polite">42</span></div>
+  </div>
+
+  <!-- Interactive Controls -->
+  <div class="card">
+    <h3>Controls</h3>
+    <a id="nav-link" href="#destination">Working Navigation Link</a>
+    <br><br>
+    <button id="dead-btn">Dead Button (No Handler)</button>
+    <br><br>
+    <div id="dummy-video-card" role="button" tabindex="0" style="cursor: pointer; padding: 8px; border: 1px dashed gray;">
+      <h4>Dummy Video Card (Placeholder)</h4>
+      <p>Watch full video overview</p>
+    </div>
+    <br>
+    <button id="modal-btn">Open Dialog Modal</button>
+    <div id="modal" role="dialog" aria-modal="true">
+      <h4>Settings Dialog</h4>
+      <p>Dialog content successfully loaded.</p>
+      <button id="modal-close-btn">Close Dialog</button>
+    </div>
+  </div>
+
+  <!-- Partially Covered Button Trap -->
+  <div class="card">
+    <h3>Partially Covered Element</h3>
+    <div class="overlay-container">
+      <button id="covered-btn" class="covered-btn">Covered Button</button>
+      <div class="covering-div" title="Obscuring Overlay"></div>
+    </div>
+  </div>
+
+  <!-- Safety Guard Targets -->
+  <div class="card">
+    <h3>Safety Guard Controls</h3>
+    <button id="delete-btn">Delete Account</button>
+    <button id="pay-btn">Pay Now $49</button>
+  </div>
+
+  <!-- Upload Verification Controls -->
+  <div class="card">
+    <h3>File Uploads</h3>
+    <label for="upload-input">Document Upload:</label>
+    <input type="file" id="upload-input" accept="image/*,.pdf,.txt">
+    <div id="upload-preview" style="display:none; color: green; font-weight: bold; margin-top: 8px;">
+      File attached successfully
+    </div>
+  </div>
+
+  <div id="destination" style="margin-top: 100px;">
+    <h2>Destination Section</h2>
+    <p>Navigated here successfully.</p>
+  </div>
+
+  <script>
+    // 1. Live Clock updating every 100ms (volatility trap)
+    setInterval(() => {
+      const d = new Date();
+      const el = document.getElementById('clock');
+      if (el) el.textContent = d.toTimeString().split(' ')[0] + '.' + Math.floor(d.getMilliseconds() / 100);
+    }, 100);
+
+    // 2. Random Ticker
+    setInterval(() => {
+      const el = document.getElementById('ticker');
+      if (el) el.textContent = String(Math.floor(Math.random() * 1000));
+    }, 200);
+
+    // 3. Analytics noise beacon simulation (firing every 400ms)
+    setInterval(() => {
+      try {
+        fetch('/ping?rand=' + Math.random(), { method: 'GET' }).catch(() => {});
+      } catch {}
+    }, 400);
+
+    // 4. Modal Handlers
+    const modalBtn = document.getElementById('modal-btn');
+    const modal = document.getElementById('modal');
+    const modalCloseBtn = document.getElementById('modal-close-btn');
+
+    modalBtn.addEventListener('click', () => {
+      modal.classList.add('open');
+    });
+    modalCloseBtn.addEventListener('click', () => {
+      modal.classList.remove('open');
+      modalBtn.focus();
+    });
+
+    // 5. Delete Action with Confirm
+    const deleteBtn = document.getElementById('delete-btn');
+    deleteBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to delete this account?')) {
+        alert('Account deleted');
+      }
+    });
+
+    // 6. Upload handler with preview confirmation
+    const uploadInput = document.getElementById('upload-input');
+    const uploadPreview = document.getElementById('upload-preview');
+    uploadInput.addEventListener('change', () => {
+      if (uploadInput.files && uploadInput.files.length > 0) {
+        uploadPreview.style.display = 'block';
+        uploadPreview.textContent = 'Preview: ' + uploadInput.files[0].name;
+      }
+    });
+
+    // 7. Covered button handler
+    const coveredBtn = document.getElementById('covered-btn');
+    coveredBtn.addEventListener('click', () => {
+      coveredBtn.textContent = 'Clicked Covered!';
+    });
+  </script>
+</body>
+</html>

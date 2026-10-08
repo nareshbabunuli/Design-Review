@@ -8,7 +8,18 @@ export type AutomationIssue = {
   id: string
   screenUrl: string
   screenTitle: string
-  type: "back_navigation" | "responsive_overflow" | "broken_asset" | "js_error" | "layout_shift"
+  type:
+    | "back_navigation"
+    | "responsive_overflow"
+    | "broken_asset"
+    | "js_error"
+    | "layout_shift"
+    | "non_functional_control"
+    | "form_validation"
+    | "api_ui_mismatch"
+    | "data_not_reflected"
+    | "covered_element"
+    | "focus_not_restored"
   severity: "low" | "medium" | "high" | "blocker"
   viewport?: string
   description: string
@@ -251,6 +262,48 @@ export type AppWorkflowTransition = {
   triggerSelector?: string
 }
 
+export type AutomationVerdict =
+  | "passed"
+  | "failed"
+  | "suspected_non_functional"
+  | "blocked"
+  | "skipped_unsafe"
+
+export type ObservedEffect =
+  | "navigated"
+  | "modal_opened"
+  | "modal_closed"
+  | "dialog_shown"
+  | "content_changed"
+  | "media_started"
+  | "network_only"
+  | "error_shown"
+  | "value_changed"
+  | "no_effect"
+
+export type NetworkCallEvidence = {
+  method: string
+  url: string
+  status?: number
+  durationMs?: number
+  isMutating: boolean
+}
+
+export type StepEvidence = {
+  expectedEffects: ObservedEffect[]
+  observedEffect: ObservedEffect
+  verdict: AutomationVerdict
+  reason: string
+  retriesUsed: number
+  isWeakPass?: boolean
+  settleDurationMs: number
+  networkCalls: NetworkCallEvidence[]
+  consoleErrors: string[]
+  beforeScreenshotUrl?: string
+  afterScreenshotUrl?: string
+  coveredElementDetected?: boolean
+}
+
 export type TestPlanStep = {
   id: string
   screenId: string
@@ -263,7 +316,9 @@ export type TestPlanStep = {
   fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
   expectedResult: string
   actualResult?: string
-  status: "pending" | "running" | "passed" | "failed" | "blocked"
+  status: "pending" | "running" | "passed" | "failed" | "blocked" | "suspected_non_functional" | "skipped_unsafe"
+  verdict?: AutomationVerdict
+  evidence?: StepEvidence
   screenshotUrl?: string
   evidenceTimestamp?: string
   error?: string
@@ -402,5 +457,9 @@ export type StartAutomationRequest = {
   /** User-provided image (data URI or URL) for vision inspection */
   image?: string
   dummyTestFiles?: Record<string, { name: string; url: string; type: string }>
+  /** Allow specific actions normally blocked or soft-skipped by safety guard (e.g. 'delete', 'send', 'invite') */
+  allowActions?: string[]
+  /** Custom additional hosts to filter out from network tracking */
+  noiseHosts?: string[]
 }
 

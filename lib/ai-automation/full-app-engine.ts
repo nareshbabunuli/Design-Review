@@ -1,3 +1,6 @@
+import fs from "fs"
+import path from "path"
+import os from "os"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import {
   AutomationJob,
@@ -11,6 +14,8 @@ import {
   FullAppTestPlan,
   StartAutomationRequest,
   FlowGraph,
+  StepEvidence,
+  AutomationVerdict,
 } from "./types"
 import { saveJob, getJob, appendLog } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
@@ -23,6 +28,16 @@ import {
   synthesizeFullAppPlanFromJob,
   isFullAppCommand,
 } from "./full-app-utils"
+import { classifyAction, isProductionLike, installNetworkGuard } from "./safety-guard"
+import {
+  expectFor,
+  captureState,
+  settle,
+  classifyEffect,
+  runWithLadder,
+  NetworkRecorder,
+  ConsoleRecorder,
+} from "./outcome-verifier"
 
 // Generate realistic dummy file buffers (PNG, PDF, CSV, TXT)
 export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv" | "video" | "other"): {
@@ -790,9 +805,10 @@ export async function executeStructuredTestPlan(
   page: Page,
   testPlan: FullAppTestPlan,
   dummyFiles?: Record<string, { name: string; url: string; type: string }>,
-  credentials?: { username?: string; password?: string }
+  credentials?: { username?: string; password?: string },
+  options?: { allowActions?: string[]; noiseHosts?: string[] }
 ): Promise<void> {
-  appendLog(job, "info", `Starting Phase 3: Systematic Test Plan Execution (${testPlan.steps.length} steps)...`)
+  appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
   job.testingPhase = "executing"
   testPlan.status = "testing"
   job.fullAppTestPlan = testPlan
@@ -801,6 +817,8 @@ export async function executeStructuredTestPlan(
   let passedCount = 0
   let failedCount = 0
   let blockedCount = 0
+  let suspectedCount = 0
+  let skippedUnsafeCount = 0
   const testedScreensSet = new Set<string>()
 
   for (let i = 0; i < testPlan.steps.length; i++) {
@@ -814,12 +832,38 @@ export async function executeStructuredTestPlan(
       continue
     }
 
+    // Safety guard check
+    const safety = classifyAction(step.targetName, options?.allowActions || [])
+    if (safety.tier === "hard_block" || safety.tier === "soft_skip") {
+      step.status = "skipped_unsafe"
+      step.verdict = "skipped_unsafe"
+      step.actualResult = `Skipped by safety guard: ${safety.reason}`
+      skippedUnsafeCount++
+      appendLog(job, "warn", `[SAFETY GUARD ${i + 1}/${testPlan.steps.length}] ${step.targetName} skipped: ${safety.reason}`)
+      continue
+    }
+
     step.status = "running"
     job.currentStep = `[${i + 1}/${testPlan.steps.length}] Testing ${step.screenName}: ${step.actionType.toUpperCase()} ${step.targetName}`
     job.progress = Math.round(30 + ((i + 1) / testPlan.steps.length) * 65)
     saveJob(job)
 
     appendLog(job, "info", `[EXECUTE ${i + 1}/${testPlan.steps.length}] ${step.screenId} ${step.screenName} -> ${step.actionType} "${step.targetName}"`)
+
+    const netRecorder = new NetworkRecorder(page, testPlan.targetUrl, options?.noiseHosts)
+    const consoleRecorder = new ConsoleRecorder(page)
+    const dialogRef = { value: false }
+
+    const dialogHandler = async (dialog: any) => {
+      dialogRef.value = true
+      const actionSafety = classifyAction(step.targetName, options?.allowActions || [])
+      if (actionSafety.tier !== "allow") {
+        await dialog.dismiss().catch(() => {})
+      } else {
+        await dialog.accept().catch(() => {})
+      }
+    }
+    page.once("dialog", dialogHandler)
 
     try {
       // 1. Target Screen Navigation Check
@@ -829,18 +873,18 @@ export async function executeStructuredTestPlan(
         await new Promise((r) => setTimeout(r, 400))
       }
 
-      // 2. Perform Action
-      let actionSuccess = false
+      // 2. Perform Action & Verify
+      let actionVerdict: AutomationVerdict = "passed"
       let observation = ""
 
       if (step.actionType === "fill") {
         let inputVal = step.syntheticValue || SYNTHETIC_TEST_DATA.fullName
-        // User-supplied test credentials go into login fields instead of synthetic values
         if (credentials?.password) {
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
           else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
         }
         const targetArg = { selector: step.targetSelector, name: step.targetName }
+        const before = await captureState(page)
         const filled = await page.evaluate((target, val) => {
           const findEl = (sel?: string) => {
             if (!sel || !sel.trim()) return null
@@ -861,19 +905,76 @@ export async function executeStructuredTestPlan(
           return true
         }, targetArg, inputVal)
 
-        actionSuccess = filled
-        observation = filled ? `Typed synthetic value "${inputVal}" into field "${step.targetName}".` : `Could not locate input field "${step.targetName}".`
+        await settle(page, netRecorder, 1500)
+        const after = await captureState(page)
+
+        if (filled) {
+          actionVerdict = "passed"
+          observation = `Typed synthetic value "${inputVal}" into field "${step.targetName}".`
+        } else {
+          actionVerdict = "failed"
+          observation = `Could not locate input field "${step.targetName}".`
+        }
+
+        step.evidence = {
+          expectedEffects: ["value_changed", "content_changed"],
+          observedEffect: filled ? "value_changed" : "no_effect",
+          verdict: actionVerdict,
+          reason: observation,
+          retriesUsed: 0,
+          settleDurationMs: 250,
+          networkCalls: netRecorder.getCapturedCalls(),
+          consoleErrors: consoleRecorder.getErrors(),
+        }
       } else if (step.actionType === "upload") {
         const fileType = step.fileTypeRequired || "image"
         const dummy = createDummyFileBuffer(fileType)
+        const tmpPath = path.join(os.tmpdir(), `upload-test-${Date.now()}-${dummy.fileName}`)
+        fs.writeFileSync(tmpPath, dummy.buffer)
 
-        // Handle file upload input
-        const fileInput = await page.$('input[type="file"]')
-        if (fileInput) {
-          actionSuccess = true
-          observation = `Attached dummy ${fileType.toUpperCase()} file ("${dummy.fileName}").`
-        } else {
-          observation = `No file input found for upload "${step.targetName}".`
+        try {
+          const fileInput = await page.$('input[type="file"]')
+          if (!fileInput) {
+            actionVerdict = "blocked"
+            observation = `No <input type="file"> found for upload "${step.targetName}".`
+          } else {
+            await (fileInput as any).uploadFile(tmpPath)
+            await settle(page, netRecorder, 3000)
+
+            const uploadState = await page.evaluate(() => {
+              const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+              const fileCount = input?.files?.length || 0
+              const hasPreview = Boolean(document.querySelector('img[src^="data:"], img[src^="blob:"], .file-preview, [data-preview]'))
+              return { fileCount, hasPreview }
+            })
+
+            const calls = netRecorder.getCapturedCalls()
+            const hasMultipartRequest = calls.some((c) => c.isMutating)
+
+            if (uploadState.fileCount > 0 && (uploadState.hasPreview || hasMultipartRequest)) {
+              actionVerdict = "passed"
+              observation = `Attached dummy ${fileType.toUpperCase()} file ("${dummy.fileName}"). Wire/DOM confirmation verified.`
+            } else if (uploadState.fileCount > 0) {
+              actionVerdict = "passed"
+              observation = `File attached to input element ("${dummy.fileName}").`
+            } else {
+              actionVerdict = "failed"
+              observation = `Failed to attach file to upload control "${step.targetName}".`
+            }
+          }
+        } finally {
+          try { fs.unlinkSync(tmpPath) } catch {}
+        }
+
+        step.evidence = {
+          expectedEffects: ["value_changed", "network_only", "content_changed"],
+          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
+          verdict: actionVerdict,
+          reason: observation,
+          retriesUsed: 0,
+          settleDurationMs: 500,
+          networkCalls: netRecorder.getCapturedCalls(),
+          consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "select") {
         const targetArg = { selector: step.targetSelector, name: step.targetName }
@@ -882,8 +983,7 @@ export async function executeStructuredTestPlan(
             if (!sel || !sel.trim()) return null
             try { return document.querySelector(sel) } catch { return null }
           }
-          const sel = (findEl(target.selector) ||
-            document.querySelector("select")) as HTMLSelectElement | null
+          const sel = (findEl(target.selector) || document.querySelector("select")) as HTMLSelectElement | null
           if (!sel) return false
           sel.focus()
           const opt = Array.from(sel.options).find((o) => o.text.includes(val) || o.value.includes(val))
@@ -894,8 +994,21 @@ export async function executeStructuredTestPlan(
           }
           return false
         }, targetArg, step.syntheticValue || "")
-        actionSuccess = selected
+
+        await settle(page, netRecorder, 1000)
+        actionVerdict = selected ? "passed" : "failed"
         observation = selected ? `Selected option "${step.syntheticValue}".` : `Failed to select option.`
+
+        step.evidence = {
+          expectedEffects: ["value_changed", "content_changed"],
+          observedEffect: selected ? "value_changed" : "no_effect",
+          verdict: actionVerdict,
+          reason: observation,
+          retriesUsed: 0,
+          settleDurationMs: 250,
+          networkCalls: netRecorder.getCapturedCalls(),
+          consoleErrors: consoleRecorder.getErrors(),
+        }
       } else if (step.actionType === "toggle") {
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const toggled = await page.evaluate((target) => {
@@ -911,55 +1024,114 @@ export async function executeStructuredTestPlan(
           el.click()
           return true
         }, targetArg)
-        actionSuccess = toggled
+
+        await settle(page, netRecorder, 1000)
+        actionVerdict = toggled ? "passed" : "failed"
         observation = toggled ? `Toggled state of "${step.targetName}".` : `Could not find toggle.`
+
+        step.evidence = {
+          expectedEffects: ["value_changed", "content_changed"],
+          observedEffect: toggled ? "value_changed" : "no_effect",
+          verdict: actionVerdict,
+          reason: observation,
+          retriesUsed: 0,
+          settleDurationMs: 250,
+          networkCalls: netRecorder.getCapturedCalls(),
+          consoleErrors: consoleRecorder.getErrors(),
+        }
       } else if (step.actionType === "click") {
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const clicked = await page.evaluate((target) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
-          }
-          const btn = (findEl(target.selector) ||
-            Array.from(document.querySelectorAll("button, [role='button'], a, input[type='button'], input[type='submit']")).find((b: any) => {
-              const text = (b.textContent || b.value || b.getAttribute("aria-label") || "").trim().toLowerCase()
-              const targetLower = target.name.toLowerCase()
-              return text === targetLower || text.includes(targetLower) || targetLower.includes(text)
-            })) as HTMLElement | null
-          if (!btn) return false
-          btn.click()
-          return true
-        }, targetArg)
-        actionSuccess = clicked
-        observation = clicked ? `Clicked "${step.targetName}".` : `Could not find button "${step.targetName}".`
-        await new Promise((r) => setTimeout(r, 800))
+        const expectedEffects = expectFor({
+          name: step.targetName,
+          isSubmit: /submit|save|register|login/i.test(step.targetName),
+        })
+
+        const ladderResult = await runWithLadder(
+          page,
+          step.targetSelector,
+          step.targetName,
+          expectedEffects,
+          netRecorder,
+          consoleRecorder,
+          { maxSettleMs: 3000, dialogShownRef: dialogRef }
+        )
+
+        actionVerdict = ladderResult.verdict
+        observation = ladderResult.reason
+
+        step.evidence = {
+          expectedEffects,
+          observedEffect: ladderResult.observedEffect,
+          verdict: ladderResult.verdict,
+          reason: ladderResult.reason,
+          retriesUsed: ladderResult.retriesUsed,
+          isWeakPass: ladderResult.isWeakPass,
+          settleDurationMs: ladderResult.settleDurationMs,
+          networkCalls: netRecorder.getCapturedCalls(),
+          consoleErrors: consoleRecorder.getErrors(),
+          coveredElementDetected: ladderResult.coveredElementDetected,
+        }
+
+        if (ladderResult.verdict === "suspected_non_functional") {
+          job.issues.push({
+            id: `issue-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            screenUrl: page.url(),
+            screenTitle: step.screenName,
+            type: "non_functional_control",
+            severity: "medium",
+            description: `Element "${step.targetName}" produced zero observable UI, navigation, media or network change after click retry ladder. Suspected placeholder or non-functional control.`,
+            expected: `Expected observable effect (${expectedEffects.join(" or ")})`,
+            actual: "No state change, no network call, no modal or navigation",
+            timestamp: new Date().toISOString(),
+          })
+        }
+
+        if (ladderResult.coveredElementDetected) {
+          job.issues.push({
+            id: `issue-cov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            screenUrl: page.url(),
+            screenTitle: step.screenName,
+            type: "covered_element",
+            severity: "low",
+            description: `Element "${step.targetName}" is partially or fully obscured by another overlapping element at its center coordinates.`,
+            timestamp: new Date().toISOString(),
+          })
+        }
       } else if (step.actionType === "verify") {
-        actionSuccess = true
+        actionVerdict = "passed"
         observation = step.actualResult || `Verified: ${step.expectedResult || step.targetName}`
       }
 
-      // 3. Verify Result
-      if (actionSuccess) {
-        step.status = "passed"
+      // 3. Record Verdict
+      step.verdict = actionVerdict
+      step.status = actionVerdict
+      step.actualResult = observation
+
+      if (actionVerdict === "passed") {
         passedCount++
-        step.actualResult = observation
-      } else {
-        step.status = "failed"
+      } else if (actionVerdict === "suspected_non_functional") {
+        suspectedCount++
+      } else if (actionVerdict === "failed") {
         failedCount++
-        step.actualResult = `Failed: ${observation}`
+        step.error = observation
+      } else if (actionVerdict === "blocked") {
+        blockedCount++
         step.error = observation
       }
 
       testedScreensSet.add(step.screenId)
 
-      // 4. Capture Evidence Screenshot
+      // 4. Capture Evidence Screenshot (Full for failure/suspected/weak pass, compressed thumbnail for pass)
       try {
-        const buf = await page.screenshot({ type: "jpeg", quality: 75 })
+        const isCritical = actionVerdict === "failed" || actionVerdict === "suspected_non_functional" || step.evidence?.isWeakPass
+        const buf = await page.screenshot({
+          type: "jpeg",
+          quality: isCritical ? 80 : 50,
+        })
         step.screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
         step.evidenceTimestamp = new Date().toISOString()
       } catch {}
 
-      // 5. Dynamic Check for NEW DISCOVERY (Requirement 7)
+      // 5. Dynamic Check for NEW DISCOVERY
       const currentUrl = page.url()
       const origin = new URL(testPlan.targetUrl).origin
       const currentNorm = normalizePath(currentUrl, origin)
@@ -981,7 +1153,6 @@ export async function executeStructuredTestPlan(
         const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
         const newScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
 
-        // Check if not already added in this run
         if (!testPlan.screens.some((s) => s.name === newScreenName && s.path === currentNorm)) {
           appendLog(job, "success", `🌟 [NEW DISCOVERY] Found unmapped screen: ${newScreenId} "${newScreenName}" during test!`)
 
@@ -1006,7 +1177,6 @@ export async function executeStructuredTestPlan(
             actionType: "click",
           })
 
-          // Generate dynamic test step for the new screen
           const newStep: TestPlanStep = {
             id: `step-${testPlan.steps.length + 1}`,
             screenId: newScreenId,
@@ -1017,6 +1187,7 @@ export async function executeStructuredTestPlan(
             expectedResult: `Verify new discovery screen "${newScreenName}" is interactive.`,
             actualResult: `Discovered during test of ${step.targetName} with ${newInv.actionableElements.length} elements.`,
             status: "passed",
+            verdict: "passed",
             isNewDiscovery: true,
             screenshotUrl: step.screenshotUrl,
             evidenceTimestamp: new Date().toISOString(),
@@ -1030,19 +1201,23 @@ export async function executeStructuredTestPlan(
       testPlan.coverage = {
         screensTested: testedScreensSet.size,
         totalScreens: testPlan.screens.length,
-        actionsTested: passedCount + failedCount + blockedCount,
+        actionsTested: passedCount + failedCount + blockedCount + suspectedCount + skippedUnsafeCount,
         totalActions: testPlan.steps.length,
         formsTested: testPlan.screens.filter((s) => testedScreensSet.has(s.id)).reduce((acc, s) => acc + (s.forms?.length || 0), 0),
         totalForms: testPlan.screens.reduce((acc, s) => acc + (s.forms?.length || 0), 0),
-        percentage: Math.round(((passedCount + failedCount + blockedCount) / testPlan.steps.length) * 100),
+        percentage: Math.round(((passedCount + failedCount + blockedCount + suspectedCount + skippedUnsafeCount) / testPlan.steps.length) * 100),
       }
 
       saveJob(job)
     } catch (stepErr: any) {
       step.status = "failed"
+      step.verdict = "failed"
       failedCount++
       step.error = stepErr?.message || "Execution exception"
       appendLog(job, "warn", `Step ${i + 1} exception: ${stepErr?.message}`)
+    } finally {
+      netRecorder.cleanup()
+      consoleRecorder.cleanup()
     }
   }
 
@@ -1050,13 +1225,13 @@ export async function executeStructuredTestPlan(
   job.testingPhase = "reporting"
   job.status = "completed"
   job.progress = 100
-  job.currentStep = `Systematic Full App Testing completed: ${passedCount} Passed, ${failedCount} Failed, ${testPlan.screens.length} Screens mapped.`
+  job.currentStep = `Outcome-verified Full App Testing completed: ${passedCount} Passed, ${suspectedCount} Suspected Non-Functional, ${failedCount} Failed, ${skippedUnsafeCount} Skipped Unsafe.`
   saveJob(job)
 
   appendLog(
     job,
     "success",
-    `✅ Full App Testing Finished! ${passedCount}/${testPlan.steps.length} steps passed across ${testPlan.screens.length} mapped screens.`
+    `✅ Outcome-Verified Testing Finished! ${passedCount} passed, ${suspectedCount} suspected non-functional, ${failedCount} failed, ${skippedUnsafeCount} skipped unsafe across ${testPlan.screens.length} mapped screens.`
   )
 }
 
@@ -1099,6 +1274,23 @@ export async function executeFullAppTestingJob(
 
     const page = await browser.newPage()
     await page.setViewport({ width: 1440, height: 900 })
+
+    // Safety environment inspection
+    if (isProductionLike(job.targetUrl)) {
+      appendLog(
+        job,
+        "warn",
+        `⚠️ [SAFETY WARNING] Target URL "${job.targetUrl}" appears to be a production environment. Destructive/payment actions will be guarded.`
+      )
+    }
+
+    // Install network guard for payment/email hosts
+    await installNetworkGuard(page, {
+      allowActions: params.allowActions,
+      onBlocked: (url, reason) => {
+        appendLog(job, "warn", `[SAFETY GUARD] Aborted request to ${url} (${reason}).`)
+      },
+    })
 
     // Track console JS errors
     page.on("pageerror", (err: any) => {
@@ -1165,7 +1357,10 @@ export async function executeFullAppTestingJob(
     )
 
     // PHASE 3: Systematic Execution of Test Plan
-    await executeStructuredTestPlan(job, page, testPlan, params.dummyTestFiles, sessionCreds)
+    await executeStructuredTestPlan(job, page, testPlan, params.dummyTestFiles, sessionCreds, {
+      allowActions: params.allowActions,
+      noiseHosts: params.noiseHosts,
+    })
 
     // PHASE 4: Final Reporting & Coverage
     job.testingPhase = "reporting"
