@@ -8,6 +8,9 @@ DROP POLICY IF EXISTS "Allow authenticated and anon deletes from designs" ON sto
 DROP POLICY IF EXISTS "Allow authenticated uploads to designs" ON storage.objects;
 DROP POLICY IF EXISTS "Allow authenticated updates to designs" ON storage.objects;
 DROP POLICY IF EXISTS "Allow authenticated deletes from designs" ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated uploads to designs" ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated updates to designs" ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated deletes from designs" ON storage.objects;
 
 -- Public read (unchanged intent)
 DROP POLICY IF EXISTS "Allow public read access on designs" ON storage.objects;
