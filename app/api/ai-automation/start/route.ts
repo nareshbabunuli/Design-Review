@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAndStartJob } from "@/lib/ai-automation/runner"
 import type { StartAutomationRequest } from "@/lib/ai-automation/types"
+import {
+  requireProjectAccess,
+  authErrorResponse,
+  AuthError,
+} from "@/lib/auth/require-project-access"
+import {
+  assertSafeTargetUrlWithDevBypass,
+  UrlGuardError,
+} from "@/lib/security/url-guard"
+import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,34 +19,39 @@ export async function POST(req: NextRequest) {
     if (!body.url || !body.url.trim()) {
       return NextResponse.json({ error: "Missing target URL" }, { status: 400 })
     }
-
     if (!body.projectId || !body.projectId.trim()) {
       return NextResponse.json({ error: "Missing projectId" }, { status: 400 })
     }
 
-    let parsedUrl: URL
-    try {
-      parsedUrl = new URL(body.url.trim())
-    } catch {
-      return NextResponse.json({ error: "Invalid target URL format" }, { status: 400 })
-    }
+    // Auth: only project members with edit access can start jobs
+    const access = await requireProjectAccess(body.projectId.trim(), "edit")
 
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return NextResponse.json({ error: "URL must start with http:// or https://" }, { status: 400 })
+    // SSRF guard
+    let safeUrl: string
+    try {
+      safeUrl = assertSafeTargetUrlWithDevBypass(body.url.trim())
+    } catch (e) {
+      if (e instanceof UrlGuardError) {
+        return NextResponse.json({ error: e.message }, { status: 400 })
+      }
+      throw e
     }
 
     const job = await createAndStartJob({
-      url: body.url.trim(),
+      url: safeUrl,
       projectId: body.projectId.trim(),
       userInstruction: body.userInstruction,
       role: body.role,
       layaBaseUrl: body.layaBaseUrl,
       credentials: body.credentials,
       viewports: body.viewports,
-      maxScreens: body.maxScreens || 5,
+      maxScreens: Math.min(Math.max(body.maxScreens || 5, 1), 15),
       checkBackNavigation: body.checkBackNavigation ?? true,
       checkResponsive: body.checkResponsive ?? true,
-      openRouterApiKey: body.openRouterApiKey,
+      openRouterApiKey:
+        process.env.NODE_ENV === "production"
+          ? undefined
+          : body.openRouterApiKey,
       aiModel: body.aiModel,
       aiBaseUrl: body.aiBaseUrl,
       mode: body.mode,
@@ -45,14 +60,21 @@ export async function POST(req: NextRequest) {
       dummyTestFiles: body.dummyTestFiles,
     })
 
+    ;(job as any).userId = access.user.id
+
     return NextResponse.json({
       success: true,
       jobId: job.id,
       status: job.status,
       message: "AI UI Automation job started in background.",
+      job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
+    if (err instanceof AuthError) return authErrorResponse(err)
     console.error("[API ai-automation/start] Error:", err)
-    return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 })
+    return NextResponse.json(
+      { error: (err as Error)?.message || "Internal server error" },
+      { status: 500 }
+    )
   }
 }
