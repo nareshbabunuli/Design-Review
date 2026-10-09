@@ -17,6 +17,11 @@ import {
   executeStructuredTestPlan,
 } from "../lib/ai-automation/full-app-engine"
 import type { AutomationJob, AppScreenNode } from "../lib/ai-automation/types"
+import {
+  parsePostmanCollection,
+  matchEndpointToForm,
+  buildFormPayloadFromPostman,
+} from "../lib/ai-automation/postman-importer"
 
 async function main() {
   console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1, 2 & 6) ===")
@@ -29,6 +34,11 @@ async function main() {
     if (req.url?.startsWith("/ping")) {
       res.writeHead(200, { "Content-Type": "application/json" })
       res.end(JSON.stringify({ ok: true }))
+      return
+    }
+    if (req.url?.startsWith("/api/register")) {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ success: true, id: "usr_123" }))
       return
     }
     res.writeHead(200, { "Content-Type": "text/html" })
@@ -213,7 +223,8 @@ async function main() {
   console.log("\n--- Test Suite 4: End-to-End Structured Test Plan Execution ---")
   const job: AutomationJob = {
     id: `test-job-${Date.now()}`,
-    type: "full_app",
+    projectId: "test-proj",
+    mode: "full_app",
     targetUrl: fixtureUrl,
     status: "running",
     testingPhase: "executing",
@@ -221,10 +232,12 @@ async function main() {
     currentStep: "Starting test",
     logs: [],
     issues: [],
-    discoveredScreens: [],
+    screens: [],
     flowGraph: { nodes: [], edges: [] },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    startedAt: new Date().toISOString(),
+    credentialsProvided: false,
+    viewports: [],
+    maxScreens: 5,
   }
 
   await executeStructuredTestPlan(job, page, plan)
@@ -259,6 +272,121 @@ async function main() {
     `Expected dead button verdict to be suspected_non_functional, got "${deadStep?.verdict}"`
   )
   console.log("✔ Dead button confirmed as suspected_non_functional in plan report")
+
+  // TEST SUITE 5: Phase 3 Postman v2.1 Import & On-Wire Confirmation
+  console.log("\n--- Test Suite 5: Postman v2.1 Import & On-Wire Confirmation ---")
+  const samplePostmanCollection = {
+    info: {
+      name: "Acme User Management API",
+      _postman_id: "test-collection-id-1234",
+      description: "Postman v2.1 collection for autonomous form mapping",
+      schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    },
+    variable: [
+      { key: "baseUrl", value: fixtureUrl },
+      { key: "companyDomain", value: "testing-domain.com" },
+    ],
+    item: [
+      {
+        name: "Create User Registration",
+        request: {
+          method: "POST",
+          header: [{ key: "Content-Type", value: "application/json" }],
+          body: {
+            mode: "raw",
+            raw: JSON.stringify({
+              name: "Alice Wonderland",
+              email: "alice@{{companyDomain}}",
+              phone: "+1-555-0199",
+            }),
+          },
+          url: {
+            raw: "{{baseUrl}}/api/register",
+            host: ["{{baseUrl}}"],
+            path: ["api", "register"],
+          },
+          description: "Registers user and returns JSON account record",
+        },
+      },
+    ],
+  }
+
+  // 1. Verify parser & variable resolution
+  const postmanSummary = parsePostmanCollection(samplePostmanCollection)
+  console.assert(postmanSummary.endpoints.length === 1, `Expected 1 endpoint parsed, got ${postmanSummary.endpoints.length}`)
+  const endpoint = postmanSummary.endpoints[0]
+  console.assert(endpoint.method === "POST", `Expected method POST, got ${endpoint.method}`)
+  console.assert(endpoint.pathSegments.includes("register"), `Expected path to include "register"`)
+  console.assert(
+    endpoint.payloadFields.email === "alice@testing-domain.com",
+    `Expected variable {{companyDomain}} to resolve to testing-domain.com, got ${endpoint.payloadFields.email}`
+  )
+  console.log(`✔ Postman collection parsed & variables resolved: ${endpoint.method} ${endpoint.url}`)
+
+  // 2. Verify mapping to UI form
+  const formElementsForMapping = inv.actionableElements.filter((el) => el.formId === inv.forms[0].id)
+  const mapping = matchEndpointToForm(endpoint, inv.forms[0], formElementsForMapping, "/")
+  console.assert(mapping !== null, "Expected endpoint to match reg-form")
+  console.assert(mapping?.overallConfidence === "high", `Expected high confidence match, got ${mapping?.overallConfidence}`)
+  console.log(`✔ Multi-signal scoring mapped endpoint to UI form: confidence=${mapping?.overallConfidence}`)
+
+  // 3. Verify payload build
+  const postmanPayload = buildFormPayloadFromPostman(mapping!, formElementsForMapping)
+  console.assert(postmanPayload.name === "Alice Wonderland", `Expected Alice Wonderland, got ${postmanPayload.name}`)
+  console.assert(
+    postmanPayload.email === "alice@testing-domain.com",
+    `Expected alice@testing-domain.com, got ${postmanPayload.email}`
+  )
+  console.log(`✔ Form payload built from Postman samples: name="${postmanPayload.name}", email="${postmanPayload.email}"`)
+
+  // 4. Generate plan with Postman collection option
+  await page.goto(fixtureUrl, { waitUntil: "domcontentloaded" })
+  const postmanPlan = generateStructuredTestPlan(fixtureUrl, [screenNode], [], {
+    postmanCollection: samplePostmanCollection,
+  })
+
+  const postmanValidStep = postmanPlan.steps.find(
+    (s) => s.actionType === "form_scenario" && s.formVariant === "valid" && s.formId === "reg-form"
+  )
+  console.assert(postmanValidStep !== undefined, "Expected postman valid step in plan")
+  console.assert(
+    postmanValidStep?.targetName.includes("Create User Registration"),
+    `Expected step targetName to mention API name, got "${postmanValidStep?.targetName}"`
+  )
+  console.assert(
+    postmanValidStep?.fieldPayload?.email === "alice@testing-domain.com",
+    `Expected fieldPayload to contain Postman email`
+  )
+  console.log(`✔ Test plan generated with Postman mapped step: "${postmanValidStep?.targetName}"`)
+
+  // 5. Execute plan and verify on-wire confirmation
+  const postmanJob: AutomationJob = {
+    id: `test-job-postman-${Date.now()}`,
+    projectId: "test-proj",
+    mode: "full_app",
+    targetUrl: fixtureUrl,
+    status: "running",
+    testingPhase: "executing",
+    progress: 0,
+    currentStep: "Starting postman test",
+    logs: [],
+    issues: [],
+    screens: [],
+    flowGraph: { nodes: [], edges: [] },
+    startedAt: new Date().toISOString(),
+    credentialsProvided: false,
+    viewports: [],
+    maxScreens: 5,
+  }
+
+  await executeStructuredTestPlan(postmanJob, page, postmanPlan)
+
+  console.assert(postmanValidStep?.status === "passed", `Expected valid step to pass, got ${postmanValidStep?.status}`)
+  console.assert(
+    postmanValidStep?.confirmedOnWire === true,
+    `Expected confirmedOnWire to be true for API-mapped form step`
+  )
+  console.log(`✔ On-wire confirmation PASSED: intercepted outgoing POST call matched Postman endpoint (${postmanValidStep?.actualResult})`)
 
   // Cleanup
   await browser.close()

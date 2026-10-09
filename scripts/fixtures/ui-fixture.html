@@ -163,7 +163,19 @@
     const regSuccess = document.getElementById('reg-success');
     regForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      regSuccess.style.display = 'block';
+      fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: regForm.elements['name'] ? regForm.elements['name'].value : '',
+          email: regForm.elements['email'] ? regForm.elements['email'].value : '',
+          phone: regForm.elements['phone'] ? regForm.elements['phone'].value : ''
+        })
+      }).then(() => {
+        regSuccess.style.display = 'block';
+      }).catch(() => {
+        regSuccess.style.display = 'block';
+      });
     });
   </script>
 </body>

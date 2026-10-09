@@ -338,6 +338,9 @@ export type TestPlanStep = {
   formId?: string
   formVariant?: "valid" | "required_empty" | "invalid_format" | "boundary"
   fieldPayload?: Record<string, string>
+  postmanEndpoint?: ParsedPostmanEndpoint
+  postmanMappings?: PostmanFieldMapping[]
+  confirmedOnWire?: boolean
 }
 
 export type FullAppTestPlan = {
@@ -416,6 +419,9 @@ export type AutomationJob = {
   pendingCredentials?: { username?: string; password?: string; skip?: boolean }
   /** Last AI-provider error surfaced loudly to the user (never a silent fallback). */
   aiError?: string
+  /** Postman Collection v2.1 for API-to-UI data mapping */
+  postmanCollection?: string | Record<string, any>
+  postmanSummary?: PostmanCollectionSummary
 }
 
 export type FeatureWorkflowEdgeCase = {
@@ -476,5 +482,45 @@ export type StartAutomationRequest = {
   allowActions?: string[]
   /** Custom additional hosts to filter out from network tracking */
   noiseHosts?: string[]
+  /** Postman Collection v2.1 for API-to-UI data mapping */
+  postmanCollection?: string | Record<string, any>
 }
+
+export type ParsedPostmanEndpoint = {
+  name: string
+  method: string
+  url: string
+  pathSegments: string[]
+  headers: Record<string, string>
+  payloadFields: Record<string, any>
+  rawBody?: string
+  description?: string
+}
+
+export type PostmanFieldMapping = {
+  uiFieldName: string
+  uiSelector?: string
+  uiInputType?: string
+  apiFieldName: string
+  apiValue: any
+  confidenceScore: number
+  confidenceLevel: "high" | "medium" | "low" | "unmatched"
+  matchMethod: "exact_key" | "fuzzy_label" | "semantic_type" | "fallback"
+  confirmedOnWire?: boolean
+}
+
+export type PostmanEndpointMapping = {
+  endpoint: ParsedPostmanEndpoint
+  screenId: string
+  formId?: string
+  fieldMappings: PostmanFieldMapping[]
+  overallConfidence: "high" | "medium" | "low"
+}
+
+export type PostmanCollectionSummary = {
+  name: string
+  description?: string
+  endpoints: ParsedPostmanEndpoint[]
+}
+
 

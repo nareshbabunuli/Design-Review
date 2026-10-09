@@ -39,6 +39,16 @@ import {
   NetworkRecorder,
   ConsoleRecorder,
 } from "./outcome-verifier"
+import {
+  parsePostmanCollection,
+  matchEndpointToForm,
+  buildFormPayloadFromPostman,
+  confirmMappingOnWire,
+} from "./postman-importer"
+import type {
+  PostmanCollectionSummary,
+  PostmanEndpointMapping,
+} from "./types"
 
 // Generate realistic dummy file buffers (PNG, PDF, CSV, TXT)
 export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv" | "video" | "other"): {
@@ -678,10 +688,22 @@ export function generateStructuredTestPlan(
   targetUrl: string,
   screens: AppScreenNode[],
   transitions: AppWorkflowTransition[],
-  options?: { isAuthenticated?: boolean }
+  options?: {
+    isAuthenticated?: boolean
+    postmanCollection?: string | Record<string, any>
+  }
 ): FullAppTestPlan {
   const steps: TestPlanStep[] = []
   let stepCounter = 1
+
+  let postmanSummary: PostmanCollectionSummary | undefined = undefined
+  if (options?.postmanCollection) {
+    try {
+      postmanSummary = parsePostmanCollection(options.postmanCollection)
+    } catch (err: any) {
+      console.warn("[Postman Import] Failed to parse collection:", err?.message)
+    }
+  }
 
   const requiredFileTypesMap = new Map<string, number>()
 
@@ -754,7 +776,32 @@ export function generateStructuredTestPlan(
           })
         }
 
+        // Check if a Postman endpoint matches this form
+        let matchedEndpointMapping: PostmanEndpointMapping | null = null
+        if (postmanSummary && postmanSummary.endpoints.length > 0) {
+          for (const ep of postmanSummary.endpoints) {
+            const m = matchEndpointToForm(ep, form, formElements, screen.path)
+            if (m && (m.overallConfidence === "high" || m.overallConfidence === "medium")) {
+              matchedEndpointMapping = m
+              break
+            }
+          }
+        }
+
+        let fieldPayload: Record<string, string> | undefined = undefined
+        if (matchedEndpointMapping) {
+          fieldPayload = buildFormPayloadFromPostman(matchedEndpointMapping, formElements)
+        }
+
         // Always valid scenario last:
+        const validTargetName = matchedEndpointMapping
+          ? `Form "${form.name || form.id}" (Valid Submission via API: ${matchedEndpointMapping.endpoint.name})`
+          : `Form "${form.name || form.id}" (Valid Submission)`
+
+        const validExpected = matchedEndpointMapping
+          ? `Form "${form.name || form.id}" accepts mapped fields from Postman endpoint "${matchedEndpointMapping.endpoint.name}" (${matchedEndpointMapping.overallConfidence} confidence) and submits, confirmed on wire.`
+          : `Form "${form.name || form.id}" accepts valid synthetic data and submits, resulting in transition, modal close, toast, or 2xx response.`
+
         steps.push({
           id: `step-${stepCounter++}`,
           screenId: screen.id,
@@ -763,9 +810,12 @@ export function generateStructuredTestPlan(
           actionType: "form_scenario",
           formId: form.id,
           formVariant: "valid",
-          targetName: `Form "${form.name || form.id}" (Valid Submission)`,
+          targetName: validTargetName,
           targetSelector: form.selector,
-          expectedResult: `Form "${form.name || form.id}" accepts valid synthetic data and submits, resulting in transition, modal close, toast, or 2xx response.`,
+          fieldPayload,
+          postmanEndpoint: matchedEndpointMapping?.endpoint,
+          postmanMappings: matchedEndpointMapping?.fieldMappings,
+          expectedResult: validExpected,
           status: "pending",
         })
       }
@@ -1279,6 +1329,37 @@ export async function executeStructuredTestPlan(
             if (mutating2xx) details.push("server returned 2xx mutating response")
             if (successFeedback) details.push(`success feedback: "${successFeedback}"`)
             observation = `Form submitted successfully with valid data (${details.join(", ")}).`
+
+            if (step.postmanEndpoint && step.postmanMappings) {
+              const wireCheck = confirmMappingOnWire(
+                {
+                  endpoint: step.postmanEndpoint,
+                  screenId: step.screenId,
+                  formId: step.formId,
+                  fieldMappings: step.postmanMappings,
+                  overallConfidence: "high",
+                },
+                calls
+              )
+
+              if (wireCheck.confirmed) {
+                step.confirmedOnWire = true
+                observation += ` On-wire confirmation verified: outgoing ${step.postmanEndpoint.method} request matched Postman endpoint "${step.postmanEndpoint.name}".`
+              } else {
+                step.confirmedOnWire = false
+                job.issues.push({
+                  id: `issue-api-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  screenUrl: page.url(),
+                  screenTitle: step.screenName,
+                  type: "api_ui_mismatch",
+                  severity: "medium",
+                  description: `Form "${step.targetName}" was filled from Postman documentation ("${step.postmanEndpoint.name}") but wire request did not match expected API endpoint: ${wireCheck.mismatches.join("; ")}`,
+                  expected: `Outgoing request to ${step.postmanEndpoint.method} matching [${step.postmanEndpoint.pathSegments.join("/")}]`,
+                  actual: "No matching network call captured on wire",
+                  timestamp: new Date().toISOString(),
+                })
+              }
+            }
           } else if (consoleRecorder.getErrors().length > 0 || calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 400)) {
             actionVerdict = "failed"
             observation = `Form submission encountered errors: ${consoleRecorder.getErrors().join("; ") || "HTTP error status"}`
@@ -1800,6 +1881,7 @@ export async function executeFullAppTestingJob(
     appendLog(job, "info", "Phase 2: Generating structured test plan from discovered screens & elements...")
     const testPlan = generateStructuredTestPlan(job.targetUrl, discovery.screens, discovery.transitions, {
       isAuthenticated: job.authState === "logged_in",
+      postmanCollection: params.postmanCollection,
     })
     job.fullAppTestPlan = testPlan
     job.flowGraph = buildFigmaWorkflowMap(testPlan)
