@@ -336,6 +336,9 @@ export default function Page() {
       if (viewParam === "editor" || viewParam === "simulator" || viewParam === "dashboard") {
         setViewMode(viewParam)
         setShowLanding(false)
+        if (viewParam === "editor" && window.innerWidth < 1024) {
+          setIsMobileSidebarOpen(true)
+        }
       }
     }
   }, [])
@@ -1318,7 +1321,18 @@ export default function Page() {
       setActiveWorkflowId(remaining[0]?.id || null)
     }
     if (supabase) {
-      await supabase.from("workflows").delete().eq("id", workflowId)
+      try {
+        const { error } = await supabase.from("workflows").delete().eq("id", workflowId)
+        if (error) {
+          console.error("Error deleting workflow:", error)
+          alert(`Failed to delete screen: ${error.message}`)
+          await loadWorkspace()
+        }
+      } catch (err: any) {
+        console.error("Error deleting workflow:", err)
+        alert(`Failed to delete screen: ${err?.message || "Unknown error"}`)
+        await loadWorkspace()
+      }
     }
   }
 
@@ -2082,8 +2096,26 @@ export default function Page() {
             </Link>
           </div>
 
-          {/* Bottom Activity Icons: Theme, Profile */}
+          {/* Bottom Activity Icons: Theme, Profile, GitHub */}
           <div className="flex flex-col items-center gap-2.5 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
+            {/* GitHub Repository Link in Activity Bar */}
+            <a
+              href="https://github.com/nareshbabunuli/Design-Review"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800/60 transition cursor-pointer"
+              title="GitHub: nareshbabunuli/Design-Review"
+              aria-label="GitHub Repository"
+            >
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fillRule="evenodd"
+                  d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </a>
+
             <div className="scale-85">
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
             </div>
@@ -2188,7 +2220,7 @@ export default function Page() {
       {/* Sidebar - Shown in editor mode, or as mobile drawer in editor & simulator mode */}
       {(viewMode === "editor" || (viewMode === "simulator" && isMobileSidebarOpen)) && (
         <div
-          className={`fixed inset-y-0 left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out ${
+          className={`fixed inset-y-0 left-12 lg:left-0 z-50 h-full flex flex-col min-h-0 flex-shrink-0 transform transition-transform duration-300 ease-in-out ${
             viewMode === "editor" ? "lg:static lg:translate-x-0" : "lg:hidden"
           } ${
             isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -2265,9 +2297,9 @@ export default function Page() {
 
       {/* Main Workspace Area */}
       <main className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white dark:bg-slate-900 transition-colors duration-200 ${showReport ? "print:hidden" : ""}`}>
-        {/* Workspace Top Header - Only in Dashboard Mode */}
-        {((viewMode as string) === "dashboard") && (
-          <header className="h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200">
+        {/* Workspace Top Header - Dashboard (all screens), Editor & Simulator (mobile only with hamburger) */}
+        {(viewMode === "dashboard" || viewMode === "editor" || viewMode === "simulator") && (
+          <header className={`h-14 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 sm:px-6 flex items-center justify-between gap-1.5 sm:gap-3 flex-shrink-0 z-40 transition-colors duration-200 ${viewMode !== "dashboard" ? "lg:hidden" : ""}`}>
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-shrink-0">
             {/* Mobile Sidebar Hamburger Toggle */}
             {(viewMode === "editor" || viewMode === "simulator") && (
@@ -2441,12 +2473,12 @@ export default function Page() {
               </button>
             )}
 
-            {/* GitHub Repository Link (hidden on small screens) */}
+            {/* GitHub Repository Link */}
             <a
               href="https://github.com/nareshbabunuli/Design-Review"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden md:flex p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors items-center justify-center cursor-pointer shadow-xs"
+              className="flex p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors items-center justify-center cursor-pointer shadow-xs"
               title="GitHub: nareshbabunuli/Design-Review"
               aria-label="GitHub Repository"
             >

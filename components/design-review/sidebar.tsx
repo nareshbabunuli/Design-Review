@@ -310,7 +310,7 @@ export function Sidebar({
               </div>
 
               {isProjectOwner && (
-                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
+                <div className="flex items-center gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                   {/* Project Move Up/Down when multiple projects exist */}
                   {projects.length > 1 && (
                     <div className="hidden sm:flex items-center gap-0.5">
@@ -419,28 +419,26 @@ export function Sidebar({
                       {project.isOrderLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
                     </button>
                   )}
-                  {(projects.length > 1 || (userId && project.userId !== userId)) && (
-                    project.userId === userId || !project.userId ? (
-                      <button
-                        type="button"
-                        onClick={(e) => onDeleteProject(project.id, e)}
-                        className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
-                        title="Delete project (Owner only)"
-                        aria-label="Delete project"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => onDeleteProject(project.id, e)}
-                        className="p-1.5 rounded-md hover:bg-rose-100 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-500 cursor-pointer"
-                        title="Reject & Leave shared project"
-                        aria-label="Reject & Leave shared project"
-                      >
-                        <LogOut className="h-3.5 w-3.5" />
-                      </button>
-                    )
+                  {project.userId === userId || !project.userId ? (
+                    <button
+                      type="button"
+                      onClick={(e) => onDeleteProject(project.id, e)}
+                      className="p-1.5 rounded-md hover:bg-red-100 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
+                      title="Delete project (Owner only)"
+                      aria-label="Delete project"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => onDeleteProject(project.id, e)}
+                      className="p-1.5 rounded-md hover:bg-rose-100 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-500 cursor-pointer"
+                      title="Reject & Leave shared project"
+                      aria-label="Reject & Leave shared project"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                    </button>
                   )}
                 </div>
               )}
@@ -693,7 +691,9 @@ export function Sidebar({
 
                       {!isSelectActive && canManageScreens && (
                         <div className={`flex items-center gap-0.5 transition-opacity flex-shrink-0 ${
-                          isWorkflowActive ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                          isWorkflowActive
+                            ? "opacity-100"
+                            : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100"
                         }`}>
                           {/* Move Up/Down Buttons (Only available when unlocked and on sm+ screens) */}
                           {!project.isOrderLocked && (
@@ -769,8 +769,12 @@ export function Sidebar({
                           {/* Delete Button */}
                           <button
                             type="button"
-                            onClick={(e) => onDeleteWorkflow(project.id, workflow.id, e)}
-                            className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              e.preventDefault()
+                              onDeleteWorkflow(project.id, workflow.id, e)
+                            }}
+                            className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/40 text-slate-400 hover:text-red-500 cursor-pointer touch-manipulation"
                             title="Delete screen"
                             aria-label="Delete workflow"
                           >
