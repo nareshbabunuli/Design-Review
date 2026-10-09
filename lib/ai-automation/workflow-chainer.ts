@@ -12,6 +12,7 @@ import {
   NetworkCallEvidence,
   PostmanCollectionSummary,
   PostmanEndpointMapping,
+  TestPaymentCredentials,
 } from "./types"
 import { appendLog, saveJob } from "./job-store"
 import {
@@ -22,13 +23,19 @@ import {
   ConsoleRecorder,
   expectFor,
 } from "./outcome-verifier"
-import { classifyAction } from "./safety-guard"
+import { classifyAction, isProductionLike } from "./safety-guard"
 import {
   matchEndpointToForm,
   buildFormPayloadFromPostman,
   confirmMappingOnWire,
 } from "./postman-importer"
 import { SYNTHETIC_TEST_DATA } from "./full-app-utils"
+import {
+  showActionBanner,
+  highlightInputTyping,
+  animateCursorToSelector,
+  triggerClickAnimation,
+} from "./visual-recorder"
 
 /**
  * Formats a captured mutating network call into a reproducible cURL command
@@ -94,6 +101,8 @@ export async function executeChainedWorkflows(
     allowActions?: string[]
     noiseHosts?: string[]
     maxHops?: number
+    allowTestPayments?: boolean
+    paymentCredentials?: TestPaymentCredentials
   }
 ): Promise<WorkflowRun[]> {
   const workflowRuns: WorkflowRun[] = []
@@ -105,7 +114,7 @@ export async function executeChainedWorkflows(
   let workflowCounter = 1
 
   for (const entryScreen of startingScreens) {
-    if (job.status === "stopped") break
+    if ((job.status as string) === "stopped") break
 
     const trackingId = generateTrackingId()
     const workflowId = `WF-${String(workflowCounter++).padStart(2, "0")}`
@@ -211,6 +220,8 @@ export async function executeChainedWorkflows(
       const formSel = form.selector || `#${form.id}`
       const beforeShot = await captureState(page)
 
+      await showActionBanner(page, `Workflow ${workflowId}: Fill Form "${form.name || form.id}"`)
+
       // Fill form fields
       await page.evaluate(
         (sel, p, defaultData) => {
@@ -235,6 +246,21 @@ export async function executeChainedWorkflows(
         payload,
         SYNTHETIC_TEST_DATA
       )
+
+      if (formSel) {
+        await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, trackingId)
+      }
+
+      await showActionBanner(page, `Workflow ${workflowId}: Submit Form "${form.name || form.id}"`)
+
+      // Animate cursor to submit button
+      if (formSel) {
+        const coords = await animateCursorToSelector(
+          page,
+          `${formSel} button[type="submit"], ${formSel} input[type="submit"], ${formSel} button:not([type="button"])`
+        )
+        if (coords) await triggerClickAnimation(page, coords.x, coords.y)
+      }
 
       // Submit form
       await page.evaluate((sel) => {
@@ -334,12 +360,13 @@ export async function executeChainedWorkflows(
 
     // STEP 2 & SUBSEQUENT: Multi-step transition ("go next next")
     // Identify destination screen from current URL or discovered screens
-    while (hop < maxHops && job.status !== "stopped") {
+    while (hop < maxHops && (job.status as string) !== "stopped") {
       hop++
       const currentUrl = page.url()
       const nextScreen = screens.find((s) => currentUrl.includes(s.path.split("#")[0])) || currentScreen
 
       // Assertion: State Persistence of trackingId
+      await showActionBanner(page, `Workflow ${workflowId}: Verifying persistence of "${trackingId}"`)
       const isPersisted = await checkTextPersistence(page, trackingId)
       if (isPersisted) {
         run.dataReflected = true
@@ -386,7 +413,12 @@ export async function executeChainedWorkflows(
         candidateElements[0]
 
       // Safety Guard check
-      const safety = classifyAction(chosenElement.name, options?.allowActions || [])
+      const isProd = isProductionLike(targetUrl)
+      const isPaymentPermitted = options?.allowTestPayments === true
+      const safety = classifyAction(chosenElement.name, options?.allowActions || [], {
+        isProduction: isProd,
+        allowTestPayments: isPaymentPermitted,
+      })
       if (safety.tier !== "allow") {
         appendLog(job, "warn", `[WORKFLOW ${workflowId} - STEP ${hop}] Skipping unsafe control "${chosenElement.name}".`)
         break
@@ -398,6 +430,12 @@ export async function executeChainedWorkflows(
         "info",
         `[WORKFLOW ${workflowId} - STEP ${hop}] Interacting with "${chosenElement.name}" on ${nextScreen.name}...`
       )
+      await showActionBanner(page, `Workflow ${workflowId} (Step ${hop}): Interacting with "${chosenElement.name}"`)
+
+      if (chosenElement.selector) {
+        const coords = await animateCursorToSelector(page, chosenElement.selector)
+        if (coords) await triggerClickAnimation(page, coords.x, coords.y)
+      }
 
       const netRecorder = new NetworkRecorder(page, targetUrl, options?.noiseHosts)
       const consoleRecorder = new ConsoleRecorder(page)

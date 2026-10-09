@@ -44,14 +44,31 @@ const EMAIL_HOSTS = [
 
 export function classifyAction(
   label: string,
-  allowActions: string[] = []
+  allowActions: string[] = [],
+  options?: { isProduction?: boolean; allowTestPayments?: boolean }
 ): { tier: SafetyTier; reason?: string } {
   const text = (label || "").trim()
   if (!text) return { tier: "allow" }
-  if (HARD_KEYWORDS.test(text)) {
-    return { tier: "hard_block", reason: `Payment/checkout action "${text}" is hard-blocked` }
-  }
+
   const allow = new Set(allowActions.map((a) => a.toLowerCase().trim()))
+  const isPaymentPermitted =
+    options?.allowTestPayments === true ||
+    (options?.allowTestPayments !== false &&
+      (options?.isProduction === false ||
+        allow.has("pay") ||
+        allow.has("payment") ||
+        allow.has("checkout")))
+
+  if (HARD_KEYWORDS.test(text)) {
+    if (isPaymentPermitted) {
+      return { tier: "allow" }
+    }
+    return {
+      tier: "hard_block",
+      reason: `Payment/checkout action "${text}" is hard-blocked in production. To test in staging/dev or allow payments, add "pay" to allowActions or enable test payments.`,
+    }
+  }
+
   for (const [token, re] of Object.entries(SOFT_KEYWORDS)) {
     if (re.test(text) && !allow.has(token)) {
       return {
@@ -82,16 +99,28 @@ function matchesAny(host: string, list: RegExp[]) {
 }
 
 /**
- * Aborts state-changing requests to payment hosts (always) and email-provider hosts
- * (unless "send" is allowlisted). GETs pass so payment SDK scripts still load and the
- * page renders; only the money/email-moving calls are stopped.
- * ponytail: host lists are static; extend PAYMENT_HOSTS/EMAIL_HOSTS when a target uses another provider.
+ * Aborts state-changing requests to payment hosts (in production) and email-provider hosts
+ * (unless "send" is allowlisted). In test environments or when payment testing is permitted,
+ * mutating payment calls pass so sandbox payment gateways can be verified.
  */
 export async function installNetworkGuard(
   page: Page,
-  opts: { allowActions?: string[]; onBlocked?: (url: string, reason: string) => void } = {}
+  opts: {
+    allowActions?: string[]
+    allowTestPayments?: boolean
+    isProduction?: boolean
+    onBlocked?: (url: string, reason: string) => void
+  } = {}
 ): Promise<void> {
-  const allowSend = (opts.allowActions || []).map((a) => a.toLowerCase()).includes("send")
+  const allow = new Set((opts.allowActions || []).map((a) => a.toLowerCase().trim()))
+  const allowSend = allow.has("send")
+  const allowPay =
+    opts.allowTestPayments ||
+    allow.has("pay") ||
+    allow.has("payment") ||
+    allow.has("checkout") ||
+    opts.isProduction === false
+
   await page.setRequestInterception(true)
   page.on("request", (req: HTTPRequest) => {
     if (req.isInterceptResolutionHandled()) return
@@ -104,7 +133,7 @@ export async function installNetworkGuard(
     }
     const mutating = !SAFE_METHODS.has(req.method().toUpperCase())
     let reason = ""
-    if (mutating && matchesAny(host, PAYMENT_HOSTS)) reason = "payment host"
+    if (mutating && !allowPay && matchesAny(host, PAYMENT_HOSTS)) reason = "payment host"
     else if (mutating && !allowSend && matchesAny(host, EMAIL_HOSTS)) reason = "email provider"
     if (reason) {
       opts.onBlocked?.(req.url(), reason)

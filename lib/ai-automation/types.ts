@@ -461,11 +461,25 @@ export type AutomationJob = {
   authState?: "none" | "awaiting_credentials" | "logged_in" | "login_failed" | "skipped"
   authPrompt?: string
   pendingCredentials?: { username?: string; password?: string; skip?: boolean }
+  /** Payment form handling: pauses or prompts for test card credentials, or uses sandbox defaults. */
+  paymentState?: "none" | "awaiting_payment_credentials" | "provided" | "skipped"
+  paymentPrompt?: string
+  pendingPaymentCredentials?: TestPaymentCredentials
   /** Last AI-provider error surfaced loudly to the user (never a silent fallback). */
   aiError?: string
   /** Postman Collection v2.1 for API-to-UI data mapping */
   postmanCollection?: string | Record<string, any>
   postmanSummary?: PostmanCollectionSummary
+}
+
+export type TestPaymentCredentials = {
+  cardNumber?: string
+  cardHolder?: string
+  expiryDate?: string
+  cvv?: string
+  zipCode?: string
+  skip?: boolean
+  useDefaultSandbox?: boolean
 }
 
 export type FeatureWorkflowEdgeCase = {
@@ -528,6 +542,11 @@ export type StartAutomationRequest = {
   noiseHosts?: string[]
   /** Postman Collection v2.1 for API-to-UI data mapping */
   postmanCollection?: string | Record<string, any>
+  /** Custom test payment credentials or sandbox preferences */
+  paymentCredentials?: TestPaymentCredentials
+  allowTestPayments?: boolean
+  /** Whether to record session video with visible cursor & interaction highlights (default true) */
+  recordVideo?: boolean
 }
 
 export type ParsedPostmanEndpoint = {

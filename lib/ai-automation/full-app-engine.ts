@@ -49,9 +49,74 @@ import {
   PostmanCollectionSummary,
   PostmanEndpointMapping,
   WorkflowRun,
+  TestPaymentCredentials,
 } from "./types"
 import { executeChainedWorkflows } from "./workflow-chainer"
 import { buildAutomationReport } from "./evidence-reporter"
+import {
+  installVisualOverlay,
+  animateCursorToSelector,
+  triggerClickAnimation,
+  highlightInputTyping,
+  showActionBanner,
+  SessionVideoRecorder,
+} from "./visual-recorder"
+
+export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
+  cardNumber: "4242 4242 4242 4242",
+  cardHolder: "Test Automation User",
+  expiryDate: "12/34",
+  cvv: "123",
+  zipCode: "90210",
+}
+
+/**
+ * Prompts user for test payment credentials when a payment form is reached,
+ * or cleanly falls back to standard sandbox card details in automated/test mode.
+ */
+export async function promptPaymentCredentialsIfNeeded(
+  job: AutomationJob,
+  initialCreds?: TestPaymentCredentials
+): Promise<TestPaymentCredentials> {
+  if (initialCreds && (initialCreds.cardNumber || initialCreds.skip || initialCreds.useDefaultSandbox)) {
+    return initialCreds
+  }
+
+  if (job.pendingPaymentCredentials) {
+    const creds = job.pendingPaymentCredentials
+    job.pendingPaymentCredentials = undefined
+    return creds
+  }
+
+  job.paymentState = "awaiting_payment_credentials"
+  job.paymentPrompt =
+    "Payment / Checkout form detected. Supply custom test payment card details or accept standard sandbox card (Stripe 4242...)."
+  job.currentStep = "Waiting for test payment credentials..."
+  appendLog(job, "info", "💳 Payment form detected - waiting for test card credentials or sandbox default...")
+  saveJob(job)
+
+  // Pause up to 30 seconds for UI response, then default to sandbox card in test mode
+  const deadline = Date.now() + 30 * 1000
+  while (!job.pendingPaymentCredentials && job.status === "running" && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500))
+    const refreshed = getJob(job.id)
+    if (refreshed?.pendingPaymentCredentials) {
+      job.pendingPaymentCredentials = refreshed.pendingPaymentCredentials
+      break
+    }
+    if (refreshed?.status && refreshed.status !== "running") {
+      job.status = refreshed.status
+      break
+    }
+  }
+
+  const supplied = job.pendingPaymentCredentials || DEFAULT_SANDBOX_CARD
+  job.pendingPaymentCredentials = undefined
+  job.paymentState = supplied.skip ? "skipped" : "provided"
+  job.paymentPrompt = undefined
+  saveJob(job)
+  return supplied
+}
 
 // Generate realistic dummy file buffers (PNG, PDF, CSV, TXT)
 export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv" | "video" | "other"): {
@@ -981,6 +1046,8 @@ export async function executeStructuredTestPlan(
     noiseHosts?: string[]
     postmanSummary?: PostmanCollectionSummary
     skipWorkflows?: boolean
+    paymentCredentials?: TestPaymentCredentials
+    allowTestPayments?: boolean
   }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
@@ -996,6 +1063,9 @@ export async function executeStructuredTestPlan(
   let skippedUnsafeCount = 0
   const testedScreensSet = new Set<string>()
 
+  const isProd = isProductionLike(testPlan.targetUrl)
+  const isPaymentPermitted = options?.allowTestPayments === true
+
   for (let i = 0; i < testPlan.steps.length; i++) {
     const step = testPlan.steps[i]
 
@@ -1008,7 +1078,10 @@ export async function executeStructuredTestPlan(
     }
 
     // Safety guard check
-    const safety = classifyAction(step.targetName, options?.allowActions || [])
+    const safety = classifyAction(step.targetName, options?.allowActions || [], {
+      isProduction: isProd,
+      allowTestPayments: isPaymentPermitted,
+    })
     if (safety.tier === "hard_block" || safety.tier === "soft_skip") {
       step.status = "skipped_unsafe"
       step.verdict = "skipped_unsafe"
@@ -1031,7 +1104,10 @@ export async function executeStructuredTestPlan(
 
     const dialogHandler = async (dialog: any) => {
       dialogRef.value = true
-      const actionSafety = classifyAction(step.targetName, options?.allowActions || [])
+      const actionSafety = classifyAction(step.targetName, options?.allowActions || [], {
+        isProduction: isProd,
+        allowTestPayments: isPaymentPermitted,
+      })
       if (actionSafety.tier !== "allow") {
         await dialog.dismiss().catch(() => {})
       } else {
@@ -1055,6 +1131,7 @@ export async function executeStructuredTestPlan(
       if (step.actionType === "form_scenario") {
         const formVariant = step.formVariant || "valid"
         const formSel = step.targetSelector || (step.formId ? `#${step.formId}` : "form")
+        await showActionBanner(page, `Testing Form: "${step.targetName}" (${formVariant})`)
 
         const formExists = await page.evaluate((sel) => {
           try {
@@ -1092,6 +1169,10 @@ export async function executeStructuredTestPlan(
               field.dispatchEvent(new Event("change", { bubbles: true }))
             })
           }, formSel)
+
+          if (formSel) {
+            await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Empty Validation Check]")
+          }
 
           // Click submit
           await page.evaluate((sel) => {
@@ -1178,6 +1259,10 @@ export async function executeStructuredTestPlan(
             })
           }, formSel, SYNTHETIC_TEST_DATA)
 
+          if (formSel) {
+            await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Invalid Format Check]")
+          }
+
           // Click submit
           await page.evaluate((sel) => {
             const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
@@ -1244,59 +1329,130 @@ export async function executeStructuredTestPlan(
           // formVariant === "valid"
           const beforeState = await captureState(page)
 
-          // Fill all fields with valid synthetic data (or payload override)
-          await page.evaluate((sel, testData, payload) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
+          // Detect payment / checkout form
+          const isPaymentForm =
+            /payment|checkout|pay|billing|subscription|order|cart/i.test(step.targetName) ||
+            /pay|checkout|card/i.test(step.screenName) ||
+            (await page.evaluate((sel) => {
+              const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+              if (!form) return false
+              const txt = (form.textContent || "").toLowerCase()
+              const inputs = Array.from(form.querySelectorAll("input"))
+              return (
+                /card\s*(number|no)|cvv|cvc|expir/i.test(txt) ||
+                inputs.some((inp: any) => /card|cvv|cvc|exp/i.test(inp.name || inp.id || inp.placeholder || ""))
+              )
+            }, formSel))
 
-            form.querySelectorAll("input, textarea, select").forEach((field: any) => {
-              const type = (field.type || "").toLowerCase()
-              const name = field.name || field.id || ""
-              const placeholder = field.placeholder || ""
+          let activePaymentCreds: TestPaymentCredentials | undefined = undefined
+          if (isPaymentForm) {
+            activePaymentCreds = await promptPaymentCredentialsIfNeeded(job, options?.paymentCredentials)
+            appendLog(
+              job,
+              "info",
+              `💳 Using test payment card (${activePaymentCreds.cardNumber?.slice(-4) ? '•••• ' + activePaymentCreds.cardNumber?.slice(-4) : 'sandbox card'}) for form "${step.targetName}"`
+            )
+          }
 
-              if (payload && payload[name]) {
-                field.value = payload[name]
+          // Fill all fields with valid synthetic data (or payload override or test card)
+          await page.evaluate(
+            (sel, testData, payload, paymentCreds) => {
+              const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+              if (!form) return
+
+              form.querySelectorAll("input, textarea, select").forEach((field: any) => {
+                const type = (field.type || "").toLowerCase()
+                const name = (field.name || field.id || "").toLowerCase()
+                const placeholder = (field.placeholder || "").toLowerCase()
+
+                if (payload && payload[field.name || field.id]) {
+                  field.value = payload[field.name || field.id]
+                  field.dispatchEvent(new Event("input", { bubbles: true }))
+                  field.dispatchEvent(new Event("change", { bubbles: true }))
+                  return
+                }
+
+                if (field.tagName.toLowerCase() === "select") {
+                  if (field.options && field.options.length > 1) {
+                    field.selectedIndex = 1
+                  } else if (field.options && field.options.length > 0) {
+                    field.selectedIndex = 0
+                  }
+                  field.dispatchEvent(new Event("change", { bubbles: true }))
+                  return
+                }
+
+                if (type === "checkbox" || type === "radio") {
+                  field.checked = true
+                  field.dispatchEvent(new Event("change", { bubbles: true }))
+                  return
+                }
+
+                if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
+
+                // Payment card field auto-filling
+                if (paymentCreds) {
+                  if (
+                    /card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) ||
+                    /card\s*number/i.test(placeholder)
+                  ) {
+                    field.value = paymentCreds.cardNumber || "4242 4242 4242 4242"
+                    field.dispatchEvent(new Event("input", { bubbles: true }))
+                    field.dispatchEvent(new Event("change", { bubbles: true }))
+                    return
+                  }
+                  if (/cvv|cvc|security[-_]?code/i.test(name) || /cvv|cvc|security\s*code/i.test(placeholder)) {
+                    field.value = paymentCreds.cvv || "123"
+                    field.dispatchEvent(new Event("input", { bubbles: true }))
+                    field.dispatchEvent(new Event("change", { bubbles: true }))
+                    return
+                  }
+                  if (/exp|expiration|expiry/i.test(name) || /exp|mm\/yy/i.test(placeholder)) {
+                    field.value = paymentCreds.expiryDate || "12/34"
+                    field.dispatchEvent(new Event("input", { bubbles: true }))
+                    field.dispatchEvent(new Event("change", { bubbles: true }))
+                    return
+                  }
+                  if (/zip|postal/i.test(name) || /zip|postal/i.test(placeholder)) {
+                    field.value = paymentCreds.zipCode || "90210"
+                    field.dispatchEvent(new Event("input", { bubbles: true }))
+                    field.dispatchEvent(new Event("change", { bubbles: true }))
+                    return
+                  }
+                }
+
+                if (type === "email" || /email/i.test(name) || /email/i.test(placeholder)) {
+                  field.value = testData.email || "qa-test@example.com"
+                } else if (type === "password" || /pass/i.test(name)) {
+                  field.value = testData.password || "Password123!"
+                } else if (type === "tel" || /phone/i.test(name)) {
+                  field.value = testData.phone || "+15551234567"
+                } else if (type === "number" || /amount|count|age|qty/i.test(name)) {
+                  field.value = "10"
+                } else if (type === "url" || /url|website/i.test(name)) {
+                  field.value = "https://example.com"
+                } else {
+                  field.value = testData.fullName || "Jane Doe"
+                }
+
                 field.dispatchEvent(new Event("input", { bubbles: true }))
                 field.dispatchEvent(new Event("change", { bubbles: true }))
-                return
-              }
+              })
+            },
+            formSel,
+            SYNTHETIC_TEST_DATA,
+            step.fieldPayload || null,
+            activePaymentCreds || null
+          )
 
-              if (field.tagName.toLowerCase() === "select") {
-                if (field.options && field.options.length > 1) {
-                  field.selectedIndex = 1
-                } else if (field.options && field.options.length > 0) {
-                  field.selectedIndex = 0
-                }
-                field.dispatchEvent(new Event("change", { bubbles: true }))
-                return
-              }
-
-              if (type === "checkbox" || type === "radio") {
-                field.checked = true
-                field.dispatchEvent(new Event("change", { bubbles: true }))
-                return
-              }
-
-              if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
-
-              if (type === "email" || /email/i.test(name) || /email/i.test(placeholder)) {
-                field.value = testData.email || "qa-test@example.com"
-              } else if (type === "password" || /pass/i.test(name)) {
-                field.value = testData.password || "Password123!"
-              } else if (type === "tel" || /phone/i.test(name)) {
-                field.value = testData.phone || "+15551234567"
-              } else if (type === "number" || /amount|count|age|qty/i.test(name)) {
-                field.value = "10"
-              } else if (type === "url" || /url|website/i.test(name)) {
-                field.value = "https://example.com"
-              } else {
-                field.value = testData.fullName || "Jane Doe"
-              }
-
-              field.dispatchEvent(new Event("input", { bubbles: true }))
-              field.dispatchEvent(new Event("change", { bubbles: true }))
-            })
-          }, formSel, SYNTHETIC_TEST_DATA, step.fieldPayload || null)
+          if (formSel) {
+            await highlightInputTyping(
+              page,
+              `${formSel} input:not([type="hidden"])`,
+              activePaymentCreds ? "Test Card Loaded" : "Synthetic Data"
+            )
+          }
+          await showActionBanner(page, `Submitting Form: "${step.targetName}"`)
 
           // Click submit
           await page.evaluate((sel) => {
@@ -1405,6 +1561,10 @@ export async function executeStructuredTestPlan(
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
           else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
         }
+        await showActionBanner(page, `Type "${inputVal}" -> ${step.targetName}`)
+        if (step.targetSelector) {
+          await highlightInputTyping(page, step.targetSelector, inputVal)
+        }
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const before = await captureState(page)
         const filled = await page.evaluate((target, val) => {
@@ -1450,6 +1610,7 @@ export async function executeStructuredTestPlan(
         }
       } else if (step.actionType === "upload") {
         const fileType = step.fileTypeRequired || "image"
+        await showActionBanner(page, `Upload ${fileType.toUpperCase()} -> ${step.targetName}`)
         const dummy = createDummyFileBuffer(fileType)
         const tmpPath = path.join(os.tmpdir(), `upload-test-${Date.now()}-${dummy.fileName}`)
         fs.writeFileSync(tmpPath, dummy.buffer)
@@ -1499,6 +1660,7 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "select") {
+        await showActionBanner(page, `Select "${step.syntheticValue}" -> ${step.targetName}`)
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const selected = await page.evaluate((target, val) => {
           const findEl = (sel?: string) => {
@@ -1532,6 +1694,7 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "toggle") {
+        await showActionBanner(page, `Toggle "${step.targetName}"`)
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const toggled = await page.evaluate((target) => {
           const findEl = (sel?: string) => {
@@ -1562,6 +1725,14 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "click") {
+        await showActionBanner(page, `Click "${step.targetName}"`)
+        if (step.targetSelector) {
+          const coords = await animateCursorToSelector(page, step.targetSelector)
+          if (coords) {
+            await triggerClickAnimation(page, coords.x, coords.y)
+          }
+        }
+
         const expectedEffects = expectFor({
           name: step.targetName,
           isSubmit: /submit|save|register|login/i.test(step.targetName),
@@ -1780,6 +1951,8 @@ export async function executeStructuredTestPlan(
           postmanSummary: options?.postmanSummary || testPlan.postmanSummary,
           allowActions: options?.allowActions,
           noiseHosts: options?.noiseHosts,
+          allowTestPayments: isPaymentPermitted,
+          paymentCredentials: options?.paymentCredentials,
         }
       )
     } catch (wfErr: any) {
@@ -1825,6 +1998,7 @@ export async function executeFullAppTestingJob(
   params: StartAutomationRequest
 ): Promise<void> {
   let browser: Browser | null = null
+  let videoRecorder: SessionVideoRecorder | null = null
 
   try {
     job.status = "running"
@@ -1852,7 +2026,9 @@ export async function executeFullAppTestingJob(
     await page.setViewport({ width: 1440, height: 900 })
 
     // Safety environment inspection
-    if (isProductionLike(job.targetUrl)) {
+    const isProd = isProductionLike(job.targetUrl)
+    const allowTestPayments = params.allowTestPayments ?? !isProd
+    if (isProd) {
       appendLog(
         job,
         "warn",
@@ -1863,10 +2039,21 @@ export async function executeFullAppTestingJob(
     // Install network guard for payment/email hosts
     await installNetworkGuard(page, {
       allowActions: params.allowActions,
+      allowTestPayments,
+      isProduction: isProd,
       onBlocked: (url, reason) => {
         appendLog(job, "warn", `[SAFETY GUARD] Aborted request to ${url} (${reason}).`)
       },
     })
+
+    // Start session video recorder (with visible mouse cursor, ripples & interaction highlights)
+    if (params.recordVideo !== false) {
+      videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
+      await videoRecorder.start()
+      appendLog(job, "info", "🎥 Session journey recording active with visible cursor & interaction overlay.")
+    } else {
+      await installVisualOverlay(page)
+    }
 
     // Track console JS errors
     page.on("pageerror", (err: any) => {
@@ -1938,7 +2125,18 @@ export async function executeFullAppTestingJob(
       allowActions: params.allowActions,
       noiseHosts: params.noiseHosts,
       postmanSummary: testPlan.postmanSummary,
+      allowTestPayments,
+      paymentCredentials: params.paymentCredentials,
     })
+
+    // Finalize session video recording
+    if (videoRecorder) {
+      const recUrl = await videoRecorder.stop(job)
+      if (recUrl) {
+        job.recordingUrl = recUrl
+        if (job.report) job.report.recordingUrl = recUrl
+      }
+    }
 
     // PHASE 4: Final Reporting & Coverage
     job.testingPhase = "reporting"
@@ -1950,6 +2148,13 @@ export async function executeFullAppTestingJob(
     appendLog(job, "success", "🏁 Full App Testing pipeline completed successfully with full evidence and coverage report.")
   } catch (err: any) {
     console.error("[FullAppEngine] Fatal execution failure:", err)
+    if (videoRecorder) {
+      const recUrl = await videoRecorder.stop(job).catch(() => "")
+      if (recUrl) {
+        job.recordingUrl = recUrl
+        if (job.report) job.report.recordingUrl = recUrl
+      }
+    }
     job.status = "failed"
     job.error = err?.message || "Execution exception occurred during Full App Testing"
     job.finishedAt = new Date().toISOString()

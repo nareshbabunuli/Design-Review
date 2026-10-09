@@ -24,9 +24,16 @@ import {
 } from "../lib/ai-automation/postman-importer"
 import { executeChainedWorkflows } from "../lib/ai-automation/workflow-chainer"
 import { buildAutomationReport } from "../lib/ai-automation/evidence-reporter"
+import {
+  installVisualOverlay,
+  animateCursorToSelector,
+  triggerClickAnimation,
+  highlightInputTyping,
+  showActionBanner,
+} from "../lib/ai-automation/visual-recorder"
 
 async function main() {
-  console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1, 2 & 6) ===")
+  console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1-6 + Test Payments & Visual Recording) ===")
 
   // 1. Start local HTTP server serving fixture
   const fixturePath = path.join(process.cwd(), "scripts", "fixtures", "ui-fixture.html")
@@ -55,7 +62,15 @@ async function main() {
   console.log("\n--- Test Suite 1: Safety Guard Classification ---")
   const payCheck = classifyAction("Pay Now $49")
   console.assert(payCheck.tier === "hard_block", `Expected "Pay Now $49" to be hard_block, got ${payCheck.tier}`)
-  console.log("✔ Pay Now: hard_block verified")
+  console.log("✔ Pay Now: hard_block in production default verified")
+
+  const payCheckTestEnv = classifyAction("Pay Now $49", [], { isProduction: false })
+  console.assert(payCheckTestEnv.tier === "allow", `Expected "Pay Now $49" in test env to be allow, got ${payCheckTestEnv.tier}`)
+  console.log("✔ Pay Now (in non-production/test env): allow verified")
+
+  const payCheckAllowed = classifyAction("Pay Now $49", ["pay"], { isProduction: true })
+  console.assert(payCheckAllowed.tier === "allow", `Expected "Pay Now $49" with allowActions to be allow, got ${payCheckAllowed.tier}`)
+  console.log("✔ Pay Now (explicit allowActions in prod): allow verified")
 
   const deleteCheck = classifyAction("Delete Account")
   console.assert(deleteCheck.tier === "soft_skip", `Expected "Delete Account" to be soft_skip, got ${deleteCheck.tier}`)
@@ -74,6 +89,16 @@ async function main() {
   const page = await browser.newPage()
   await page.setViewport({ width: 1280, height: 800 })
   await page.goto(fixtureUrl, { waitUntil: "domcontentloaded" })
+
+  // Test Visual Overlay & Cursor Animations
+  console.log("\nTesting Visual Overlay & Motion Cursor...")
+  await installVisualOverlay(page)
+  const coords = await animateCursorToSelector(page, "#dead-btn")
+  console.assert(Boolean(coords), "Expected visual cursor to calculate coords for #dead-btn")
+  await triggerClickAnimation(page, coords!.x, coords!.y)
+  await highlightInputTyping(page, "#reg-email", "qa-test@example.com")
+  await showActionBanner(page, "Testing Visual Cursor & Ripple Overlay")
+  console.log("✔ Visual Overlay: cursor motion, click ripple, typing highlight & banner verified")
 
   // TEST CASE A: Dead Button
   console.log("\nTesting: Dead Button (No Handler)...")
@@ -242,7 +267,10 @@ async function main() {
     maxScreens: 5,
   }
 
-  await executeStructuredTestPlan(job, page, plan, undefined, undefined, { skipWorkflows: true })
+  await executeStructuredTestPlan(job, page, plan, undefined, undefined, {
+    skipWorkflows: true,
+    allowTestPayments: false,
+  })
 
   console.assert(
     formSteps[0].status === "passed",
