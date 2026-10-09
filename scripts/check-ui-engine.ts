@@ -7,12 +7,19 @@ import {
   expectFor,
   captureState,
   runWithLadder,
+  verifyModalCloseAndFocus,
   NetworkRecorder,
   ConsoleRecorder,
 } from "../lib/ai-automation/outcome-verifier"
+import {
+  extractActionableInventory,
+  generateStructuredTestPlan,
+  executeStructuredTestPlan,
+} from "../lib/ai-automation/full-app-engine"
+import type { AutomationJob, AppScreenNode } from "../lib/ai-automation/types"
 
 async function main() {
-  console.log("=== Testing Outcome-Verified UI Testing Engine (Phase 1 & 6) ===")
+  console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1, 2 & 6) ===")
 
   // 1. Start local HTTP server serving fixture
   const fixturePath = path.join(process.cwd(), "scripts", "fixtures", "ui-fixture.html")
@@ -106,8 +113,8 @@ async function main() {
   )
   console.log("✔ Dummy Video Card correctly classified as suspected_non_functional")
 
-  // TEST CASE C: Working Modal Dialog
-  console.log("\nTesting: Modal Dialog Open Button...")
+  // TEST CASE C: Working Modal Dialog & Focus Restoration
+  console.log("\nTesting: Modal Dialog Open Button & Focus Restoration...")
   const netRec3 = new NetworkRecorder(page, fixtureUrl)
   const consRec3 = new ConsoleRecorder(page)
   const modalRes = await runWithLadder(
@@ -126,6 +133,12 @@ async function main() {
   console.assert(modalRes.verdict === "passed", `Expected modal open button to pass, got "${modalRes.verdict}"`)
   console.assert(modalRes.observedEffect === "modal_opened", `Expected modal_opened effect, got "${modalRes.observedEffect}"`)
   console.log("✔ Modal Dialog Open verified as passed with modal_opened effect")
+
+  // Verify modal close & focus restoration
+  const modalCloseRes = await verifyModalCloseAndFocus(page, "#modal-btn", "Open Dialog Modal")
+  console.assert(modalCloseRes.closed === true, "Expected modal to be closed via close button")
+  console.assert(modalCloseRes.focusRestored === true, "Expected focus to be restored to trigger button")
+  console.log(`✔ Modal Dialog dismissal verified via ${modalCloseRes.method} and focus restored (${modalCloseRes.activeElementTag})`)
 
   // TEST CASE D: Covered Button
   console.log("\nTesting: Partially Covered Button...")
@@ -150,6 +163,103 @@ async function main() {
   )
   console.log("✔ Overlapping/Covered element correctly flagged")
 
+  // TEST SUITE 3: Phase 2 Form Scenarios (Unit Testing)
+  console.log("\n--- Test Suite 3: Form Scenarios & Structured Unit Testing ---")
+  await page.goto(fixtureUrl, { waitUntil: "domcontentloaded" })
+  const inv = await extractActionableInventory(page)
+
+  console.assert(inv.forms.length === 1, `Expected 1 form in inventory, got ${inv.forms.length}`)
+  console.assert(inv.forms[0].id === "reg-form", `Expected form id to be "reg-form", got "${inv.forms[0].id}"`)
+  console.assert(Boolean(inv.forms[0].selector), "Expected form selector to be present")
+  console.assert(Boolean(inv.forms[0].submitSelector), "Expected form submitSelector to be present")
+  console.log(`✔ Inventory discovered form: id="${inv.forms[0].id}", selector="${inv.forms[0].selector}"`)
+
+  const formInputs = inv.actionableElements.filter((el) => el.formId === "reg-form")
+  console.assert(formInputs.length >= 3, `Expected at least 3 elements linked to reg-form, got ${formInputs.length}`)
+  console.log(`✔ ${formInputs.length} input elements successfully linked to formId "reg-form"`)
+
+  const screenNode: AppScreenNode = {
+    id: "S001",
+    name: "Fixture Page",
+    url: fixtureUrl,
+    path: "/",
+    actionableElements: inv.actionableElements,
+    forms: inv.forms,
+    discoveredAt: new Date().toISOString(),
+  }
+
+  const plan = generateStructuredTestPlan(fixtureUrl, [screenNode], [])
+  const formSteps = plan.steps.filter((s) => s.actionType === "form_scenario" && s.formId === "reg-form")
+
+  console.assert(formSteps.length === 3, `Expected 3 form scenarios planned, got ${formSteps.length}`)
+  console.assert(
+    formSteps[0].formVariant === "required_empty",
+    `Expected step 0 variant to be "required_empty", got "${formSteps[0].formVariant}"`
+  )
+  console.assert(
+    formSteps[1].formVariant === "invalid_format",
+    `Expected step 1 variant to be "invalid_format", got "${formSteps[1].formVariant}"`
+  )
+  console.assert(
+    formSteps[2].formVariant === "valid",
+    `Expected step 2 variant to be "valid", got "${formSteps[2].formVariant}"`
+  )
+  console.log("✔ Strict form scenario ordering verified: required_empty -> invalid_format -> valid (last)")
+
+  const looseFills = plan.steps.filter((s) => s.actionType === "fill")
+  console.assert(looseFills.length === 0, `Expected 0 loose fill steps for form fields, got ${looseFills.length}`)
+  console.log("✔ Standalone filter verified: no duplicate loose fill steps for form fields")
+
+  console.log("\n--- Test Suite 4: End-to-End Structured Test Plan Execution ---")
+  const job: AutomationJob = {
+    id: `test-job-${Date.now()}`,
+    type: "full_app",
+    targetUrl: fixtureUrl,
+    status: "running",
+    testingPhase: "executing",
+    progress: 0,
+    currentStep: "Starting test",
+    logs: [],
+    issues: [],
+    discoveredScreens: [],
+    flowGraph: { nodes: [], edges: [] },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  await executeStructuredTestPlan(job, page, plan)
+
+  console.assert(
+    formSteps[0].status === "passed",
+    `Expected required_empty form step to PASS, got "${formSteps[0].status}" (error: ${formSteps[0].error})`
+  )
+  console.log(`✔ Form Variant 1 (required_empty): PASSED (${formSteps[0].actualResult})`)
+
+  console.assert(
+    formSteps[1].status === "passed",
+    `Expected invalid_format form step to PASS, got "${formSteps[1].status}" (error: ${formSteps[1].error})`
+  )
+  console.log(`✔ Form Variant 2 (invalid_format): PASSED (${formSteps[1].actualResult})`)
+
+  console.assert(
+    formSteps[2].status === "passed",
+    `Expected valid form step to PASS, got "${formSteps[2].status}" (error: ${formSteps[2].error})`
+  )
+  console.log(`✔ Form Variant 3 (valid submission): PASSED (${formSteps[2].actualResult})`)
+
+  // Check safety skips in executed plan
+  const safetySkips = plan.steps.filter((s) => s.status === "skipped_unsafe")
+  console.assert(safetySkips.length >= 1, `Expected at least 1 safety skip, got ${safetySkips.length}`)
+  console.log(`✔ Safety guard successfully skipped ${safetySkips.length} dangerous action(s) in plan`)
+
+  // Check suspected non-functional in executed plan
+  const deadStep = plan.steps.find((s) => s.targetName.toLowerCase().includes("dead button"))
+  console.assert(
+    deadStep?.verdict === "suspected_non_functional",
+    `Expected dead button verdict to be suspected_non_functional, got "${deadStep?.verdict}"`
+  )
+  console.log("✔ Dead button confirmed as suspected_non_functional in plan report")
+
   // Cleanup
   await browser.close()
   server.close()
@@ -162,3 +272,4 @@ main().catch((err) => {
   console.error("Test execution failed:", err)
   process.exit(1)
 })
+

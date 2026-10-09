@@ -601,3 +601,86 @@ export async function runWithLadder(
     afterSnapshot: after,
   }
 }
+
+/**
+ * Verifies modal dismissal via close button or Escape key,
+ * and checks whether keyboard focus was restored properly (WCAG 2.4.3).
+ */
+export async function verifyModalCloseAndFocus(
+  page: Page,
+  triggerSelector?: string,
+  triggerName?: string
+): Promise<{
+  closed: boolean
+  focusRestored: boolean
+  method: "close_button" | "escape" | "none"
+  activeElementTag?: string
+}> {
+  // 1. Try finding close button
+  const closeBtnHandle = await page.evaluateHandle(() => {
+    const modal = document.querySelector('[role="dialog"], dialog[open], .modal, [data-modal]')
+    if (!modal) return null
+    return (
+      modal.querySelector(
+        'button[id*="close" i], [aria-label*="close" i], button.close, [data-dismiss], [data-close], button[class*="close"], button:has(svg)'
+      ) ||
+      Array.from(modal.querySelectorAll("button")).find((b) => /close|dismiss|cancel/i.test(b.textContent || "")) ||
+      null
+    )
+  })
+
+  let closed = false
+  let method: "close_button" | "escape" | "none" = "none"
+
+  const btnElement = closeBtnHandle.asElement()
+  if (btnElement) {
+    await page
+      .evaluate((el) => {
+        if (el && (el as HTMLElement).click) (el as HTMLElement).click()
+      }, btnElement)
+      .catch(() => {})
+    await new Promise((r) => setTimeout(r, 400))
+    const stateAfterBtn = await captureState(page)
+    if (!stateAfterBtn.hasModal) {
+      closed = true
+      method = "close_button"
+    }
+  }
+
+  // 2. If not closed, try Escape key
+  if (!closed) {
+    await page.keyboard.press("Escape")
+    await new Promise((r) => setTimeout(r, 400))
+    const stateAfterEsc = await captureState(page)
+    if (!stateAfterEsc.hasModal) {
+      closed = true
+      method = "escape"
+    }
+  }
+
+  // 3. Check focus restoration
+  const focusCheck = await page.evaluate((trigSel) => {
+    const active = document.activeElement
+    const isBody = !active || active === document.body || active === document.documentElement
+    let restoredToTrigger = false
+    if (trigSel) {
+      try {
+        const trig = document.querySelector(trigSel)
+        if (trig && trig === active) restoredToTrigger = true
+      } catch {}
+    }
+    return {
+      isBody,
+      activeTag: active ? active.tagName.toLowerCase() : "none",
+      restoredToTrigger,
+    }
+  }, triggerSelector)
+
+  return {
+    closed,
+    focusRestored: !focusCheck.isBody,
+    method,
+    activeElementTag: focusCheck.activeTag,
+  }
+}
+

@@ -69,6 +69,32 @@
     </div>
   </div>
 
+  <!-- Form Unit Test Controls -->
+  <div class="card">
+    <h3>User Registration Form</h3>
+    <form id="reg-form">
+      <div>
+        <label for="reg-name">Full Name *</label><br>
+        <input type="text" id="reg-name" name="name" required placeholder="Full Name">
+      </div>
+      <br>
+      <div>
+        <label for="reg-email">Email Address *</label><br>
+        <input type="email" id="reg-email" name="email" required placeholder="name@example.com">
+      </div>
+      <br>
+      <div>
+        <label for="reg-phone">Phone Number</label><br>
+        <input type="tel" id="reg-phone" name="phone" placeholder="+1234567890">
+      </div>
+      <br>
+      <button type="submit" id="reg-submit-btn">Register Account</button>
+      <div id="reg-success" class="success" style="display:none; color: green; margin-top: 8px;">
+        Account registered successfully!
+      </div>
+    </form>
+  </div>
+
   <div id="destination" style="margin-top: 100px;">
     <h2>Destination Section</h2>
     <p>Navigated here successfully.</p>
@@ -130,6 +156,14 @@
     const coveredBtn = document.getElementById('covered-btn');
     coveredBtn.addEventListener('click', () => {
       coveredBtn.textContent = 'Clicked Covered!';
+    });
+
+    // 8. Form submit handler
+    const regForm = document.getElementById('reg-form');
+    const regSuccess = document.getElementById('reg-success');
+    regForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      regSuccess.style.display = 'block';
     });
   </script>
 </body>

@@ -35,6 +35,7 @@ import {
   settle,
   classifyEffect,
   runWithLadder,
+  verifyModalCloseAndFocus,
   NetworkRecorder,
   ConsoleRecorder,
 } from "./outcome-verifier"
@@ -88,7 +89,15 @@ export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv"
  */
 export async function extractActionableInventory(page: Page): Promise<{
   actionableElements: ActionableElement[]
-  forms: Array<{ id: string; name?: string; fields: string[]; submitButton?: string }>
+  forms: Array<{
+    id: string
+    name?: string
+    selector?: string
+    fields: string[]
+    submitButton?: string
+    submitSelector?: string
+    isInsideModal?: boolean
+  }>
   modalTitle?: string
   heading?: string
 }> {
@@ -112,43 +121,46 @@ export async function extractActionableInventory(page: Page): Promise<{
     const heading = h1 ? (h1.textContent || "").trim() : ""
 
     // 3. Scan Forms
-    document.querySelectorAll("form, [data-form], .form").forEach((form, fIdx) => {
-      const formId = form.id || `form-${fIdx + 1}`
+    document.querySelectorAll("form, [data-form], .form").forEach((form: any, fIdx) => {
+      const formId = form.id || (form.dataset.formTestId ||= `form-${fIdx + 1}`)
+      const formSelector = form.id
+        ? `#${form.id}`
+        : form.getAttribute("name")
+        ? `form[name="${form.getAttribute("name")}"]`
+        : `form:nth-of-type(${fIdx + 1})`
+      const isInsideModal = Boolean(form.closest('[role="dialog"], dialog, .modal, [data-modal]'))
       const formFields: string[] = []
       let submitBtnText = ""
+      let submitSelector = ""
 
       form.querySelectorAll("input, select, textarea").forEach((field: any) => {
         const fieldName = field.name || field.id || field.placeholder || `field-${field.type}`
         formFields.push(fieldName)
       })
 
-      const submit = form.querySelector('button[type="submit"], input[type="submit"]')
+      const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])')
       if (submit) {
         submitBtnText = (submit.textContent || (submit as HTMLInputElement).value || "Submit").trim()
+        submitSelector = submit.id
+          ? `#${submit.id}`
+          : `${formSelector} button[type="submit"], ${formSelector} input[type="submit"], ${formSelector} button`
       }
 
       forms.push({
         id: formId,
         name: form.getAttribute("aria-label") || form.getAttribute("name") || `Form #${fIdx + 1}`,
+        selector: formSelector,
         fields: formFields,
         submitButton: submitBtnText || undefined,
+        submitSelector: submitSelector || undefined,
+        isInsideModal,
       })
     })
 
-    const isVisible = (el: HTMLElement) => {
-      const style = window.getComputedStyle(el)
-      const rect = el.getBoundingClientRect()
-      return (
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        style.opacity !== "0" &&
-        rect.width > 2 &&
-        rect.height > 2
-      )
-    }
-
     // 4. File Upload Controls
     document.querySelectorAll('input[type="file"]').forEach((el: any) => {
+      const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
+      const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
       const name = el.name || el.id || el.getAttribute("aria-label") || "Upload File"
       elements.push({
         id: `elem-${elementCounter++}`,
@@ -158,13 +170,15 @@ export async function extractActionableInventory(page: Page): Promise<{
         inputType: "file",
         accept: el.accept || "image/*,.pdf,.doc,.docx",
         isRequired: el.required || false,
+        formId,
       })
     })
 
     // 5. Input Fields (Text, Email, Password, Number, Search, Date, etc.)
     document.querySelectorAll("input, textarea").forEach((el: any) => {
       if (el.type === "file" || el.type === "hidden" || el.type === "submit" || el.type === "button") return
-      if (!isVisible(el)) return
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
       const type = el.type || (el.tagName.toLowerCase() === "textarea" ? "textarea" : "text")
       let elementType: any = "input"
@@ -175,6 +189,9 @@ export async function extractActionableInventory(page: Page): Promise<{
       const labelText = labelEl ? (labelEl.textContent || "").trim() : ""
       const name = labelText || el.placeholder || el.name || el.id || `${type} input`
 
+      const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
+      const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
+
       elements.push({
         id: `elem-${elementCounter++}`,
         name: name.replace(/[:*]/g, "").trim(),
@@ -184,12 +201,15 @@ export async function extractActionableInventory(page: Page): Promise<{
         placeholder: el.placeholder || undefined,
         value: el.value || undefined,
         isRequired: el.required || false,
+        formId,
       })
     })
 
     // 6. Dropdowns / Selects
     document.querySelectorAll("select, [role='combobox'], [role='listbox']").forEach((el: any) => {
-      if (!isVisible(el)) return
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
       const labelEl = el.id ? document.querySelector(`label[for="${el.id}"]`) : null
       const name = (labelEl ? labelEl.textContent : "") || el.name || el.id || "Dropdown Option"
 
@@ -201,31 +221,44 @@ export async function extractActionableInventory(page: Page): Promise<{
         })
       }
 
+      const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
+      const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
+
       elements.push({
         id: `elem-${elementCounter++}`,
         name: name.replace(/[:*]/g, "").trim(),
         type: "select",
         selector: el.id ? `#${el.id}` : el.name ? `select[name="${el.name}"]` : undefined,
         options: options.slice(0, 8),
+        formId,
       })
     })
 
     // 7. Tabs, Radios & Toggles
     document.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
-      if (!isVisible(el)) return
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
       const txt = (el.textContent || el.getAttribute("aria-label") || "Tab / Toggle").trim()
       if (!txt) return
+
+      const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
+      const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
+
       elements.push({
         id: `elem-${elementCounter++}`,
         name: txt,
         type: el.getAttribute("role") === "tab" ? "tab" : "toggle",
         selector: el.id ? `#${el.id}` : undefined,
+        formId,
       })
     })
 
     // 8. Buttons & Clickable Triggers
     document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']").forEach((el: any) => {
-      if (!isVisible(el)) return
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
       const rawText = (el.textContent || (el as HTMLInputElement).value || el.getAttribute("aria-label") || "").trim()
       if (!rawText && !el.querySelector("svg, img")) return
 
@@ -233,17 +266,23 @@ export async function extractActionableInventory(page: Page): Promise<{
       if (/(logout|sign out|log off|delete account)/i.test(rawText)) return
 
       const cleanText = rawText.replace(/\s+/g, " ").slice(0, 40) || "Action Button"
+      const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
+      const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
+
       elements.push({
         id: `elem-${elementCounter++}`,
         name: cleanText,
         type: "button",
         selector: el.id ? `#${el.id}` : undefined,
+        formId,
       })
     })
 
     // 9. Links & Navigation
     document.querySelectorAll("a[href]").forEach((el: any) => {
-      if (!isVisible(el)) return
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
       const href = el.getAttribute("href") || ""
       if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) return
       if (/(logout|signout)/i.test(href)) return
@@ -663,9 +702,80 @@ export function generateStructuredTestPlan(
       continue
     }
 
-    // 1. Plan Form Input field interactions with synthetic faker test data
-    const inputs = screen.actionableElements.filter((el) => el.type === "input")
-    for (const input of inputs) {
+    // Track which forms are handled so we avoid loose duplicate steps for their inputs/submits
+    const handledFormIds = new Set<string>()
+
+    // 1. Plan Form Scenarios (grouped by screen.forms)
+    if (screen.forms && screen.forms.length > 0) {
+      for (const form of screen.forms) {
+        handledFormIds.add(form.id)
+        const formElements = screen.actionableElements.filter(
+          (el) => el.formId === form.id || (form.fields && form.fields.includes(el.name))
+        )
+        const hasRequired = formElements.some((el) => el.isRequired)
+        const hasFormat = formElements.some(
+          (el) =>
+            el.inputType === "email" ||
+            el.inputType === "tel" ||
+            /email|phone|mobile/i.test(el.name) ||
+            /email|phone|mobile/i.test(el.placeholder || "")
+        )
+
+        // Strict order: required_empty -> invalid_format -> valid (last)
+        if (hasRequired) {
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "form_scenario",
+            formId: form.id,
+            formVariant: "required_empty",
+            targetName: `Form "${form.name || form.id}" (Required Empty Check)`,
+            targetSelector: form.selector,
+            expectedResult: `Form "${form.name || form.id}" blocks submission and shows validation error when required fields are blank; no mutating 2xx request.`,
+            status: "pending",
+          })
+        }
+
+        if (hasFormat) {
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "form_scenario",
+            formId: form.id,
+            formVariant: "invalid_format",
+            targetName: `Form "${form.name || form.id}" (Invalid Format Check)`,
+            targetSelector: form.selector,
+            expectedResult: `Form "${form.name || form.id}" blocks submission and displays format error when invalid email/phone is typed; no mutating 2xx request.`,
+            status: "pending",
+          })
+        }
+
+        // Always valid scenario last:
+        steps.push({
+          id: `step-${stepCounter++}`,
+          screenId: screen.id,
+          screenName: screen.name,
+          stepIndex: steps.length + 1,
+          actionType: "form_scenario",
+          formId: form.id,
+          formVariant: "valid",
+          targetName: `Form "${form.name || form.id}" (Valid Submission)`,
+          targetSelector: form.selector,
+          expectedResult: `Form "${form.name || form.id}" accepts valid synthetic data and submits, resulting in transition, modal close, toast, or 2xx response.`,
+          status: "pending",
+        })
+      }
+    }
+
+    // 2. Plan Standalone Form Input field interactions (not part of any handled form)
+    const standaloneInputs = screen.actionableElements.filter(
+      (el) => el.type === "input" && (!el.formId || !handledFormIds.has(el.formId))
+    )
+    for (const input of standaloneInputs) {
       let syntheticVal = SYNTHETIC_TEST_DATA.fullName
       if (input.inputType === "email" || /email/i.test(input.name)) {
         syntheticVal = SYNTHETIC_TEST_DATA.email
@@ -695,7 +805,7 @@ export function generateStructuredTestPlan(
       })
     }
 
-    // 2. Plan File Uploads
+    // 3. Plan File Uploads
     const fileUploads = screen.actionableElements.filter((el) => el.type === "file_upload")
     for (const upload of fileUploads) {
       let fType: "image" | "pdf" | "document" | "csv" | "other" = "image"
@@ -719,9 +829,11 @@ export function generateStructuredTestPlan(
       })
     }
 
-    // 3. Plan Dropdowns / Selects
-    const selects = screen.actionableElements.filter((el) => el.type === "select")
-    for (const select of selects) {
+    // 4. Plan Standalone Dropdowns / Selects
+    const standaloneSelects = screen.actionableElements.filter(
+      (el) => el.type === "select" && (!el.formId || !handledFormIds.has(el.formId))
+    )
+    for (const select of standaloneSelects) {
       const choice = select.options && select.options.length > 0 ? select.options[0] : "Option 1"
       steps.push({
         id: `step-${stepCounter++}`,
@@ -737,9 +849,11 @@ export function generateStructuredTestPlan(
       })
     }
 
-    // 4. Plan Checkboxes & Toggles
-    const toggles = screen.actionableElements.filter((el) => el.type === "checkbox" || el.type === "toggle")
-    for (const toggle of toggles) {
+    // 5. Plan Standalone Checkboxes & Toggles
+    const standaloneToggles = screen.actionableElements.filter(
+      (el) => (el.type === "checkbox" || el.type === "toggle") && (!el.formId || !handledFormIds.has(el.formId))
+    )
+    for (const toggle of standaloneToggles) {
       steps.push({
         id: `step-${stepCounter++}`,
         screenId: screen.id,
@@ -753,9 +867,11 @@ export function generateStructuredTestPlan(
       })
     }
 
-    // 5. Plan Buttons & Action Submits
-    const buttons = screen.actionableElements.filter((el) => el.type === "button")
-    for (const btn of buttons) {
+    // 6. Plan Standalone Buttons & Action Submits
+    const standaloneButtons = screen.actionableElements.filter(
+      (el) => el.type === "button" && (!el.formId || !handledFormIds.has(el.formId))
+    )
+    for (const btn of standaloneButtons) {
       steps.push({
         id: `step-${stepCounter++}`,
         screenId: screen.id,
@@ -877,7 +993,323 @@ export async function executeStructuredTestPlan(
       let actionVerdict: AutomationVerdict = "passed"
       let observation = ""
 
-      if (step.actionType === "fill") {
+      if (step.actionType === "form_scenario") {
+        const formVariant = step.formVariant || "valid"
+        const formSel = step.targetSelector || (step.formId ? `#${step.formId}` : "form")
+
+        const formExists = await page.evaluate((sel) => {
+          try {
+            return Boolean(document.querySelector(sel) || document.querySelector("form"))
+          } catch {
+            return Boolean(document.querySelector("form"))
+          }
+        }, formSel)
+
+        if (!formExists) {
+          actionVerdict = "failed"
+          observation = `Could not locate form with selector "${formSel}".`
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: 0,
+            networkCalls: netRecorder.getCapturedCalls(),
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        } else if (formVariant === "required_empty") {
+          // Clear all form inputs
+          await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+            form.querySelectorAll("input, textarea, select").forEach((field: any) => {
+              if (field.type === "checkbox" || field.type === "radio") {
+                field.checked = false
+              } else if (field.type !== "submit" && field.type !== "button" && field.type !== "hidden") {
+                field.value = ""
+              }
+              field.dispatchEvent(new Event("input", { bubbles: true }))
+              field.dispatchEvent(new Event("change", { bubbles: true }))
+            })
+          }, formSel)
+
+          // Click submit
+          await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
+            if (submit) {
+              submit.click()
+            } else if (typeof form.requestSubmit === "function") {
+              form.requestSubmit()
+            } else {
+              form.submit()
+            }
+          }, formSel)
+
+          const settleMs = await settle(page, netRecorder, 2000)
+          const calls = netRecorder.getCapturedCalls()
+          const mutating2xx = calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 200 && c.status < 300)
+
+          const validation = await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return { hasError: false, detail: "Form not found" }
+
+            const invalids = form.querySelectorAll(":invalid")
+            if (invalids.length > 0) return { hasError: true, detail: `HTML5 :invalid on ${invalids.length} field(s)` }
+
+            const ariaInvalids = form.querySelectorAll('[aria-invalid="true"]')
+            if (ariaInvalids.length > 0) return { hasError: true, detail: `aria-invalid="true" on ${ariaInvalids.length} field(s)` }
+
+            const alerts = document.querySelectorAll('[role="alert"], .error, .invalid-feedback, [class*="error"], [class*="alert"]')
+            const visible = Array.from(alerts).filter((el: any) => {
+              const s = window.getComputedStyle(el)
+              return s.display !== "none" && s.visibility !== "hidden" && (el.textContent || "").trim().length > 0
+            })
+            if (visible.length > 0) return { hasError: true, detail: `Visible validation error: "${(visible[0].textContent || "").trim().slice(0, 60)}"` }
+
+            const msgFields = Array.from(form.querySelectorAll("input, select, textarea")).filter((f: any) => Boolean(f.validationMessage))
+            if (msgFields.length > 0) return { hasError: true, detail: `Validation message: "${(msgFields[0] as any).validationMessage}"` }
+
+            return { hasError: false, detail: "No visible validation error indicated" }
+          }, formSel)
+
+          if (mutating2xx) {
+            actionVerdict = "failed"
+            observation = "Form submitted empty required fields and was accepted with 2xx mutating network request."
+          } else if (validation.hasError) {
+            actionVerdict = "passed"
+            observation = `Required field validation correctly blocked empty submission (${validation.detail}).`
+          } else {
+            actionVerdict = "failed"
+            observation = "Form submission blocked or stalled, but no visible validation message or :invalid state was shown."
+          }
+
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: validation.hasError ? "content_changed" : mutating2xx ? "network_only" : "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: settleMs,
+            networkCalls: calls,
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        } else if (formVariant === "invalid_format") {
+          // Fill valid dummy data for normal fields, invalid for email/phone
+          await page.evaluate((sel, testData) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+            form.querySelectorAll("input, textarea").forEach((field: any) => {
+              const type = (field.type || "").toLowerCase()
+              const name = (field.name || field.id || "").toLowerCase()
+
+              if (type === "email" || name.includes("email")) {
+                field.value = "invalid-email-format"
+              } else if (type === "tel" || name.includes("phone")) {
+                field.value = "not-a-valid-phone-number"
+              } else if (type === "checkbox" || type === "radio") {
+                field.checked = true
+              } else if (type !== "submit" && type !== "button" && type !== "hidden") {
+                field.value = testData.fullName || "Jane Doe"
+              }
+              field.dispatchEvent(new Event("input", { bubbles: true }))
+              field.dispatchEvent(new Event("change", { bubbles: true }))
+            })
+          }, formSel, SYNTHETIC_TEST_DATA)
+
+          // Click submit
+          await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
+            if (submit) {
+              submit.click()
+            } else if (typeof form.requestSubmit === "function") {
+              form.requestSubmit()
+            } else {
+              form.submit()
+            }
+          }, formSel)
+
+          const settleMs = await settle(page, netRecorder, 2000)
+          const calls = netRecorder.getCapturedCalls()
+          const mutating2xx = calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 200 && c.status < 300)
+
+          const validation = await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return { hasError: false, detail: "Form not found" }
+
+            const invalids = form.querySelectorAll(":invalid")
+            if (invalids.length > 0) return { hasError: true, detail: `HTML5 :invalid on ${invalids.length} field(s)` }
+
+            const ariaInvalids = form.querySelectorAll('[aria-invalid="true"]')
+            if (ariaInvalids.length > 0) return { hasError: true, detail: `aria-invalid="true" on ${ariaInvalids.length} field(s)` }
+
+            const alerts = document.querySelectorAll('[role="alert"], .error, .invalid-feedback, [class*="error"], [class*="alert"]')
+            const visible = Array.from(alerts).filter((el: any) => {
+              const s = window.getComputedStyle(el)
+              return s.display !== "none" && s.visibility !== "hidden" && (el.textContent || "").trim().length > 0
+            })
+            if (visible.length > 0) return { hasError: true, detail: `Visible validation error: "${(visible[0].textContent || "").trim().slice(0, 60)}"` }
+
+            const msgFields = Array.from(form.querySelectorAll("input, select, textarea")).filter((f: any) => Boolean(f.validationMessage))
+            if (msgFields.length > 0) return { hasError: true, detail: `Validation message: "${(msgFields[0] as any).validationMessage}"` }
+
+            return { hasError: false, detail: "No format validation error displayed" }
+          }, formSel)
+
+          if (mutating2xx) {
+            actionVerdict = "failed"
+            observation = "Form submitted invalid email/phone format and server accepted with 2xx mutating network request."
+          } else if (validation.hasError) {
+            actionVerdict = "passed"
+            observation = `Format validation correctly rejected invalid format (${validation.detail}).`
+          } else {
+            actionVerdict = "failed"
+            observation = "No visible format validation error displayed for invalid email/phone input."
+          }
+
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: validation.hasError ? "content_changed" : mutating2xx ? "network_only" : "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: settleMs,
+            networkCalls: calls,
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        } else {
+          // formVariant === "valid"
+          const beforeState = await captureState(page)
+
+          // Fill all fields with valid synthetic data (or payload override)
+          await page.evaluate((sel, testData, payload) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+
+            form.querySelectorAll("input, textarea, select").forEach((field: any) => {
+              const type = (field.type || "").toLowerCase()
+              const name = field.name || field.id || ""
+              const placeholder = field.placeholder || ""
+
+              if (payload && payload[name]) {
+                field.value = payload[name]
+                field.dispatchEvent(new Event("input", { bubbles: true }))
+                field.dispatchEvent(new Event("change", { bubbles: true }))
+                return
+              }
+
+              if (field.tagName.toLowerCase() === "select") {
+                if (field.options && field.options.length > 1) {
+                  field.selectedIndex = 1
+                } else if (field.options && field.options.length > 0) {
+                  field.selectedIndex = 0
+                }
+                field.dispatchEvent(new Event("change", { bubbles: true }))
+                return
+              }
+
+              if (type === "checkbox" || type === "radio") {
+                field.checked = true
+                field.dispatchEvent(new Event("change", { bubbles: true }))
+                return
+              }
+
+              if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
+
+              if (type === "email" || /email/i.test(name) || /email/i.test(placeholder)) {
+                field.value = testData.email || "qa-test@example.com"
+              } else if (type === "password" || /pass/i.test(name)) {
+                field.value = testData.password || "Password123!"
+              } else if (type === "tel" || /phone/i.test(name)) {
+                field.value = testData.phone || "+15551234567"
+              } else if (type === "number" || /amount|count|age|qty/i.test(name)) {
+                field.value = "10"
+              } else if (type === "url" || /url|website/i.test(name)) {
+                field.value = "https://example.com"
+              } else {
+                field.value = testData.fullName || "Jane Doe"
+              }
+
+              field.dispatchEvent(new Event("input", { bubbles: true }))
+              field.dispatchEvent(new Event("change", { bubbles: true }))
+            })
+          }, formSel, SYNTHETIC_TEST_DATA, step.fieldPayload || null)
+
+          // Click submit
+          await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return
+            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
+            if (submit) {
+              submit.click()
+            } else if (typeof form.requestSubmit === "function") {
+              form.requestSubmit()
+            } else {
+              form.submit()
+            }
+          }, formSel)
+
+          const settleMs = await settle(page, netRecorder, 8000)
+          const afterState = await captureState(page)
+          const calls = netRecorder.getCapturedCalls()
+          const mutating2xx = calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 200 && c.status < 300)
+          const navigated = beforeState.url !== afterState.url
+          const modalClosed = beforeState.hasModal && !afterState.hasModal
+
+          const successFeedback = await page.evaluate(() => {
+            const successEls = document.querySelectorAll(
+              '[role="status"], .success, .alert-success, [class*="toast"], [class*="success"], [data-success]'
+            )
+            const visible = Array.from(successEls).filter((el: any) => {
+              const s = window.getComputedStyle(el)
+              return s.display !== "none" && s.visibility !== "hidden" && (el.textContent || "").trim().length > 0
+            })
+            return visible.length > 0 ? (visible[0].textContent || "").trim().slice(0, 80) : null
+          })
+
+          if (navigated || modalClosed || mutating2xx || successFeedback) {
+            actionVerdict = "passed"
+            const details: string[] = []
+            if (navigated) details.push(`navigated to ${afterState.url}`)
+            if (modalClosed) details.push("closed modal dialog")
+            if (mutating2xx) details.push("server returned 2xx mutating response")
+            if (successFeedback) details.push(`success feedback: "${successFeedback}"`)
+            observation = `Form submitted successfully with valid data (${details.join(", ")}).`
+          } else if (consoleRecorder.getErrors().length > 0 || calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 400)) {
+            actionVerdict = "failed"
+            observation = `Form submission encountered errors: ${consoleRecorder.getErrors().join("; ") || "HTTP error status"}`
+          } else {
+            actionVerdict = "suspected_non_functional"
+            observation = "Form submission produced no navigation, no modal closure, no success feedback, and no network activity. Suspected non-functional or mock form."
+            job.issues.push({
+              id: `issue-form-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              screenUrl: page.url(),
+              screenTitle: step.screenName,
+              type: "non_functional_control",
+              severity: "medium",
+              description: `Form "${step.targetName}" submitted valid synthetic data but produced zero observable outcome, navigation, or network activity.`,
+              expected: "Navigation, modal closure, success toast, or 2xx mutating network response.",
+              actual: "Page remained static with no network or DOM response.",
+              timestamp: new Date().toISOString(),
+            })
+          }
+
+          step.evidence = {
+            expectedEffects: ["navigated", "network_only", "modal_opened", "content_changed"],
+            observedEffect: navigated ? "navigated" : modalClosed ? "content_changed" : mutating2xx ? "network_only" : "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: settleMs,
+            networkCalls: calls,
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        }
+      } else if (step.actionType === "fill") {
         let inputVal = step.syntheticValue || SYNTHETIC_TEST_DATA.fullName
         if (credentials?.password) {
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
@@ -1057,6 +1489,29 @@ export async function executeStructuredTestPlan(
 
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
+
+        if (ladderResult.observedEffect === "modal_opened") {
+          appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
+          const modalOutcome = await verifyModalCloseAndFocus(page, step.targetSelector, step.targetName)
+          if (modalOutcome.closed) {
+            observation += ` Modal verified and closed via ${modalOutcome.method}.`
+            if (!modalOutcome.focusRestored) {
+              job.issues.push({
+                id: `issue-focus-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                screenUrl: page.url(),
+                screenTitle: step.screenName,
+                type: "focus_not_restored",
+                severity: "low",
+                description: `Modal opened by "${step.targetName}" closed, but keyboard focus was reset to <body> instead of returning to trigger element (WCAG 2.4.3).`,
+                expected: "Keyboard focus restored to trigger button or active element.",
+                actual: "document.activeElement is <body>",
+                timestamp: new Date().toISOString(),
+              })
+            }
+          } else {
+            appendLog(job, "warn", `Modal opened by "${step.targetName}" could not be dismissed via close button or Escape key.`)
+          }
+        }
 
         step.evidence = {
           expectedEffects,

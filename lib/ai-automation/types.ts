@@ -245,8 +245,11 @@ export type AppScreenNode = {
   forms: Array<{
     id: string
     name?: string
+    selector?: string
     fields: string[]
     submitButton?: string
+    submitSelector?: string
+    isInsideModal?: boolean
   }>
   isNewDiscovery?: boolean
   isLoginWall?: boolean
@@ -309,7 +312,16 @@ export type TestPlanStep = {
   screenId: string
   screenName: string
   stepIndex: number
-  actionType: "fill" | "click" | "upload" | "select" | "toggle" | "verify" | "navigate"
+  actionType:
+    | "fill"
+    | "click"
+    | "upload"
+    | "select"
+    | "toggle"
+    | "verify"
+    | "navigate"
+    | "form_scenario"
+    | "modal_close"
   targetName: string
   targetSelector?: string
   syntheticValue?: string
@@ -323,6 +335,9 @@ export type TestPlanStep = {
   evidenceTimestamp?: string
   error?: string
   isNewDiscovery?: boolean
+  formId?: string
+  formVariant?: "valid" | "required_empty" | "invalid_format" | "boundary"
+  fieldPayload?: Record<string, string>
 }
 
 export type FullAppTestPlan = {
