@@ -9,6 +9,7 @@ import path from "path"
 import fs from "fs"
 import { classifyPage, pickNextLink, DEFAULT_LAYA_URL } from "./laya-client"
 import type { JourneyConfig, JourneyStep, PageType } from "./types"
+import { performVisibleLogin } from "@/lib/ai-automation/human-actions"
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -89,26 +90,14 @@ async function maybeAutoLogin(page: Page, config: JourneyConfig, targetUrl: stri
   if (!isLogin || !config.credentials?.username || !config.credentials?.password) return
 
   try {
-    const userInput = await page.$(
-      'input[type="email"], input[name*="email"], input[name*="user"], input[id*="email"], input[id*="user"], input[type="text"]'
-    )
-    const passInput = await page.$('input[type="password"], input[name*="pass"], input[id*="pass"]')
-    if (!userInput || !passInput) return
+    if (!config.credentials?.username || !config.credentials?.password) return
 
-    await userInput.click({ count: 3 }).catch(() => {})
-    await userInput.type(config.credentials.username, { delay: 12 })
-    await passInput.click({ count: 3 }).catch(() => {})
-    await passInput.type(config.credentials.password, { delay: 12 })
-
-    const submit = await page.$('button[type="submit"], input[type="submit"], form button, button')
-    if (submit) {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {}),
-        submit.click(),
-      ])
-    } else {
-      await page.keyboard.press("Enter")
-      await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => {})
+    const result = await performVisibleLogin(page, {
+      username: config.credentials.username,
+      password: config.credentials.password,
+    })
+    if (!result.ok) {
+      console.warn("[journey] visible auto-login incomplete:", result.error)
     }
 
     try {
