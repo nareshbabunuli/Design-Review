@@ -27,12 +27,16 @@ export const HUMAN_PACE = {
 
 export type Point = { x: number; y: number }
 
-/** Compare origin + path + search (ignore hash). */
+/** Compare origin + path + search (ignore hash); trailing slashes treated equal. */
 export function sameUrl(a: string, b: string): boolean {
   try {
     const ua = new URL(a)
     const ub = new URL(b)
-    return ua.origin + ua.pathname + ua.search === ub.origin + ub.pathname + ub.search
+    const strip = (p: string) => p.replace(/\/+$/, "") || "/"
+    return (
+      strip(ua.origin + ua.pathname) + ua.search ===
+      strip(ub.origin + ub.pathname) + ub.search
+    )
   } catch {
     return a === b
   }
@@ -51,7 +55,6 @@ export async function getCenter(el: ElementHandle<Element>): Promise<Point | nul
   }
 }
 
-/** True if element has a usable on-screen box. */
 async function isVisibleHandle(el: ElementHandle<Element>): Promise<boolean> {
   try {
     return await el.evaluate((node) => {
@@ -65,7 +68,6 @@ async function isVisibleHandle(el: ElementHandle<Element>): Promise<boolean> {
   }
 }
 
-/** Move real Puppeteer mouse + visual overlay cursor. */
 export async function humanMouseMove(page: Page, x: number, y: number): Promise<void> {
   await installVisualOverlay(page).catch(() => {})
   try {
@@ -77,10 +79,6 @@ export async function humanMouseMove(page: Page, x: number, y: number): Promise<
   await sleep(HUMAN_PACE.afterMoveMs)
 }
 
-/**
- * Move to element center and click.
- * Returns the click point on success, null if not clickable (no silent DOM click on invisible nodes).
- */
 export async function humanClick(
   page: Page,
   el: ElementHandle<Element>,
@@ -133,7 +131,6 @@ export async function humanClick(
   return pt
 }
 
-/** Clear field and type with human-paced keystrokes. Returns false on failure. */
 export async function humanType(
   page: Page,
   el: ElementHandle<Element>,
@@ -186,7 +183,6 @@ const USER_SEL =
   'input[type="email"], input[name*="email" i], input[name*="user" i], input[id*="email" i], input[id*="user" i], input[autocomplete="username"], input[type="text"]'
 const PASS_SEL = 'input[type="password"], input[name*="pass" i], input[id*="pass" i]'
 
-/** Visible login: mouse + type + Sign In. Verifies we left the login page. */
 export async function performVisibleLogin(
   page: Page,
   creds: { username: string; password: string },
@@ -237,7 +233,7 @@ export async function performVisibleLogin(
       const match = btns.find((b) => {
         const t = (b.textContent || (b as HTMLInputElement).value || "").toLowerCase()
         const type = (b as HTMLInputElement).type
-        return type === "submit" || /(sign\\s*in|log\\s*in|login|continue|submit)/i.test(t)
+        return type === "submit" || /(sign\s*in|log\s*in|login|continue|submit)/i.test(t)
       })
       if (match) {
         match.setAttribute("data-human-login-submit", "true")
@@ -267,7 +263,16 @@ export async function performVisibleLogin(
     ])
     await sleep(HUMAN_PACE.settleMs)
 
-    const stillOnLogin = await page.$(PASS_SEL)
+    const stillOnLogin = await page
+      .evaluate(() =>
+        Array.from(document.querySelectorAll('input[type="password"]')).some((el) => {
+          const r = (el as HTMLInputElement).getBoundingClientRect()
+          const style = window.getComputedStyle(el)
+          if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0") return false
+          return r.width > 2 && r.height > 2
+        }),
+      )
+      .catch(() => true)
     if (stillOnLogin) {
       const err = "Still on login page after submit — login likely failed"
       await say(err)
@@ -283,7 +288,6 @@ export async function performVisibleLogin(
   }
 }
 
-/** Playwright/Stagehand visible login — verifies leave-login. */
 export async function performVisibleLoginPlaywright(
   stagePage: any,
   creds: { username: string; password: string },
@@ -363,7 +367,16 @@ export async function performVisibleLoginPlaywright(
 
     await sleep(2200)
 
-    const stillOnLogin = await stagePage.$(PASS_SEL).catch(() => null)
+    const stillOnLogin = await stagePage
+      .evaluate(() =>
+        Array.from(document.querySelectorAll('input[type="password"]')).some((el: any) => {
+          const r = el.getBoundingClientRect()
+          const style = window.getComputedStyle(el)
+          if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0") return false
+          return r.width > 2 && r.height > 2
+        }),
+      )
+      .catch(() => true)
     if (stillOnLogin) {
       const err = "Still on login page after submit — login likely failed"
       await say(err)
@@ -383,7 +396,6 @@ export async function performVisibleLoginPlaywright(
   }
 }
 
-/** Find a visible element by approximate label/text and human-click it. */
 export async function humanClickByText(
   page: Page,
   text: string,
@@ -450,7 +462,6 @@ export async function humanClickByText(
   return true
 }
 
-/** Click a visible in-page link matching href (human mouse). */
 export async function humanClickHref(page: Page, href: string): Promise<boolean> {
   const handle = await page.evaluateHandle((targetHref) => {
     let targetPath = targetHref
@@ -487,10 +498,6 @@ export async function humanClickHref(page: Page, href: string): Promise<boolean>
   return true
 }
 
-/**
- * Navigate like a tester: prefer clicking toward the URL.
- * After click, verify actual URL; mismatch falls back to goto.
- */
 export async function humanNavigateTo(
   page: Page,
   url: string,
