@@ -81,6 +81,18 @@ export type TestCaseScreenshot = {
   url: string
 }
 
+export type EvidenceTrace = {
+  phase: "OBSERVE" | "DECIDE" | "RECOVER" | "VERIFY"
+  timestamp: string
+  summary: string
+  evidence?: {
+    url?: string
+    screenshotUrl?: string
+    consoleErrors?: string[]
+    actions?: number
+  }
+}
+
 export type TestCaseResult = {
   scenarioId: string
   name: string
@@ -92,6 +104,8 @@ export type TestCaseResult = {
   startedAt: string
   finishedAt: string
   error?: string
+  /** Evidence trail for observe/decide/recover/verify in the existing report. */
+  evidenceTrace?: EvidenceTrace[]
 }
 
 export type FlowGraphNode = {
