@@ -51,6 +51,10 @@ import {
   Trash2,
   FileUp,
   FolderKanban,
+  Folder,
+  CreditCard,
+  FileCode,
+  Mail,
   Pencil,
   Settings,
   LogOut,
@@ -237,6 +241,23 @@ export default function AISimulatorPage() {
   // Testing mode: Feature / Workflow Testing vs Full App Testing
   const [testingMode, setTestingMode] = useState<"feature_workflow" | "full_app">("feature_workflow")
   const [workflowPromptInput, setWorkflowPromptInput] = useState("")
+
+  // Pre-Flight Continuous Testing Checklist State
+  const [showPreFlightModal, setShowPreFlightModal] = useState(false)
+  const [uploadFilesDir, setUploadFilesDir] = useState("scripts/fixtures")
+  const [postmanCollectionText, setPostmanCollectionText] = useState("")
+  const [postmanFileName, setPostmanFileName] = useState("")
+  const [allowTestPayments, setAllowTestPayments] = useState(false)
+  const [allowDestructiveActions, setAllowDestructiveActions] = useState(false)
+  const [pendingLaunchMode, setPendingLaunchMode] = useState<"full_app" | "feature_workflow">("full_app")
+
+  // Verification and Settings interaction state
+  const [verificationUrlInput, setVerificationUrlInput] = useState("")
+  const [verificationCodeInput, setVerificationCodeInput] = useState("")
+  const [isSubmittingVerification, setIsSubmittingVerification] = useState(false)
+  const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
+  const [showSettingsSecrets, setShowSettingsSecrets] = useState<Record<string, boolean>>({})
+  const [isSubmittingSettings, setIsSubmittingSettings] = useState(false)
 
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
@@ -568,6 +589,57 @@ export default function AISimulatorPage() {
       return
     }
 
+    // Job paused at an external verification wall: treat reply as confirmation / code / url / skip
+    if (!fromQueue && currentJob?.verificationState === "awaiting_verification" && currentJob.id && textToSend) {
+      const skip = /^\s*skip\b/i.test(textToSend)
+      const urlMatch = textToSend.match(/https?:\/\/[^\s]+/i)
+      const codeMatch = textToSend.match(/\b\d{4,8}\b/)
+      const now = Date.now()
+
+      setChatInput("")
+      setChatHistory((prev) => [
+        ...prev,
+        { id: `user-${now}`, sender: "user", text: textToSend, timestamp: new Date().toISOString(), status: "completed" },
+        { id: `agent-${now}`, sender: "agent", text: skip ? "Skipping external verification. Continuing with public exploration." : "Received verification confirmation. Resuming testing from where it left off...", timestamp: new Date().toISOString(), status: "completed" },
+      ])
+
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          skip
+            ? { jobId: currentJob.id, action: "skip_verification" }
+            : {
+                jobId: currentJob.id,
+                action: "confirm_verification",
+                verificationUrl: urlMatch?.[0],
+                verificationCode: codeMatch?.[0],
+              }
+        ),
+      }).catch(() => {})
+      return
+    }
+
+    // Job paused at application settings credentials wall: treat 'skip'
+    if (!fromQueue && currentJob?.settingsState === "awaiting_credentials" && currentJob.id && textToSend) {
+      const skip = /^\s*skip\b/i.test(textToSend)
+      if (skip) {
+        const now = Date.now()
+        setChatInput("")
+        setChatHistory((prev) => [
+          ...prev,
+          { id: `user-${now}`, sender: "user", text: "skip", timestamp: new Date().toISOString(), status: "completed" },
+          { id: `agent-${now}`, sender: "agent", text: "Skipping settings credentials configuration.", timestamp: new Date().toISOString(), status: "completed" },
+        ])
+        await fetch("/api/ai-automation/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: currentJob.id, action: "skip_settings_credentials" }),
+        }).catch(() => {})
+        return
+      }
+    }
+
     // Job already running: queue the message instead of starting a parallel job
     if (!fromQueue && (currentJob?.status === "running" || currentJob?.status === "queued")) {
       setCommandQueue((q) => [
@@ -686,6 +758,134 @@ export default function AISimulatorPage() {
     )
     setActiveDockTab("chat")
   }, [currentJob?.authState, currentJob?.authPrompt, currentJob?.id])
+
+  // Tell user in chat when external email verification is required
+  useEffect(() => {
+    if (currentJob?.verificationState !== "awaiting_verification" || !currentJob.id) return
+    const msgId = `verification-prompt-${currentJob.id}-${currentJob.verificationPrompt || ""}`
+    setChatHistory((prev) =>
+      prev.some((m) => m.id === msgId)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: msgId,
+              sender: "agent",
+              text:
+                "📬 External Verification Required: The application sent an email confirmation or verification link. Please check your email and click the confirmation link, paste the URL below, or enter your OTP code. When ready, click 'I\\'ve Completed Verification' or type 'done'. Type 'skip' to bypass.",
+              timestamp: new Date().toISOString(),
+              status: "completed",
+            },
+          ]
+    )
+    setActiveDockTab("chat")
+  }, [currentJob?.verificationState, currentJob?.verificationPrompt, currentJob?.id])
+
+  // Tell user in chat when application settings credentials are required
+  useEffect(() => {
+    if (currentJob?.settingsState !== "awaiting_credentials" || !currentJob.id) return
+    const msgId = `settings-prompt-${currentJob.id}-${currentJob.settingsPrompt || ""}`
+    setChatHistory((prev) =>
+      prev.some((m) => m.id === msgId)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: msgId,
+              sender: "agent",
+              text:
+                "🔐 Application Settings Credentials Required: The application requires API keys or configuration secrets to proceed. Please enter them in the secure input card below. Secrets are never logged or stored in reports. Type 'skip' to bypass.",
+              timestamp: new Date().toISOString(),
+              status: "completed",
+            },
+          ]
+    )
+  }, [currentJob?.settingsState, currentJob?.settingsPrompt, currentJob?.id])
+
+  const handleConfirmVerification = async (url?: string, code?: string) => {
+    if (!currentJob?.id || isSubmittingVerification) return
+    setIsSubmittingVerification(true)
+    try {
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: currentJob.id,
+          action: "confirm_verification",
+          verificationUrl: url || verificationUrlInput.trim() || undefined,
+          verificationCode: code || verificationCodeInput.trim() || undefined,
+        }),
+      })
+      setVerificationUrlInput("")
+      setVerificationCodeInput("")
+    } catch (err) {
+      console.error("Failed to confirm verification:", err)
+    } finally {
+      setIsSubmittingVerification(false)
+    }
+  }
+
+  const handleSkipVerification = async () => {
+    if (!currentJob?.id || isSubmittingVerification) return
+    setIsSubmittingVerification(true)
+    try {
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: currentJob.id,
+          action: "skip_verification",
+        }),
+      })
+      setVerificationUrlInput("")
+      setVerificationCodeInput("")
+    } catch (err) {
+      console.error("Failed to skip verification:", err)
+    } finally {
+      setIsSubmittingVerification(false)
+    }
+  }
+
+  const handleSaveSettingsCredentials = async () => {
+    if (!currentJob?.id || isSubmittingSettings) return
+    setIsSubmittingSettings(true)
+    try {
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: currentJob.id,
+          action: "provide_settings_credentials",
+          credentials: settingsFormValues,
+        }),
+      })
+      setSettingsFormValues({})
+    } catch (err) {
+      console.error("Failed to save settings credentials:", err)
+    } finally {
+      setIsSubmittingSettings(false)
+    }
+  }
+
+  const handleSkipSettingsCredentials = async () => {
+    if (!currentJob?.id || isSubmittingSettings) return
+    setIsSubmittingSettings(true)
+    try {
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: currentJob.id,
+          action: "skip_settings_credentials",
+        }),
+      })
+      setSettingsFormValues({})
+    } catch (err) {
+      console.error("Failed to skip settings credentials:", err)
+    } finally {
+      setIsSubmittingSettings(false)
+    }
+  }
 
   // Drain queued messages one at a time once the running job has finished
   useEffect(() => {
@@ -1206,13 +1406,23 @@ export default function AISimulatorPage() {
     }
   }, [currentJob?.status, currentJob?.currentAction?.id, currentJob?.screens?.length, selectedActionId, activeAction])
 
+  const openPreFlightModal = (mode: "full_app" | "feature_workflow") => {
+    setPendingLaunchMode(mode)
+    setShowPreFlightModal(true)
+  }
+
+  const handleExecutePreFlightLaunch = async () => {
+    setShowPreFlightModal(false)
+    if (pendingLaunchMode === "feature_workflow") {
+      await handleStartWorkflowTesting(workflowPromptInput || "Test the primary user workflow")
+    } else {
+      await handleStartFullAppTesting()
+    }
+  }
+
   // Start Automation Run
   const handleStartAutomation = async () => {
-    if (testingMode === "feature_workflow") {
-      await handleStartWorkflowTesting(workflowPromptInput || "Test the primary user workflow")
-      return
-    }
-    await handleStartFullAppTesting()
+    openPreFlightModal(testingMode)
   }
 
   // Start Full App Systematic Testing (Discover -> Map -> Plan -> Execute -> Report)
@@ -1244,6 +1454,20 @@ export default function AISimulatorPage() {
       if (credentialsOverride.password) setPassword(credentialsOverride.password)
     }
 
+    const postmanObj = postmanCollectionText.trim()
+      ? (() => {
+          try {
+            return JSON.parse(postmanCollectionText)
+          } catch {
+            return postmanCollectionText.trim()
+          }
+        })()
+      : undefined
+
+    const effectiveAllowActions = allowDestructiveActions
+      ? ["delete", "purge", "cancel", "archive", "remove"]
+      : undefined
+
     setIsSubmitting(true)
     try {
       const res = await fetch("/api/ai-automation/start", {
@@ -1255,6 +1479,10 @@ export default function AISimulatorPage() {
           projectDir: selectedProjectDir,
           mode: "full_app",
           dummyTestFiles,
+          uploadFilesDir: uploadFilesDir.trim() || undefined,
+          postmanCollection: postmanObj,
+          allowTestPayments,
+          allowActions: effectiveAllowActions,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials: effectiveCreds,
@@ -1314,6 +1542,20 @@ export default function AISimulatorPage() {
       return
     }
 
+    const postmanObj = postmanCollectionText.trim()
+      ? (() => {
+          try {
+            return JSON.parse(postmanCollectionText)
+          } catch {
+            return postmanCollectionText.trim()
+          }
+        })()
+      : undefined
+
+    const effectiveAllowActions = allowDestructiveActions
+      ? ["delete", "purge", "cancel", "archive", "remove"]
+      : undefined
+
     setIsSubmitting(true)
     try {
       const res = await fetch("/api/ai-automation/start", {
@@ -1325,6 +1567,10 @@ export default function AISimulatorPage() {
           projectDir: selectedProjectDir,
           mode: "feature_workflow",
           workflowPrompt: promptText,
+          uploadFilesDir: uploadFilesDir.trim() || undefined,
+          postmanCollection: postmanObj,
+          allowTestPayments,
+          allowActions: effectiveAllowActions,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials:
@@ -2141,6 +2387,109 @@ export default function AISimulatorPage() {
                             </div>
                           )
                         })}
+                        {/* Interactive Verification Prompt Card in Chat */}
+                        {currentJob && currentJob.verificationState === "awaiting_verification" && (
+                          <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 space-y-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-amber-200 flex items-center gap-1.5">
+                                <Mail className="h-3.5 w-3.5 text-amber-400" />
+                                Action Required: Confirm Email / Verification
+                              </span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">Paused</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300">
+                              {currentJob.verificationPrompt || "Please click the confirmation link or enter the verification URL/code below."}
+                            </p>
+                            <div className="space-y-1.5">
+                              <input
+                                type="url"
+                                value={verificationUrlInput}
+                                onChange={(e) => setVerificationUrlInput(e.target.value)}
+                                placeholder="Verification / Magic Link URL"
+                                className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                              />
+                              <input
+                                type="text"
+                                value={verificationCodeInput}
+                                onChange={(e) => setVerificationCodeInput(e.target.value)}
+                                placeholder="OTP / Code (if applicable)"
+                                className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={isSubmittingVerification}
+                                onClick={() => handleConfirmVerification()}
+                                className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
+                              >
+                                {isSubmittingVerification ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                                <span>I&apos;ve Completed Verification</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSubmittingVerification}
+                                onClick={handleSkipVerification}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
+                              >
+                                Skip
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Interactive Settings Credentials Form in Chat */}
+                        {currentJob && currentJob.settingsState === "awaiting_credentials" && (
+                          <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/50 space-y-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-indigo-200 flex items-center gap-1.5">
+                                <Key className="h-3.5 w-3.5 text-indigo-400" />
+                                Action Required: Enter Application Settings Secrets
+                              </span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">Protected</span>
+                            </div>
+                            <p className="text-[11px] text-slate-300">
+                              {currentJob.settingsPrompt || "Enter credentials to configure application settings. Secrets are redacted and never logged."}
+                            </p>
+                            <div className="space-y-1.5">
+                              {(currentJob.requiredSettingsFields && currentJob.requiredSettingsFields.length > 0
+                                ? currentJob.requiredSettingsFields
+                                : [{ key: "apiKey", label: "API Key", isSecret: true, placeholder: "sk-..." }]
+                              ).map((field) => (
+                                <div key={field.key} className="space-y-0.5">
+                                  <label className="text-[10px] text-slate-300 block">{field.label}</label>
+                                  <input
+                                    type={field.isSecret && !showSettingsSecrets[field.key] ? "password" : "text"}
+                                    value={settingsFormValues[field.key] || ""}
+                                    onChange={(e) => setSettingsFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                                    placeholder={field.placeholder || `Enter ${field.label}`}
+                                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={isSubmittingSettings}
+                                onClick={handleSaveSettingsCredentials}
+                                className="flex-1 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
+                              >
+                                {isSubmittingSettings ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                <span>Save &amp; Resume</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSubmittingSettings}
+                                onClick={handleSkipSettingsCredentials}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
+                              >
+                                Skip
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         <div ref={chatBottomRef} />
                       </div>
 
@@ -3092,6 +3441,33 @@ export default function AISimulatorPage() {
                           </button>
                         </div>
 
+                        {/* Pre-Flight Quick Badge Summary */}
+                        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800/80 text-[10px] text-slate-400">
+                          <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar min-w-0">
+                            <span className="flex items-center gap-1 font-mono text-amber-300 shrink-0" title="Upload folder for test files">
+                              <Folder className="h-2.5 w-2.5" />
+                              <span>{uploadFilesDir ? uploadFilesDir.split(/[\/\\]/).pop() || "fixtures" : "auto"}</span>
+                            </span>
+                            <span className="text-slate-600 shrink-0">•</span>
+                            <span className="flex items-center gap-1 font-mono text-indigo-300 shrink-0" title="Postman collection status">
+                              <FileCode className="h-2.5 w-2.5" />
+                              <span>{postmanFileName ? "Postman ON" : "No Postman"}</span>
+                            </span>
+                            <span className="text-slate-600 shrink-0">•</span>
+                            <span className="flex items-center gap-1 font-mono text-emerald-300 shrink-0" title="Sandbox test card status">
+                              <CreditCard className="h-2.5 w-2.5" />
+                              <span>{allowTestPayments ? "Cards ON" : "Cards OFF"}</span>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openPreFlightModal(testingMode)}
+                            className="text-indigo-400 hover:text-indigo-300 font-semibold underline text-[9px] shrink-0 ml-1 cursor-pointer"
+                          >
+                            Setup →
+                          </button>
+                        </div>
+
                         {/* Launch / Stop Button */}
                         <div className="pt-2">
                           {currentJob?.status === "running" ? (
@@ -3107,7 +3483,7 @@ export default function AISimulatorPage() {
                             <button
                               type="button"
                               disabled={isSubmitting || !workflowPromptInput.trim()}
-                              onClick={() => handleStartWorkflowTesting(workflowPromptInput)}
+                              onClick={() => openPreFlightModal("feature_workflow")}
                               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs py-2.5 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
                             >
                               {isSubmitting ? (
@@ -3115,13 +3491,13 @@ export default function AISimulatorPage() {
                               ) : (
                                 <Sparkles className="h-3.5 w-3.5 text-indigo-200 fill-current" />
                               )}
-                              <span>🎯 Generate Plan &amp; Test Workflow</span>
+                              <span>🎯 Configure &amp; Test Workflow</span>
                             </button>
                           ) : (
                             <button
                               type="button"
                               disabled={isSubmitting}
-                              onClick={handleStartAutomation}
+                              onClick={() => openPreFlightModal("full_app")}
                               className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
                             >
                               {isSubmitting ? (
@@ -3129,7 +3505,7 @@ export default function AISimulatorPage() {
                               ) : (
                                 <Play className="h-3.5 w-3.5 fill-current" />
                               )}
-                              <span>🚀 Run Full App Systematic Test</span>
+                              <span>🚀 Start Full App Test (Pre-Flight)</span>
                             </button>
                           )}
                         </div>
@@ -3141,6 +3517,187 @@ export default function AISimulatorPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* Interactive Verification Prompt Card */}
+                      {currentJob && currentJob.verificationState === "awaiting_verification" && (
+                        <div className="p-3.5 rounded-xl bg-gradient-to-br from-amber-950/60 via-slate-900 to-slate-950 border-2 border-amber-500/60 shadow-xl shadow-amber-950/40 text-xs space-y-3 animate-in fade-in duration-300">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="relative flex items-center justify-center p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                <Mail className="h-4 w-4" />
+                                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                                </span>
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-amber-200 text-xs flex items-center gap-1.5">
+                                  External Verification Required
+                                </h4>
+                                <span className="text-[10px] text-amber-400/80 font-mono">Testing paused at confirmation step</span>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Action Required
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                            {currentJob.verificationPrompt ||
+                              "The application sent a confirmation email or external verification link. Please check your inbox and click the link, or paste the link / code below."}
+                          </p>
+
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-400 mb-1">
+                                Confirmation / Magic Link URL (optional):
+                              </label>
+                              <input
+                                type="url"
+                                value={verificationUrlInput}
+                                onChange={(e) => setVerificationUrlInput(e.target.value)}
+                                placeholder="https://app.example.com/verify?token=..."
+                                className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-semibold text-slate-400 mb-1">
+                                OTP / Verification Code (optional):
+                              </label>
+                              <input
+                                type="text"
+                                value={verificationCodeInput}
+                                onChange={(e) => setVerificationCodeInput(e.target.value)}
+                                placeholder="e.g. 482910"
+                                className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              disabled={isSubmittingVerification}
+                              onClick={() => handleConfirmVerification()}
+                              className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition shadow-lg shadow-emerald-600/30 cursor-pointer disabled:opacity-50"
+                            >
+                              {isSubmittingVerification ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              )}
+                              <span>I&apos;ve Completed Verification</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={isSubmittingVerification}
+                              onClick={handleSkipVerification}
+                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                            >
+                              Skip
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Interactive Secure Settings Credentials Form */}
+                      {currentJob && currentJob.settingsState === "awaiting_credentials" && (
+                        <div className="p-3.5 rounded-xl bg-gradient-to-br from-indigo-950/60 via-slate-900 to-slate-950 border-2 border-indigo-500/60 shadow-xl shadow-indigo-950/40 text-xs space-y-3 animate-in fade-in duration-300">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                                <Key className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-indigo-200 text-xs flex items-center gap-1.5">
+                                  Settings Credentials Required
+                                </h4>
+                                <span className="text-[10px] text-indigo-400/80 font-mono">Protected &amp; Redacted in memory</span>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              Secure Input
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                            {currentJob.settingsPrompt ||
+                              "The application settings requires API keys or credentials to test integrated features. Values entered here are never written to logs or screenshots."}
+                          </p>
+
+                          <div className="space-y-2">
+                            {(currentJob.requiredSettingsFields && currentJob.requiredSettingsFields.length > 0
+                              ? currentJob.requiredSettingsFields
+                              : [{ key: "apiKey", label: "API Key / Secret Token", isSecret: true, placeholder: "sk-..." }]
+                            ).map((field) => (
+                              <div key={field.key} className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[10px] font-semibold text-slate-300 flex items-center gap-1">
+                                    <span>{field.label}</span>
+                                    {field.isSecret && (
+                                      <span className="text-[9px] text-indigo-400 font-mono">(Secret)</span>
+                                    )}
+                                  </label>
+                                  {field.isSecret && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setShowSettingsSecrets((prev) => ({
+                                          ...prev,
+                                          [field.key]: !prev[field.key],
+                                        }))
+                                      }
+                                      className="text-[10px] text-slate-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Eye className="h-2.5 w-2.5" />
+                                      <span>{showSettingsSecrets[field.key] ? "Hide" : "Show"}</span>
+                                    </button>
+                                  )}
+                                </div>
+                                <input
+                                  type={field.isSecret && !showSettingsSecrets[field.key] ? "password" : "text"}
+                                  value={settingsFormValues[field.key] || ""}
+                                  onChange={(e) =>
+                                    setSettingsFormValues((prev) => ({
+                                      ...prev,
+                                      [field.key]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={field.placeholder || `Enter ${field.label}`}
+                                  className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                                />
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              disabled={isSubmittingSettings}
+                              onClick={handleSaveSettingsCredentials}
+                              className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
+                            >
+                              {isSubmittingSettings ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                              <span>Save &amp; Resume Testing</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={isSubmittingSettings}
+                              onClick={handleSkipSettingsCredentials}
+                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                            >
+                              Skip
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Real-time Progress & Terminal Log */}
                       {currentJob && (
@@ -4024,6 +4581,228 @@ export default function AISimulatorPage() {
           </button>
         </div>
       </footer>
+
+      {/* Pre-Flight Continuous Testing Setup Modal */}
+      {showPreFlightModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={() => setShowPreFlightModal(false)}
+        >
+          <div
+            className="relative w-full max-w-xl bg-slate-900 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col text-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-600/20 border border-indigo-500/30 text-indigo-400">
+                  <Play className="h-4 w-4 fill-current" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    Pre-Flight Autonomous Testing Setup
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-mono">
+                      {pendingLaunchMode === "feature_workflow" ? "Feature Workflow" : "Full App Crawl"}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Target: <code className="text-indigo-300 font-mono">{targetUrl}</code>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPreFlightModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar text-xs">
+              {/* 1. Upload Folder */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Folder className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Upload Test Files Folder</span>
+                    <span className="text-[10px] font-normal text-slate-400">(Optional)</span>
+                  </label>
+                  <span className="text-[10px] text-amber-400/80 font-mono">Real File Testing</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Folder containing sample images, PDFs, CSVs, or documents to attach to upload inputs.
+                </p>
+                <input
+                  type="text"
+                  value={uploadFilesDir}
+                  onChange={(e) => setUploadFilesDir(e.target.value)}
+                  placeholder="e.g. scripts/fixtures or ./test-assets"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                />
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                  <span>💡 Tip:</span>
+                  <span>Leave blank to auto-detect from project or use synthetic dummy buffers.</span>
+                </div>
+              </div>
+
+              {/* 2. Postman Collection */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <FileCode className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Postman API Collection (v2.1)</span>
+                    <span className="text-[10px] font-normal text-slate-400">(Optional)</span>
+                  </label>
+                  <span className="text-[10px] text-indigo-400/80 font-mono">API Form Mapping</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Supplies realistic API payloads and wire verification for forms and popups.
+                </p>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium cursor-pointer transition border border-slate-700">
+                    <FileUp className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>{postmanFileName ? "Change File..." : "Import Collection (.json)"}</span>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        setPostmanFileName(file.name)
+                        const reader = new FileReader()
+                        reader.onload = (ev) => {
+                          setPostmanCollectionText((ev.target?.result as string) || "")
+                        }
+                        reader.readAsText(file)
+                      }}
+                    />
+                  </label>
+                  {postmanFileName && (
+                    <div className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+                      <Check className="h-3 w-3" />
+                      <span className="truncate max-w-[200px]">{postmanFileName}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPostmanFileName("")
+                          setPostmanCollectionText("")
+                        }}
+                        className="text-slate-500 hover:text-rose-400 ml-1"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 3. Authentication Credentials */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Key className="h-3.5 w-3.5 text-purple-400" />
+                    <span>Test Auth Credentials</span>
+                    <span className="text-[10px] font-normal text-slate-400">(Optional)</span>
+                  </label>
+                  <span className="text-[10px] text-purple-400/80 font-mono">Auth-Wall Crawl</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Email or Username"
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                  />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Password"
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* 4. Safety Guard & Destructive Permissions */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2.5">
+                <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Safety Guard &amp; Environment Toggles</span>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  {/* Payment Checkbox */}
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allowTestPayments}
+                      onChange={(e) => setAllowTestPayments(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-700 text-indigo-600 focus:ring-0 bg-slate-900 cursor-pointer"
+                    />
+                    <div>
+                      <div className="font-medium text-slate-200 text-xs flex items-center gap-1.5">
+                        <CreditCard className="h-3 w-3 text-indigo-400" />
+                        <span>Allow Test Payments (Sandbox Defaults)</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">Optional</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Enables filling checkout forms with standard sandbox test card (<code className="font-mono text-slate-300">4242 4242...</code>). Leave unchecked if app has no payments.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* Destructive Actions Checkbox */}
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allowDestructiveActions}
+                      onChange={(e) => setAllowDestructiveActions(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-700 text-indigo-600 focus:ring-0 bg-slate-900 cursor-pointer"
+                    />
+                    <div>
+                      <div className="font-medium text-slate-200 text-xs">
+                        Allow Destructive Actions (Delete, Archive, Purge)
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        When disabled, Safety Guard will automatically soft-skip buttons that delete accounts or records.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowPreFlightModal(false)}
+                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 text-xs font-medium transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExecutePreFlightLaunch()
+                  }}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Launch Test Runner</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full-resolution Image Preview Modal */}
       {imagePreviewModal && (

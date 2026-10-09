@@ -170,6 +170,8 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
     aiBaseUrl: params.aiBaseUrl,
     layaBaseUrl: params.layaBaseUrl,
     role: params.role || "user",
+    uploadFilesDir: params.uploadFilesDir,
+    postmanCollection: params.postmanCollection,
     messages: initialMessages,
     logs: [],
     screens: [],

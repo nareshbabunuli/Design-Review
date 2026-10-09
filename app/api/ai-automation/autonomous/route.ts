@@ -56,6 +56,11 @@ export async function POST(req: NextRequest) {
       aiBaseUrl: body.aiBaseUrl,
       mode: "autonomous",
       scenarioCount: body.scenarioCount || 15,
+      uploadFilesDir: body.uploadFilesDir,
+      postmanCollection: body.postmanCollection,
+      paymentCredentials: body.paymentCredentials,
+      allowTestPayments: body.allowTestPayments,
+      allowActions: body.allowActions,
     })
 
     ;(job as any).userId = access.user.id

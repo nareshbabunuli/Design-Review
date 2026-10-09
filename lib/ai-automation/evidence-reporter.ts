@@ -8,6 +8,7 @@ import {
   PostmanEndpointMapping,
 } from "./types"
 import { formatCurlCommand } from "./workflow-chainer"
+import { secretRedactor } from "./secure-credentials-manager"
 
 /**
  * Builds the comprehensive outcome-verified UI testing report,
@@ -266,5 +267,5 @@ function generateMarkdownReportText(params: {
   }
   sections.push("")
 
-  return sections.join("\n")
+  return secretRedactor ? secretRedactor.redact(sections.join("\n")) : sections.join("\n")
 }

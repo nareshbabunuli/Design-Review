@@ -37,21 +37,32 @@ import {
   triggerClickAnimation,
 } from "./visual-recorder"
 
+import { secretRedactor } from "./secure-credentials-manager"
+
 /**
  * Formats a captured mutating network call into a reproducible cURL command
+ * with sensitive tokens and passwords guaranteed redacted.
  */
 export function formatCurlCommand(call: NetworkCallEvidence): string {
   const parts = [`curl -X ${call.method} "${call.url}"`]
   if (call.headers) {
     const important = ["content-type", "authorization", "accept"]
     for (const [k, v] of Object.entries(call.headers)) {
-      if (important.includes(k.toLowerCase()) || k.toLowerCase().startsWith("x-")) {
-        parts.push(`-H "${k}: ${v}"`)
+      const lower = k.toLowerCase()
+      if (important.includes(lower) || lower.startsWith("x-")) {
+        let safeVal = v
+        if (lower === "authorization" || lower === "cookie") {
+          safeVal = lower === "authorization" ? "Bearer [REDACTED_TOKEN]" : "[REDACTED_COOKIE]"
+        } else if (lower.includes("key") || lower.includes("secret") || lower.includes("token")) {
+          safeVal = "[REDACTED_KEY]"
+        }
+        parts.push(`-H "${k}: ${safeVal}"`)
       }
     }
   }
   if (call.postData) {
-    const sanitized = call.postData.replace(/"/g, '\\"')
+    const redacted = secretRedactor ? secretRedactor.redact(call.postData) : call.postData
+    const sanitized = redacted.replace(/"/g, '\\"')
     parts.push(`-d "${sanitized}"`)
   }
   return parts.join(" \\\n  ")

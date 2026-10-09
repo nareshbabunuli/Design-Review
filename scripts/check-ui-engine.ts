@@ -31,6 +31,20 @@ import {
   highlightInputTyping,
   showActionBanner,
 } from "../lib/ai-automation/visual-recorder"
+import {
+  detectUploadFolderMention,
+  resolveUploadFolder,
+  scanUploadFolder,
+  pickUploadFile,
+} from "../lib/ai-automation/test-file-manager"
+import {
+  secretRedactor,
+  detectVerificationScreen,
+  waitForExternalVerification,
+  detectSettingsCredentialsRequirement,
+  maskPageSecretsBeforeScreenshot,
+} from "../lib/ai-automation/secure-credentials-manager"
+import { saveJob } from "../lib/ai-automation/job-store"
 
 async function main() {
   console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1-6 + Test Payments & Visual Recording) ===")
@@ -471,6 +485,220 @@ async function main() {
     "Expected non_functional_control issue in job.issues"
   )
   console.log("✔ Phase 5 Evidence-based Markdown report generated with full timeline, cURL & issue taxonomy")
+
+  // --- Test Suite 7: Upload Folder Detection, File Picking & Real DOM Upload ---
+  console.log("\n--- Test Suite 7: Upload Folder Detection, Classification & Real DOM Upload ---")
+
+  // 1. Natural Language Mention Extraction
+  const mention1 = detectUploadFolderMention("Please test file uploads using folder: scripts/fixtures for test files")
+  console.assert(mention1 === "scripts/fixtures", `Expected "scripts/fixtures", got "${mention1}"`)
+
+  const mention2 = detectUploadFolderMention("run testing in folder 'scripts/fixtures'")
+  console.assert(mention2 === "scripts/fixtures", `Expected "scripts/fixtures", got "${mention2}"`)
+
+  const mention3 = detectUploadFolderMention("also file upload mention a folder scripts/fixtures so ai can use that folder")
+  console.assert(mention3 === "scripts/fixtures", `Expected "scripts/fixtures", got "${mention3}"`)
+  console.log("✔ Upload folder extraction from prompts verified (colon, quotes, natural mention)")
+
+  // 2. Folder Resolution & Inventory Scanning
+  const resolvedDir = resolveUploadFolder({ prompt: "use folder scripts/fixtures" })
+  console.assert(Boolean(resolvedDir && fs.existsSync(resolvedDir)), `Expected valid resolved folder, got ${resolvedDir}`)
+  
+  const inventory = scanUploadFolder(resolvedDir!)
+  console.assert(inventory.files.length >= 4, `Expected at least 4 test files, found ${inventory.files.length}`)
+  console.assert(inventory.filesByType.image.length > 0, "Expected at least 1 image file in fixtures")
+  console.assert(inventory.filesByType.pdf.length > 0, "Expected at least 1 PDF file in fixtures")
+  console.assert(inventory.filesByType.csv.length > 0, "Expected at least 1 CSV file in fixtures")
+  console.log(`✔ Scanned folder "${path.basename(resolvedDir!)}": indexed ${inventory.files.length} test files (${inventory.filesByType.image.length} image, ${inventory.filesByType.pdf.length} pdf, ${inventory.filesByType.csv.length} csv)`)
+
+  // 3. File Picking based on HTML accept attribute & target intent
+  const imagePick = pickUploadFile(inventory, { acceptAttr: "image/*", fileTypeRequired: "image", targetName: "Profile Picture" })
+  console.assert(imagePick.isFromFolder === true, "Expected image pick from folder")
+  console.assert(imagePick.fileName.endsWith(".png"), `Expected .png file, got ${imagePick.fileName}`)
+
+  const pdfPick = pickUploadFile(inventory, { acceptAttr: ".pdf", fileTypeRequired: "pdf", targetName: "Contract Agreement" })
+  console.assert(pdfPick.isFromFolder === true, "Expected pdf pick from folder")
+  console.assert(pdfPick.fileName.endsWith(".pdf"), `Expected .pdf file, got ${pdfPick.fileName}`)
+
+  const csvPick = pickUploadFile(inventory, { acceptAttr: ".csv", fileTypeRequired: "csv", targetName: "Customer Spreadsheet" })
+  console.assert(csvPick.isFromFolder === true, "Expected csv pick from folder")
+  console.assert(csvPick.fileName.endsWith(".csv"), `Expected .csv file, got ${csvPick.fileName}`)
+  console.log("✔ Intelligent file matching verified: accept attribute & category matched real files from folder")
+
+  // 4. Live Browser Execution: Attach real file to <input type="file"> and verify DOM state change
+  const uploadJob: AutomationJob = {
+    id: "upload-job-001",
+    targetUrl: fixtureUrl,
+    projectId: "proj-1",
+    status: "running",
+    progress: 0,
+    currentStep: "Executing upload test step",
+    logs: [],
+    issues: [],
+    screens: [],
+    flowGraph: { nodes: [], edges: [] },
+    startedAt: new Date().toISOString(),
+    credentialsProvided: false,
+    viewports: [],
+    maxScreens: 5,
+    uploadFilesDir: resolvedDir!,
+  }
+
+  const uploadPlan = {
+    id: "upload-plan-001",
+    targetUrl: fixtureUrl,
+    screens: [
+      {
+        id: "S001",
+        name: "Upload Screen",
+        url: fixtureUrl,
+        path: "/",
+        actionableElements: [],
+        forms: [],
+        discoveredAt: new Date().toISOString(),
+      },
+    ],
+    transitions: [],
+    steps: [
+      {
+        id: "step-upload-1",
+        screenId: "S001",
+        screenName: "Upload Screen",
+        stepIndex: 1,
+        actionType: "upload" as const,
+        targetName: "Document Upload",
+        targetSelector: "#upload-input",
+        fileTypeRequired: "pdf" as const,
+        expectedResult: "Upload control accepts PDF file and displays preview.",
+        status: "pending" as const,
+      },
+    ],
+    requiredFileTypes: [{ type: "pdf" as const, count: 1 }],
+    status: "planned" as const,
+    coverage: { screensTested: 0, totalScreens: 1, actionsTested: 0, totalActions: 1, formsTested: 0, totalForms: 0, percentage: 0 },
+  }
+
+  await executeStructuredTestPlan(uploadJob, page, uploadPlan, undefined, undefined, {
+    skipWorkflows: true,
+    uploadFilesDir: resolvedDir!,
+    uploadInventory: inventory,
+  })
+
+  const uploadStep = uploadPlan.steps[0]
+  console.assert(uploadStep.status === "passed", `Expected upload step to pass, got ${uploadStep.status}`)
+  console.assert(
+    Boolean(uploadStep.actualResult && (uploadStep.actualResult.includes("sample-doc.pdf") || uploadStep.actualResult.includes("PDF"))),
+    `Expected actualResult to confirm attached PDF, got: ${uploadStep.actualResult}`
+  )
+
+  // Verify DOM preview in fixture turned visible
+  const isPreviewVisible = await page.evaluate(() => {
+    const el = document.getElementById("upload-preview")
+    return el ? window.getComputedStyle(el).display !== "none" : false
+  })
+  console.assert(isPreviewVisible === true, "Expected #upload-preview in fixture HTML to be visible after upload")
+  console.log(`✔ Live file upload execution PASSED: attached real file "${pdfPick.fileName}" to #upload-input and confirmed DOM state change`)
+
+  // --- Test Suite 8: External Verification Pause/Resume & Secure Settings Credentials Redaction ---
+  console.log("\n--- Test Suite 8: External Verification & Secure Credentials Management ---")
+
+  // 1. Secret Redactor Pattern Masking
+  const rawOpenAi = "Bearer sk-1234567890abcdefghijklmnopqrstuvwxyz"
+  const redactedOpenAi = secretRedactor.redact(rawOpenAi)
+  console.assert(!redactedOpenAi.includes("1234567890abcdef"), "Expected OpenAI key to be masked")
+  console.assert(redactedOpenAi.includes("[REDACTED"), "Expected redaction placeholder")
+
+  const rawStripe = "Secret stripe key: sk_test_51MzXYZ123456789012345678"
+  const redactedStripe = secretRedactor.redact(rawStripe)
+  console.assert(!redactedStripe.includes("51MzXYZ"), "Expected Stripe key to be masked")
+
+  const rawGithub = "GitHub token: ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+  const redactedGithub = secretRedactor.redact(rawGithub)
+  console.assert(!redactedGithub.includes("1234567890abcdef"), "Expected GitHub token to be masked")
+
+  secretRedactor.register("CustomSuperSecretKey987654!")
+  const customLog = "App configured with secret: CustomSuperSecretKey987654!"
+  const redactedCustom = secretRedactor.redact(customLog)
+  console.assert(!redactedCustom.includes("CustomSuperSecretKey987654!"), "Expected registered secret to be redacted")
+  console.assert(redactedCustom.includes("[REDACTED_SECRET]"), "Expected [REDACTED_SECRET] in output")
+  console.log("✔ SecretRedactor: masked OpenAI keys, Stripe test tokens, GitHub tokens, and registered secrets")
+
+  // 2. Verification Screen Detection
+  await page.evaluate(() => {
+    document.body.innerHTML = `
+      <div id="verify-box">
+        <h2>Please check your inbox</h2>
+        <p>A confirmation email has been sent to candidate@company.org. Click the link in the email to activate your account.</p>
+      </div>
+    `
+  })
+  const verifyDetect = await detectVerificationScreen(page)
+  console.assert(verifyDetect.needsVerification === true, "Expected email verification screen to be detected")
+  console.assert(verifyDetect.emailAddress === "candidate@company.org", `Expected detected email address, got ${verifyDetect.emailAddress}`)
+  console.log(`✔ detectVerificationScreen: accurately identified email verification wall and extracted target email (${verifyDetect.emailAddress})`)
+
+  // 3. Verification Pause & Resume Flow
+  const verifJob: AutomationJob = {
+    id: "verif-job-test-001",
+    targetUrl: fixtureUrl,
+    projectId: "proj-1",
+    status: "running",
+    progress: 50,
+    currentStep: "Testing registration workflow",
+    logs: [],
+    issues: [],
+    screens: [],
+    startedAt: new Date().toISOString(),
+    credentialsProvided: false,
+    viewports: [],
+    maxScreens: 5,
+  }
+  saveJob(verifJob)
+
+  // Start waiter in background
+  const waitPromise = waitForExternalVerification(verifJob, page, verifyDetect, { timeoutMs: 4000 })
+  await new Promise((r) => setTimeout(r, 200))
+
+  console.assert(verifJob.verificationState === "awaiting_verification", `Expected job to be awaiting_verification, got ${verifJob.verificationState}`)
+  console.assert(verifJob.currentStep.includes("Paused"), "Expected currentStep to indicate pause")
+
+  // Simulate user confirming verification via UI / API
+  verifJob.pendingVerification = { completed: true }
+  saveJob(verifJob)
+
+  const waitRes = await waitPromise
+  console.assert(waitRes === true, "Expected waitForExternalVerification to return true on confirmation")
+  console.assert(verifJob.verificationState === "verified", `Expected job verificationState to be verified, got ${verifJob.verificationState}`)
+  console.log("✔ waitForExternalVerification: successfully paused job, preserved progress, and resumed upon user confirmation")
+
+  // 4. Application Settings Credentials Detection
+  await page.evaluate(() => {
+    document.body.innerHTML = `
+      <form id="settings-form">
+        <label for="openai_api_key">OpenAI API Key</label>
+        <input type="password" id="openai_api_key" name="openai_api_key" placeholder="sk-..." value="" />
+
+        <label for="stripe_secret_key">Stripe Secret Key</label>
+        <input type="text" id="stripe_secret_key" name="stripe_secret_key" placeholder="sk_test_..." value="" />
+      </form>
+    `
+  })
+  const settingsDetect = await detectSettingsCredentialsRequirement(page)
+  console.assert(settingsDetect.requiresCredentials === true, "Expected settings form to require credentials")
+  console.assert(settingsDetect.fields.length >= 2, `Expected at least 2 settings credential fields, found ${settingsDetect.fields.length}`)
+  console.assert(settingsDetect.fields.some((f) => f.key === "openai_api_key"), "Expected openai_api_key field detected")
+  console.assert(settingsDetect.fields.some((f) => f.key === "stripe_secret_key"), "Expected stripe_secret_key field detected")
+  console.log(`✔ detectSettingsCredentialsRequirement: detected ${settingsDetect.fields.length} unconfigured API key fields in settings form`)
+
+  // 5. DOM Secret Masking for Screenshots
+  const unmask = await maskPageSecretsBeforeScreenshot(page)
+  const isMaskStyleInjected = await page.evaluate(() => Boolean(document.getElementById("__antigravity_secret_mask__")))
+  console.assert(isMaskStyleInjected === true, "Expected secret masking CSS to be injected into page")
+
+  await unmask()
+  const isMaskRemoved = await page.evaluate(() => !document.getElementById("__antigravity_secret_mask__"))
+  console.assert(isMaskRemoved === true, "Expected secret masking CSS to be removed after screenshot")
+  console.log("✔ maskPageSecretsBeforeScreenshot: successfully applied DOM blur/masking before screenshot and restored state after")
 
   // Cleanup
   await browser.close()

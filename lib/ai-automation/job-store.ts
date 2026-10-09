@@ -56,15 +56,18 @@ export function getJob(jobId: string): AutomationJob | null {
   return null
 }
 
+import { secretRedactor } from "./secure-credentials-manager"
+
 export function appendLog(job: AutomationJob, level: AutomationLog["level"], message: string) {
+  const sanitized = secretRedactor ? secretRedactor.redact(message) : message
   const log: AutomationLog = {
     timestamp: new Date().toISOString(),
     level,
-    message,
+    message: sanitized,
   }
   job.logs.push(log)
   saveJob(job)
-  console.log(`[AI Bot][${job.id.slice(0, 6)}][${level.toUpperCase()}] ${message}`)
+  console.log(`[AI Bot][${job.id.slice(0, 6)}][${level.toUpperCase()}] ${sanitized}`)
 }
 
 /** Per-job scratch directory for recordings and artifacts. */

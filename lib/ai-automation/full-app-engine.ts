@@ -61,6 +61,48 @@ import {
   showActionBanner,
   SessionVideoRecorder,
 } from "./visual-recorder"
+import {
+  createDummyFileBuffer,
+  resolveUploadFolder,
+  scanUploadFolder,
+  pickUploadFile,
+  UploadFolderInventory,
+} from "./test-file-manager"
+
+export {
+  createDummyFileBuffer,
+  resolveUploadFolder,
+  scanUploadFolder,
+  pickUploadFile,
+  type UploadFolderInventory,
+} from "./test-file-manager"
+
+import {
+  detectVerificationScreen,
+  waitForExternalVerification,
+  detectSettingsCredentialsRequirement,
+  promptAndFillSecureSettings,
+  maskPageSecretsBeforeScreenshot,
+  secretRedactor,
+} from "./secure-credentials-manager"
+
+export {
+  detectVerificationScreen,
+  waitForExternalVerification,
+  detectSettingsCredentialsRequirement,
+  promptAndFillSecureSettings,
+  maskPageSecretsBeforeScreenshot,
+  secretRedactor,
+} from "./secure-credentials-manager"
+
+async function takeSecureScreenshot(page: Page, options: { type: "jpeg"; quality: number }): Promise<Buffer> {
+  const unmask = await maskPageSecretsBeforeScreenshot(page)
+  try {
+    return (await page.screenshot(options)) as Buffer
+  } finally {
+    await unmask()
+  }
+}
 
 export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
   cardNumber: "4242 4242 4242 4242",
@@ -118,49 +160,6 @@ export async function promptPaymentCredentialsIfNeeded(
   return supplied
 }
 
-// Generate realistic dummy file buffers (PNG, PDF, CSV, TXT)
-export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv" | "video" | "other"): {
-  buffer: Buffer
-  fileName: string
-  mimeType: string
-} {
-  switch (type) {
-    case "image": {
-      // 1x1 transparent PNG buffer
-      const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-      return {
-        buffer: Buffer.from(pngBase64, "base64"),
-        fileName: "dummy_test_image.png",
-        mimeType: "image/png",
-      }
-    }
-    case "csv": {
-      const csv = "id,name,value,status\n1,Synthetic Item A,100,active\n2,Synthetic Item B,200,pending\n"
-      return {
-        buffer: Buffer.from(csv, "utf8"),
-        fileName: "dummy_test_data.csv",
-        mimeType: "text/csv",
-      }
-    }
-    case "pdf": {
-      // Minimal valid PDF structure
-      const pdf = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000117 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n200\n%%EOF"
-      return {
-        buffer: Buffer.from(pdf, "utf8"),
-        fileName: "dummy_test_document.pdf",
-        mimeType: "application/pdf",
-      }
-    }
-    default: {
-      const doc = "Synthetic automated test document content.\nCreated for automated UI file upload verification."
-      return {
-        buffer: Buffer.from(doc, "utf8"),
-        fileName: "dummy_test_document.txt",
-        mimeType: "text/plain",
-      }
-    }
-  }
-}
 
 /**
  * Extracts complete inventory of actionable elements on the active page
@@ -581,7 +580,7 @@ export async function discoverAndMapApp(
     const id = `S${String(screenSeq++).padStart(3, "0")}`
     let shot = ""
     try {
-      const buf = await page.screenshot({ type: "jpeg", quality: 75 })
+      const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
       shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
     } catch {}
     const node: AppScreenNode = {
@@ -716,7 +715,7 @@ export async function discoverAndMapApp(
               const tabScreenId = `S${String(screenSeq++).padStart(3, "0")}`
               let shot = ""
               try {
-                const buf = await page.screenshot({ type: "jpeg", quality: 75 })
+                const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
                 shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
               } catch {}
               const tabNode: AppScreenNode = {
@@ -1048,6 +1047,8 @@ export async function executeStructuredTestPlan(
     skipWorkflows?: boolean
     paymentCredentials?: TestPaymentCredentials
     allowTestPayments?: boolean
+    uploadFilesDir?: string
+    uploadInventory?: UploadFolderInventory | null
   }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
@@ -1062,6 +1063,11 @@ export async function executeStructuredTestPlan(
   let suspectedCount = 0
   let skippedUnsafeCount = 0
   const testedScreensSet = new Set<string>()
+
+  let activeUploadInventory = options?.uploadInventory || null
+  if (!activeUploadInventory && options?.uploadFilesDir) {
+    activeUploadInventory = scanUploadFolder(options.uploadFilesDir)
+  }
 
   const isProd = isProductionLike(testPlan.targetUrl)
   const isPaymentPermitted = options?.allowTestPayments === true
@@ -1611,17 +1617,30 @@ export async function executeStructuredTestPlan(
       } else if (step.actionType === "upload") {
         const fileType = step.fileTypeRequired || "image"
         await showActionBanner(page, `Upload ${fileType.toUpperCase()} -> ${step.targetName}`)
-        const dummy = createDummyFileBuffer(fileType)
-        const tmpPath = path.join(os.tmpdir(), `upload-test-${Date.now()}-${dummy.fileName}`)
-        fs.writeFileSync(tmpPath, dummy.buffer)
+
+        // 1. Inspect accept attribute of target upload control
+        const acceptAttr = await page.evaluate((sel) => {
+          const el = (sel ? document.querySelector(sel) : null) || document.querySelector('input[type="file"]')
+          return el ? el.getAttribute("accept") || "" : ""
+        }, step.targetSelector)
+
+        // 2. Pick matching file from user-mentioned upload folder or fallback to synthetic dummy
+        const picked = pickUploadFile(activeUploadInventory, {
+          fileTypeRequired: fileType,
+          acceptAttr,
+          targetName: step.targetName,
+        })
 
         try {
-          const fileInput = await page.$('input[type="file"]')
+          const fileInput =
+            (step.targetSelector ? await page.$(step.targetSelector) : null) ||
+            (await page.$('input[type="file"]'))
+
           if (!fileInput) {
             actionVerdict = "blocked"
             observation = `No <input type="file"> found for upload "${step.targetName}".`
           } else {
-            await (fileInput as any).uploadFile(tmpPath)
+            await (fileInput as any).uploadFile(picked.filePath)
             await settle(page, netRecorder, 3000)
 
             const uploadState = await page.evaluate(() => {
@@ -1634,19 +1653,33 @@ export async function executeStructuredTestPlan(
             const calls = netRecorder.getCapturedCalls()
             const hasMultipartRequest = calls.some((c) => c.isMutating)
 
+            const sourceNote = picked.isFromFolder
+              ? `from folder "${path.basename(picked.filePath)}" (${picked.fileSizeKB} KB)`
+              : `("${picked.fileName}")`
+
             if (uploadState.fileCount > 0 && (uploadState.hasPreview || hasMultipartRequest)) {
               actionVerdict = "passed"
-              observation = `Attached dummy ${fileType.toUpperCase()} file ("${dummy.fileName}"). Wire/DOM confirmation verified.`
+              observation = `Attached ${fileType.toUpperCase()} file ${sourceNote}. Wire/DOM confirmation verified.`
             } else if (uploadState.fileCount > 0) {
               actionVerdict = "passed"
-              observation = `File attached to input element ("${dummy.fileName}").`
+              observation = `File attached to input element: ${sourceNote}.`
             } else {
               actionVerdict = "failed"
               observation = `Failed to attach file to upload control "${step.targetName}".`
             }
+
+            if (picked.isFromFolder) {
+              appendLog(
+                job,
+                "info",
+                `📁 Attached test file from folder: "${picked.fileName}" (${picked.fileSizeKB} KB) into "${step.targetName}"`
+              )
+            }
           }
         } finally {
-          try { fs.unlinkSync(tmpPath) } catch {}
+          if (picked.cleanUp) {
+            picked.cleanUp()
+          }
         }
 
         step.evidence = {
@@ -1822,6 +1855,30 @@ export async function executeStructuredTestPlan(
       step.status = actionVerdict
       step.actualResult = observation
 
+      // Check for email confirmation / external verification requirements
+      try {
+        const verifyCheck = await detectVerificationScreen(page)
+        if (verifyCheck.needsVerification) {
+          const verified = await waitForExternalVerification(job, page, verifyCheck)
+          if (verified) {
+            observation += " External email verification confirmed by user."
+            step.actualResult = observation
+          }
+        }
+      } catch {}
+
+      // Check for application settings API keys / credential requirements
+      try {
+        const settingsCheck = await detectSettingsCredentialsRequirement(page)
+        if (settingsCheck.requiresCredentials) {
+          const configured = await promptAndFillSecureSettings(job, page, settingsCheck.fields)
+          if (configured) {
+            observation += " Application settings credentials securely configured."
+            step.actualResult = observation
+          }
+        }
+      } catch {}
+
       if (actionVerdict === "passed") {
         passedCount++
       } else if (actionVerdict === "suspected_non_functional") {
@@ -1836,10 +1893,10 @@ export async function executeStructuredTestPlan(
 
       testedScreensSet.add(step.screenId)
 
-      // 4. Capture Evidence Screenshot (Full for failure/suspected/weak pass, compressed thumbnail for pass)
+      // 4. Capture Evidence Screenshot (Masking all passwords, tokens & API keys first)
       try {
         const isCritical = actionVerdict === "failed" || actionVerdict === "suspected_non_functional" || step.evidence?.isWeakPass
-        const buf = await page.screenshot({
+        const buf = await takeSecureScreenshot(page, {
           type: "jpeg",
           quality: isCritical ? 80 : 50,
         })
@@ -2108,7 +2165,7 @@ export async function executeFullAppTestingJob(
     appendLog(job, "info", "Phase 2: Generating structured test plan from discovered screens & elements...")
     const testPlan = generateStructuredTestPlan(job.targetUrl, discovery.screens, discovery.transitions, {
       isAuthenticated: job.authState === "logged_in",
-      postmanCollection: params.postmanCollection,
+      postmanCollection: params.postmanCollection || job.postmanCollection,
     })
     job.fullAppTestPlan = testPlan
     job.flowGraph = buildFigmaWorkflowMap(testPlan)
@@ -2120,6 +2177,24 @@ export async function executeFullAppTestingJob(
       `📋 Test Plan Generated: ${testPlan.steps.length} test steps across ${testPlan.screens.length} screens (${testPlan.requiredFileTypes.length} file upload types detected).`
     )
 
+    // Resolve upload folder from params / user prompt mention / project conventions
+    const uploadFilesDir = resolveUploadFolder({
+      uploadFilesDir: params.uploadFilesDir || job.uploadFilesDir,
+      projectDir: params.projectDir || job.projectDir,
+      prompt: params.userInstruction || params.workflowPrompt,
+    })
+
+    let uploadInventory = null
+    if (uploadFilesDir) {
+      uploadInventory = scanUploadFolder(uploadFilesDir)
+      job.uploadFilesDir = uploadFilesDir
+      appendLog(
+        job,
+        "info",
+        `📁 Detected upload test folder: "${uploadFilesDir}" (${uploadInventory.files.length} test files indexed).`
+      )
+    }
+
     // PHASE 3: Systematic Execution of Test Plan & Workflows
     await executeStructuredTestPlan(job, page, testPlan, params.dummyTestFiles, sessionCreds, {
       allowActions: params.allowActions,
@@ -2127,6 +2202,8 @@ export async function executeFullAppTestingJob(
       postmanSummary: testPlan.postmanSummary,
       allowTestPayments,
       paymentCredentials: params.paymentCredentials,
+      uploadFilesDir: uploadFilesDir || undefined,
+      uploadInventory,
     })
 
     // Finalize session video recording

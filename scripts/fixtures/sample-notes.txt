@@ -1,0 +1,2 @@
+Autonomous UI Testing Fixture Document
+This file is used to verify file upload controls in end-to-end testing.

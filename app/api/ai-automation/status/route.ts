@@ -112,6 +112,66 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    if (action === "confirm_verification") {
+      const { verificationUrl, verificationCode } = body
+      ;(job as any).pendingVerification = {
+        completed: true,
+        verificationUrl: verificationUrl ? String(verificationUrl) : undefined,
+        verificationCode: verificationCode ? String(verificationCode) : undefined,
+      }
+      ;(job as any).verificationState = "verified"
+      ;(job as any).verificationPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({
+        success: true,
+        message: "External verification confirmation received. Resuming testing.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "skip_verification") {
+      ;(job as any).pendingVerification = { skip: true }
+      ;(job as any).verificationState = "skipped"
+      ;(job as any).verificationPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({
+        success: true,
+        message: "External verification skipped.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "provide_settings_credentials") {
+      const { credentials } = body
+      if (!credentials || typeof credentials !== "object") {
+        return NextResponse.json(
+          { error: "credentials object required" },
+          { status: 400 }
+        )
+      }
+      ;(job as any).pendingSettingsCredentials = credentials
+      ;(job as any).settingsState = "configured"
+      ;(job as any).settingsPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({
+        success: true,
+        message: "Settings credentials received securely. Resuming testing.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "skip_settings_credentials") {
+      ;(job as any).pendingSettingsCredentials = { skip: true }
+      ;(job as any).settingsState = "skipped"
+      ;(job as any).settingsPrompt = undefined
+      saveJob(job)
+      return NextResponse.json({
+        success: true,
+        message: "Settings credentials skipped.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
     return NextResponse.json({
       success: true,
       job: sanitizeJobForClient(job as unknown as Record<string, unknown>),

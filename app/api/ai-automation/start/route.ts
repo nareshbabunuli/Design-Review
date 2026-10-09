@@ -58,6 +58,11 @@ export async function POST(req: NextRequest) {
       workflowPrompt: body.workflowPrompt,
       scenarioCount: body.scenarioCount,
       dummyTestFiles: body.dummyTestFiles,
+      uploadFilesDir: body.uploadFilesDir,
+      postmanCollection: body.postmanCollection,
+      paymentCredentials: body.paymentCredentials,
+      allowTestPayments: body.allowTestPayments,
+      allowActions: body.allowActions,
     })
 
     ;(job as any).userId = access.user.id

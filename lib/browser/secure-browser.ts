@@ -209,6 +209,9 @@ export function sanitizeJobForClient<T extends Record<string, unknown>>(job: T):
   const clone = { ...job } as Record<string, unknown>
   delete clone.credentials
   delete clone.pendingCredentials
+  delete clone.pendingSettingsCredentials
+  delete clone.pendingPaymentCredentials
+  delete clone.pendingVerification
   delete clone.openRouterApiKey
   delete clone.accessToken
   delete clone.refreshToken

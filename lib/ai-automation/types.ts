@@ -470,6 +470,27 @@ export type AutomationJob = {
   /** Postman Collection v2.1 for API-to-UI data mapping */
   postmanCollection?: string | Record<string, any>
   postmanSummary?: PostmanCollectionSummary
+  /** Folder path for real test files to upload during testing */
+  uploadFilesDir?: string
+  /** Email & external verification handling: pauses testing until user clicks email link or enters OTP code */
+  verificationState?: "none" | "awaiting_verification" | "verified" | "skipped"
+  verificationPrompt?: string
+  pendingVerification?: {
+    completed?: boolean
+    verificationUrl?: string
+    verificationCode?: string
+    skip?: boolean
+  }
+  /** Secure application settings & API keys configuration: prompts user for API keys/tokens and masks them */
+  settingsState?: "none" | "awaiting_credentials" | "configured" | "skipped"
+  settingsPrompt?: string
+  requiredSettingsFields?: Array<{
+    key: string
+    label: string
+    isSecret?: boolean
+    placeholder?: string
+  }>
+  pendingSettingsCredentials?: Record<string, string> & { skip?: boolean }
 }
 
 export type TestPaymentCredentials = {
@@ -547,6 +568,8 @@ export type StartAutomationRequest = {
   allowTestPayments?: boolean
   /** Whether to record session video with visible cursor & interaction highlights (default true) */
   recordVideo?: boolean
+  /** Folder path for real test files to check and upload during file upload testing */
+  uploadFilesDir?: string
 }
 
 export type ParsedPostmanEndpoint = {
