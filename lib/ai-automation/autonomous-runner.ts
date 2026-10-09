@@ -420,9 +420,53 @@ async function runScenarioWithStagehand(
     }
 
     const actionList: any[] = Array.isArray(result?.actions) ? result.actions : []
-    out.actionsTaken = actionList.length
     out.agentSummary = result?.message || ""
     out.agentSuccess = result?.success !== false && !out.error
+
+    // Closed-loop recovery: when the browser produced concrete error evidence,
+    // ask the same agent for one bounded alternate action informed by that evidence.
+    const observedProblems = [
+      ...pageErrors.slice(-5).map((message) => `browser JavaScript error: ${message}`),
+      ...out.issues
+        .filter((issue) => issue.type === "broken_asset" || issue.severity === "high" || issue.severity === "blocker")
+        .slice(-5)
+        .map((issue) => issue.description),
+    ]
+    if (observedProblems.length > 0 && !out.riskyHit) {
+      const observation = observedProblems.join("\n").slice(0, 1800)
+      addEvidence(out, "DECIDE", `Detected concrete browser issue evidence; switching to a targeted recovery action.`, {
+        url: await stagePage.url().catch(() => job.targetUrl),
+        consoleErrors: pageErrors.slice(-5),
+        actions: actionList.length,
+      })
+      appendLog(job, "warn", `[${scenario.name}] Evidence-driven recovery: ${observation.slice(0, 300)}`)
+      addEvidence(out, "RECOVER", "Requested one bounded alternate action using the observed issue evidence; no destructive action is permitted.", {
+        url: await stagePage.url().catch(() => job.targetUrl),
+        consoleErrors: pageErrors.slice(-5),
+        actions: actionList.length,
+      })
+      try {
+        const recovery = await agent.execute({
+          instruction: `A prior browser action produced this observed evidence:\n${observation}\nDo not repeat the same failed action. Inspect the current screen and take at most one safe, alternate action to determine whether the issue is recoverable. Do not submit, delete, purchase, send, publish, deploy, log out, or leave the target origin. Explain the observed result.`,
+          maxSteps: 5,
+          highlightCursor: true,
+          page: stagePage,
+        } as any)
+        const recoveryActions: any[] = Array.isArray(recovery?.actions) ? recovery.actions : []
+        for (const action of recoveryActions) {
+          const description = String(action?.action || action?.type || "recovery action")
+          actionList.push({ ...action, action: `RECOVERY: ${description}` })
+          if (RISKY_ACTION.test(description)) out.riskyHit = description
+        }
+        out.actionsTaken = actionList.length
+        if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
+        appendLog(job, recovery?.success === false ? "warn" : "info",
+          `[${scenario.name}] Recovery attempted ${recoveryActions.length} alternate action(s).`)
+      } catch (recoveryError: any) {
+        appendLog(job, "warn", `[${scenario.name}] Recovery attempt failed: ${recoveryError?.message || String(recoveryError)}`)
+        out.error = out.error || `Evidence-driven recovery failed: ${recoveryError?.message || String(recoveryError)}`
+      }
+    }
     addEvidence(out, "DECIDE", out.error
       ? `Agent execution produced an error: ${out.error}`
       : `Agent completed ${actionList.length} browser actions; next state will be verified.`, {
