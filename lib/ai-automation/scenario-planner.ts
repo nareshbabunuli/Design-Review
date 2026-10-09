@@ -8,9 +8,7 @@
  */
 
 import type { TestScenario, TestScenarioCategory } from "./types"
-import { parseJsonSafe } from "./openrouter"
-
-const UNOROUTER_BASE_URL = "https://api.unorouter.com/v1"
+import { NEBIUS_BASE_URL, parseJsonSafe, resolveAiApiKey, resolveModel } from "./ai-gateway"
 
 function isLocalBase(url: string): boolean {
   return url.includes("localhost") || url.includes("127.0.0.1")
@@ -47,16 +45,12 @@ export async function planScenarios(
   const count = Math.min(Math.max(opts.count || 15, 1), 25)
 
   // 1) Try the AI gateway.
-  const base = (opts.baseUrl?.trim() || UNOROUTER_BASE_URL).replace(/\/$/, "")
-  const headers = buildHeaders(base, opts.apiKey)
+  const base = (opts.baseUrl?.trim() || NEBIUS_BASE_URL).replace(/\/$/, "")
+  const apiKey = resolveAiApiKey(base, opts.apiKey)
+  const headers = buildHeaders(base, apiKey)
   if (headers) {
     try {
-      const rawModel = opts.model?.trim()
-      const model = isLocalBase(base)
-        ? !rawModel || rawModel === "deepseek-v4-flash:free"
-          ? "fast"
-          : rawModel
-        : rawModel || "deepseek-v4-flash:free"
+      const model = resolveModel(base, opts.model)
       const routes = opts.routePaths.length > 0 ? opts.routePaths.join(", ") : "(no routes discovered yet)"
       const prompt = `You are a QA test planner. The target is a web application at ${opts.targetUrl}.
 Known in-app routes: ${routes}.
@@ -129,7 +123,7 @@ Rules: never invent credentials; never touch delete/destroy/purchase/checkout/lo
   return {
     scenarios: heuristicScenarios(opts, count),
     usedAi: false,
-    error: "No AI provider key for the remote gateway — using the built-in scenario pack. Add a key in AI Settings → OmniRouter for AI-planned scenarios.",
+    error: "No AI provider key for the remote gateway — using the built-in scenario pack. Add a Nebius Token Factory key in AI Settings for AI-planned scenarios.",
   }
 }
 
