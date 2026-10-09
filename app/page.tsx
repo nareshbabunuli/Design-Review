@@ -1322,6 +1322,37 @@ export default function Page() {
     }
   }
 
+  const handleBulkDeleteWorkflows = async (projectId: string, workflowIds: string[]) => {
+    if (!workflowIds || workflowIds.length === 0) return
+    const count = workflowIds.length
+    if (!confirm(`Are you sure you want to delete ${count} selected screen${count > 1 ? "s" : ""}?`)) return
+
+    const currentProject = projects.find((p) => p.id === projectId)
+    if (!currentProject) return
+
+    const remaining = currentProject.workflows.filter((w) => !workflowIds.includes(w.id))
+
+    update((xs) =>
+      xs.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              workflows: remaining,
+              workflowOrder: p.workflowOrder ? p.workflowOrder.filter((id) => !workflowIds.includes(id)) : null,
+            }
+          : p
+      )
+    )
+
+    if (activeWorkflowId && workflowIds.includes(activeWorkflowId)) {
+      setActiveWorkflowId(remaining[0]?.id || null)
+    }
+
+    if (supabase) {
+      await supabase.from("workflows").delete().in("id", workflowIds)
+    }
+  }
+
   const fieldDebounceTimers = useRef<Record<string, NodeJS.Timeout>>({})
 
   // Update workflow field with backend permission validation
@@ -1988,171 +2019,171 @@ export default function Page() {
         />
       )}
 
-      {/* VS Code Left Activity Bar Rail (48px) */}
-      <aside className="w-12 bg-[#090a10] border-r border-slate-800/80 flex flex-col items-center justify-between py-2 shrink-0 z-40 select-none print:hidden">
-        {/* Top: Brand / Home Logo + Navigation View Switchers */}
-        <div className="flex flex-col items-center gap-1.5 w-full">
-          {/* Brand Logo & Back to Dashboard */}
-          <button
-            type="button"
-            onClick={() => setViewMode("dashboard")}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs transition-all cursor-pointer ${
-              viewMode === "dashboard"
-                ? "bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-900/40 ring-2 ring-indigo-400"
-                : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
-            }`}
-            title="Dashboard"
-          >
-            <FolderKanban className="h-4 w-4" />
-          </button>
+      {/* VS Code Left Activity Bar Rail (48px) - Only shown in project workspaces (editor & simulator), hidden on dashboard */}
+      {viewMode !== "dashboard" && (
+        <aside className="w-12 bg-[#090a10] border-r border-slate-800/80 flex flex-col items-center justify-between py-2 shrink-0 z-[60] select-none print:hidden">
+          {/* Top: Brand / Home Logo + Navigation View Switchers */}
+          <div className="flex flex-col items-center gap-1.5 w-full">
+            {/* Brand Logo & Back to Dashboard */}
+            <button
+              type="button"
+              onClick={() => setViewMode("dashboard")}
+              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs transition-all cursor-pointer bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+              title="Return to Projects Dashboard"
+            >
+              <FolderKanban className="h-4 w-4" />
+            </button>
 
-          <div className="w-6 h-px bg-slate-800/80 my-0.5" />
+            <div className="w-6 h-px bg-slate-800/80 my-0.5" />
 
-          {/* Editor View Tab */}
-          <button
-            type="button"
-            onClick={() => {
-              if (viewMode === "editor") {
-                setIsMobileSidebarOpen((prev) => !prev)
-              } else {
-                setViewMode("editor")
-              }
-            }}
-            className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
-              viewMode === "editor" ? "text-white" : "text-slate-500 hover:text-slate-200"
-            }`}
-            title="Design Review Editor"
-          >
-            {viewMode === "editor" && (
-              <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
-            )}
-            <Pencil className={`h-5 w-5 transition ${viewMode === "editor" ? "text-indigo-400" : "group-hover:scale-105"}`} />
-          </button>
-
-          {/* Simulator View Tab */}
-          <button
-            type="button"
-            onClick={() => setViewMode("simulator")}
-            className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
-              viewMode === "simulator" ? "text-white" : "text-slate-500 hover:text-slate-200"
-            }`}
-            title="Mobile Simulator Canvas"
-          >
-            {viewMode === "simulator" && (
-              <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
-            )}
-            <Smartphone className={`h-5 w-5 transition ${viewMode === "simulator" ? "text-indigo-400" : "group-hover:scale-105"}`} />
-          </button>
-
-          {/* AI Simulator Route Link */}
-          <Link
-            href="/ai-simulator"
-            className="w-full py-2.5 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-indigo-300 cursor-pointer"
-            title="AI Simulator & Full App Testing"
-          >
-            <Sparkles className="h-5 w-5 transition group-hover:scale-105 text-indigo-400" />
-          </Link>
-        </div>
-
-        {/* Bottom Activity Icons: Theme, Profile */}
-        <div className="flex flex-col items-center gap-2.5 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
-          <div className="scale-85">
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
-          </div>
-
-          {/* Profile Avatar / Menu Trigger */}
-          <div className="relative" ref={activityProfileRef}>
+            {/* Editor View Tab */}
             <button
               type="button"
               onClick={() => {
-                if (user) {
-                  setIsProfileMenuOpen((prev) => !prev)
+                if (viewMode === "editor") {
+                  setIsMobileSidebarOpen((prev) => !prev)
                 } else {
-                  setShowLanding(true)
+                  setViewMode("editor")
                 }
               }}
-              className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-[10px] font-bold text-white flex items-center justify-center ring-1 ring-slate-700 hover:ring-indigo-400 transition cursor-pointer"
-              title={user ? (user.email || "Profile") : "Sign in / Account"}
+              className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
+                viewMode === "editor" ? "text-white" : "text-slate-500 hover:text-slate-200"
+              }`}
+              title="Design Review Editor"
             >
-              {user ? (user.email ? user.email.slice(0, 2).toUpperCase() : "US") : <User className="h-3.5 w-3.5" />}
+              {viewMode === "editor" && (
+                <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
+              )}
+              <Pencil className={`h-5 w-5 transition ${viewMode === "editor" ? "text-indigo-400" : "group-hover:scale-105"}`} />
             </button>
 
-            {/* Profile Dropdown Menu in Activity Bar */}
-            {isProfileMenuOpen && user && (
-              <div
-                onMouseDown={(e) => e.stopPropagation()}
-                className="fixed left-14 bottom-3 w-60 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-50 flex flex-col text-xs transition-all animate-in fade-in-50 zoom-in-95 duration-150 origin-bottom-left text-slate-200"
-              >
-                {/* User email info */}
-                <div className="px-3 py-2 border-b border-slate-800 mb-1">
-                  <div className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
-                    Signed in as
-                  </div>
-                  <div className="font-semibold text-white truncate mt-0.5" title={user.email || ""}>
-                    {user.email}
-                  </div>
-                </div>
+            {/* Simulator View Tab */}
+            <button
+              type="button"
+              onClick={() => setViewMode("simulator")}
+              className={`w-full py-2.5 flex flex-col items-center justify-center relative transition group cursor-pointer ${
+                viewMode === "simulator" ? "text-white" : "text-slate-500 hover:text-slate-200"
+              }`}
+              title="Mobile Simulator Canvas"
+            >
+              {viewMode === "simulator" && (
+                <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
+              )}
+              <Smartphone className={`h-5 w-5 transition ${viewMode === "simulator" ? "text-indigo-400" : "group-hover:scale-105"}`} />
+            </button>
 
-                {/* Third-Party Integrations */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false)
-                    setSettingsTab("integrations")
-                    setIsSettingsOpen(true)
-                  }}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
-                >
-                  <Plug className="h-4 w-4 text-purple-400" />
-                  <span>Third-Party Integrations</span>
-                </button>
-
-                {/* Import from Figma shortcut */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false)
-                    handleOpenFigmaImport()
-                  }}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-purple-400 hover:bg-purple-950/40 transition-colors text-left cursor-pointer font-medium"
-                >
-                  <Sparkles className="h-4 w-4 text-purple-400" />
-                  <span>Import from Figma</span>
-                </button>
-
-                {/* Account Settings */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false)
-                    setSettingsTab("account")
-                    setIsSettingsOpen(true)
-                  }}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
-                >
-                  <Settings className="h-4 w-4 text-slate-400" />
-                  <span>Account Settings</span>
-                </button>
-
-                <div className="h-px bg-slate-800 my-1" />
-
-                {/* Logout */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false)
-                    handleSignOut()
-                  }}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-rose-400 hover:bg-rose-950/40 transition-colors text-left font-medium cursor-pointer"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span>Log out</span>
-                </button>
-              </div>
-            )}
+            {/* AI Simulator Route Link */}
+            <Link
+              href="/ai-simulator"
+              className="w-full py-2.5 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-indigo-300 cursor-pointer"
+              title="AI Simulator & Full App Testing"
+            >
+              <Sparkles className="h-5 w-5 transition group-hover:scale-105 text-indigo-400" />
+            </Link>
           </div>
-        </div>
-      </aside>
+
+          {/* Bottom Activity Icons: Theme, Profile */}
+          <div className="flex flex-col items-center gap-2.5 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
+            <div className="scale-85">
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            </div>
+
+            {/* Profile Avatar / Menu Trigger */}
+            <div className="relative" ref={activityProfileRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileMenuOpen((prev) => !prev)
+                }}
+                className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-[10px] font-bold text-white flex items-center justify-center ring-1 ring-slate-700 hover:ring-indigo-400 transition cursor-pointer"
+                title={user ? (user.email || "Profile") : "Account Menu"}
+              >
+                {user ? (user.email ? user.email.slice(0, 2).toUpperCase() : "US") : <User className="h-3.5 w-3.5" />}
+              </button>
+
+              {/* Profile Dropdown Menu in Activity Bar */}
+              {isProfileMenuOpen && (
+                <div
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="fixed left-14 bottom-3 w-60 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-[100] flex flex-col text-xs transition-all animate-in fade-in-50 zoom-in-95 duration-150 origin-bottom-left text-slate-200"
+                >
+                  {/* User email info */}
+                  <div className="px-3 py-2 border-b border-slate-800 mb-1">
+                    <div className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
+                      {user?.email ? "Signed in as" : "Account Status"}
+                    </div>
+                    <div className="font-semibold text-white truncate mt-0.5" title={user?.email || ""}>
+                      {user?.email || "Guest / Local User"}
+                    </div>
+                  </div>
+
+                  {/* Third-Party Integrations */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProfileMenuOpen(false)
+                      setSettingsTab("integrations")
+                      setIsSettingsOpen(true)
+                    }}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
+                  >
+                    <Plug className="h-4 w-4 text-purple-400" />
+                    <span>Third-Party Integrations</span>
+                  </button>
+
+                  {/* Import from Figma shortcut */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProfileMenuOpen(false)
+                      handleOpenFigmaImport()
+                    }}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-purple-400 hover:bg-purple-950/40 transition-colors text-left cursor-pointer font-medium"
+                  >
+                    <Sparkles className="h-4 w-4 text-purple-400" />
+                    <span>Import from Figma</span>
+                  </button>
+
+                  {/* Account Settings */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProfileMenuOpen(false)
+                      setSettingsTab("account")
+                      setIsSettingsOpen(true)
+                    }}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
+                  >
+                    <Settings className="h-4 w-4 text-slate-400" />
+                    <span>Account Settings</span>
+                  </button>
+
+                  <div className="h-px bg-slate-800 my-1" />
+
+                  {/* Logout or Sign In */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProfileMenuOpen(false)
+                      if (user) {
+                        handleSignOut()
+                      } else {
+                        setShowLanding(true)
+                      }
+                    }}
+                    className={`flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors text-left font-medium cursor-pointer ${
+                      user ? "text-rose-400 hover:bg-rose-950/40" : "text-indigo-400 hover:bg-indigo-950/40"
+                    }`}
+                  >
+                    {user ? <LogOut className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                    <span>{user ? "Log out" : "Sign in / Create Account"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
 
       {/* Sidebar - Shown in editor mode, or as mobile drawer in editor & simulator mode */}
       {(viewMode === "editor" || (viewMode === "simulator" && isMobileSidebarOpen)) && (
@@ -2205,6 +2236,7 @@ export default function Page() {
               e.stopPropagation()
               await handleDeleteWorkflow(workflowId)
             }}
+            onBulkDeleteWorkflows={handleBulkDeleteWorkflows}
             onMoveWorkflowUp={(projectId: string, workflowId: string, e: React.MouseEvent) =>
               handleMoveWorkflow(projectId, workflowId, "up", e)
             }
@@ -2617,8 +2649,6 @@ export default function Page() {
                     onSubmitRevision={submitFinalRevision}
                     onShowReport={() => setShowReport(true)}
                     onAddComment={addComment}
-                    onDuplicateWorkflow={duplicateWorkflow}
-                    onDeleteWorkflow={handleDeleteWorkflow}
                   />
                 ) : (
                   <div className="flex flex-col h-full items-center justify-center gap-3 text-slate-400">

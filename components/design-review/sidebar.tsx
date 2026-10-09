@@ -19,6 +19,9 @@ import {
   CopyPlus,
   X,
   Sparkles,
+  CheckSquare,
+  Square,
+  MinusSquare,
 } from "lucide-react"
 import type { Project, EditingId } from "@/lib/design-review-types"
 
@@ -39,6 +42,7 @@ type SidebarProps = {
   onToggleExpand: (projectId: string, e?: React.MouseEvent) => void
   onDeleteProject: (id: string, e: React.MouseEvent) => void
   onDeleteWorkflow: (projectId: string, workflowId: string, e: React.MouseEvent) => void
+  onBulkDeleteWorkflows?: (projectId: string, workflowIds: string[]) => void
   onDuplicateWorkflow?: (projectId: string, workflowId: string, e: React.MouseEvent) => void
   onSelectProject: (projectId: string) => void
   onSelectWorkflow: (projectId: string, workflowId: string) => void
@@ -125,11 +129,52 @@ export function Sidebar({
   onMoveProjectDown,
   onReorderProjects,
   onOpenFigmaImport,
+  onBulkDeleteWorkflows,
 }: SidebarProps) {
   const [draggedWorkflow, setDraggedWorkflow] = useState<{ projectId: string; index: number } | null>(null)
   const [dragOverWorkflow, setDragOverWorkflow] = useState<{ projectId: string; index: number } | null>(null)
   const [draggedProjectIndex, setDraggedProjectIndex] = useState<number | null>(null)
   const [dragOverProjectIndex, setDragOverProjectIndex] = useState<number | null>(null)
+  const [isSelectMode, setIsSelectMode] = useState<Record<string, boolean>>({})
+  const [selectedWorkflows, setSelectedWorkflows] = useState<Record<string, string[]>>({})
+
+  const toggleSelectMode = (projectId: string) => {
+    setIsSelectMode((prev) => {
+      const next = !prev[projectId]
+      if (!next) {
+        setSelectedWorkflows((s) => ({ ...s, [projectId]: [] }))
+      }
+      return { ...prev, [projectId]: next }
+    })
+  }
+
+  const toggleSelectAll = (projectId: string) => {
+    const proj = projects.find((p) => p.id === projectId)
+    if (!proj) return
+    const current = selectedWorkflows[projectId] || []
+    if (current.length === proj.workflows.length) {
+      setSelectedWorkflows((prev) => ({ ...prev, [projectId]: [] }))
+    } else {
+      setSelectedWorkflows((prev) => ({ ...prev, [projectId]: proj.workflows.map((w) => w.id) }))
+    }
+  }
+
+  const toggleWorkflowSelection = (projectId: string, workflowId: string) => {
+    setSelectedWorkflows((prev) => {
+      const current = prev[projectId] || []
+      const exists = current.includes(workflowId)
+      const next = exists ? current.filter((id) => id !== workflowId) : [...current, workflowId]
+      return { ...prev, [projectId]: next }
+    })
+  }
+
+  const handleBulkDelete = (projectId: string) => {
+    const toDelete = selectedWorkflows[projectId] || []
+    if (toDelete.length === 0) return
+    onBulkDeleteWorkflows?.(projectId, toDelete)
+    setSelectedWorkflows((prev) => ({ ...prev, [projectId]: [] }))
+    setIsSelectMode((prev) => ({ ...prev, [projectId]: false }))
+  }
 
   return (
     <aside className="w-72 sm:w-80 max-w-[85vw] h-full max-h-screen flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col min-h-0 shadow-xl lg:shadow-none z-50 lg:z-10 print:hidden transition-colors select-none overflow-hidden">
@@ -404,42 +449,115 @@ export function Sidebar({
             {/* Workflows (screens / files) */}
             {project.isExpanded && (
               <div className="ml-3 sm:ml-5 pl-1.5 sm:pl-2 border-l-2 border-slate-100 dark:border-slate-800 mt-1 space-y-0.5">
-                {project.workflows.length > 1 && (
-                  <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium select-none">
-                    <span className="uppercase tracking-wider font-semibold text-[9px] text-slate-400 dark:text-slate-500">
-                      Screens ({project.workflows.length})
-                    </span>
-                    {isProjectOwner && onToggleOrderLock && (
-                      <button
-                        type="button"
-                        onClick={(e) => onToggleOrderLock(project.id, e)}
-                        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
-                          project.isOrderLocked
-                            ? "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80"
-                            : "text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        }`}
-                        title={
-                          project.isOrderLocked
-                            ? "Screens order is locked. Click to unlock and rearrange."
-                            : "Click to lock current screens order."
-                        }
-                      >
-                        {project.isOrderLocked ? (
-                          <>
-                            <Lock className="h-2.5 w-2.5 text-amber-500" />
-                            <span>Order Locked</span>
-                          </>
-                        ) : (
-                          <>
-                            <Unlock className="h-2.5 w-2.5" />
-                            <span>Lock Order</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                )}
+                {project.workflows.length > 0 && (() => {
+                  const isSelectActive = Boolean(isSelectMode[project.id])
+                  const currentSelected = selectedWorkflows[project.id] || []
+                  const selectedCount = currentSelected.length
+                  const totalCount = project.workflows.length
+                  const allSelected = totalCount > 0 && selectedCount === totalCount
+                  const someSelected = selectedCount > 0 && selectedCount < totalCount
+
+                  return (
+                    <div className="space-y-1 mb-1">
+                      <div className="flex items-center justify-between px-2 py-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium select-none">
+                        <span className="uppercase tracking-wider font-semibold text-[9px] text-slate-400 dark:text-slate-500">
+                          Screens ({project.workflows.length})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {isProjectOwner && onToggleOrderLock && project.workflows.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => onToggleOrderLock(project.id, e)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
+                                project.isOrderLocked
+                                  ? "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80"
+                                  : "text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              }`}
+                              title={
+                                project.isOrderLocked
+                                  ? "Screens order is locked. Click to unlock and rearrange."
+                                  : "Click to lock current screens order."
+                              }
+                            >
+                              {project.isOrderLocked ? (
+                                <>
+                                  <Lock className="h-2.5 w-2.5 text-amber-500" />
+                                  <span>Order Locked</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Unlock className="h-2.5 w-2.5" />
+                                  <span>Lock Order</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                          {canManageScreens && onBulkDeleteWorkflows && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleSelectMode(project.id)
+                              }}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
+                                isSelectActive
+                                  ? "text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/60 border border-blue-300 dark:border-blue-700"
+                                  : "text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              }`}
+                              title={isSelectActive ? "Done selecting" : "Select multiple screens to delete"}
+                            >
+                              <span>{isSelectActive ? "Done" : "Select"}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Gmail-style select all & bulk delete action bar */}
+                      {isSelectActive && (
+                        <div className="flex items-center justify-between px-2 py-1 bg-slate-100/90 dark:bg-slate-900/90 rounded-md border border-slate-200 dark:border-slate-800 text-[11px] select-none animate-in fade-in-50 duration-150">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleSelectAll(project.id)
+                            }}
+                            className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                            title={allSelected ? "Deselect all screens" : "Select all screens"}
+                          >
+                            {allSelected ? (
+                              <CheckSquare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                            ) : someSelected ? (
+                              <MinusSquare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                            ) : (
+                              <Square className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+                            )}
+                            <span className="font-semibold text-[10px]">
+                              {selectedCount > 0 ? `${selectedCount} selected` : "Select All"}
+                            </span>
+                          </button>
+
+                          {selectedCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleBulkDelete(project.id)
+                              }}
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/70 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900/60 transition-colors cursor-pointer"
+                              title="Delete selected screens"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Delete ({selectedCount})</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
                 {project.workflows.map((workflow, wIdx) => {
+                  const isSelectActive = Boolean(isSelectMode[project.id])
+                  const isThisWorkflowSelected = (selectedWorkflows[project.id] || []).includes(workflow.id)
                   const isDraggingThis =
                     draggedWorkflow?.projectId === project.id && draggedWorkflow?.index === wIdx
                   const isDragOverThis =
@@ -451,9 +569,9 @@ export function Sidebar({
                   return (
                     <div
                       key={workflow.id}
-                      draggable={canManageScreens && !project.isOrderLocked}
+                      draggable={canManageScreens && !project.isOrderLocked && !isSelectActive}
                       onDragStart={(e) => {
-                        if (canManageScreens && !project.isOrderLocked) {
+                        if (canManageScreens && !project.isOrderLocked && !isSelectActive) {
                           setDraggedWorkflow({ projectId: project.id, index: wIdx })
                           e.dataTransfer.effectAllowed = "move"
                         }
@@ -463,7 +581,7 @@ export function Sidebar({
                         setDragOverWorkflow(null)
                       }}
                       onDragOver={(e) => {
-                        if (draggedWorkflow && draggedWorkflow.projectId === project.id && !project.isOrderLocked) {
+                        if (draggedWorkflow && draggedWorkflow.projectId === project.id && !project.isOrderLocked && !isSelectActive) {
                           e.preventDefault()
                           e.stopPropagation()
                           setDragOverWorkflow({ projectId: project.id, index: wIdx })
@@ -482,7 +600,8 @@ export function Sidebar({
                           draggedWorkflow &&
                           draggedWorkflow.projectId === project.id &&
                           onReorderWorkflows &&
-                          !project.isOrderLocked
+                          !project.isOrderLocked &&
+                          !isSelectActive
                         ) {
                           e.preventDefault()
                           e.stopPropagation()
@@ -491,31 +610,58 @@ export function Sidebar({
                           setDragOverWorkflow(null)
                         }
                       }}
-                      onClick={() => onSelectWorkflow(project.id, workflow.id)}
+                      onClick={() => {
+                        if (isSelectActive) {
+                          toggleWorkflowSelection(project.id, workflow.id)
+                        } else {
+                          onSelectWorkflow(project.id, workflow.id)
+                        }
+                      }}
                       className={`group flex items-center justify-between w-full p-2 rounded-lg cursor-pointer transition-all ${
                         isDraggingThis
                           ? "opacity-40"
                           : isDragOverThis
                           ? "ring-2 ring-blue-500 bg-blue-100/60 dark:bg-blue-950/80"
+                          : isThisWorkflowSelected
+                          ? "bg-blue-100/70 dark:bg-blue-950/80 text-blue-800 dark:text-blue-200 ring-1 ring-blue-300 dark:ring-blue-700 font-semibold"
                           : isWorkflowActive
                           ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold shadow-xs"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900/60 hover:text-slate-900 dark:hover:text-slate-200"
                       }`}
                     >
                       <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0 overflow-hidden">
-                        {canManageScreens && project.workflows.length > 1 && !project.isOrderLocked && (
-                          <span
-                            className="hidden sm:inline-flex text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors shrink-0"
-                            title="Drag to reorder screen"
-                            onClick={(e) => e.stopPropagation()}
+                        {isSelectActive ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleWorkflowSelection(project.id, workflow.id)
+                            }}
+                            className="p-0.5 rounded hover:bg-blue-200/50 dark:hover:bg-blue-900/50 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer shrink-0 transition-colors"
+                            title={isThisWorkflowSelected ? "Deselect screen" : "Select screen"}
+                            aria-label="Toggle screen selection"
                           >
-                            <GripVertical className="h-3.5 w-3.5" />
-                          </span>
+                            {isThisWorkflowSelected ? (
+                              <CheckSquare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                            ) : (
+                              <Square className="h-3.5 w-3.5 text-slate-400 dark:text-slate-600" />
+                            )}
+                          </button>
+                        ) : (
+                          canManageScreens && project.workflows.length > 1 && !project.isOrderLocked && (
+                            <span
+                              className="hidden sm:inline-flex text-slate-300 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5 rounded transition-colors shrink-0"
+                              title="Drag to reorder screen"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </span>
+                          )
                         )}
 
                         <File
                           className={`h-3.5 w-3.5 flex-shrink-0 ${
-                            isWorkflowActive
+                            isThisWorkflowSelected || isWorkflowActive
                               ? "text-blue-500"
                               : "text-slate-400 dark:text-slate-500"
                           }`}
@@ -530,10 +676,12 @@ export function Sidebar({
                         ) : (
                           <span
                             onDoubleClick={(e) => {
-                              e.stopPropagation()
-                              setEditingId(`workflow-${workflow.id}`)
+                              if (!isSelectActive) {
+                                e.stopPropagation()
+                                setEditingId(`workflow-${workflow.id}`)
+                              }
                             }}
-                            title="Double-click to rename screen"
+                            title={!isSelectActive ? "Double-click to rename screen" : undefined}
                             className={`truncate text-sm select-none ${
                               workflow.isDone ? "line-through opacity-70" : ""
                             }`}
@@ -543,7 +691,7 @@ export function Sidebar({
                         )}
                       </div>
 
-                      {canManageScreens && (
+                      {!isSelectActive && canManageScreens && (
                         <div className={`flex items-center gap-0.5 transition-opacity flex-shrink-0 ${
                           isWorkflowActive ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
                         }`}>

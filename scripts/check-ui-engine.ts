@@ -584,7 +584,7 @@ async function main() {
     uploadInventory: inventory,
   })
 
-  const uploadStep = uploadPlan.steps[0]
+  const uploadStep = uploadPlan.steps[0] as any
   console.assert(uploadStep.status === "passed", `Expected upload step to pass, got ${uploadStep.status}`)
   console.assert(
     Boolean(uploadStep.actualResult && (uploadStep.actualResult.includes("sample-doc.pdf") || uploadStep.actualResult.includes("PDF"))),
