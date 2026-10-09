@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       targetUrl,
       projectId,
       credentials,
-      openRouterApiKey,
+      aiApiKey,
       aiModel,
       aiBaseUrl,
       mode,
@@ -73,8 +73,7 @@ export async function POST(req: NextRequest) {
       mode: isFeatureWf ? "feature_workflow" : isFullApp ? "full_app" : mode,
       image: image?.trim() || undefined,
       credentials,
-      openRouterApiKey:
-        process.env.NODE_ENV === "production" ? undefined : openRouterApiKey,
+      aiApiKey,
       aiModel,
       aiBaseUrl,
       maxScreens: isFullApp ? 10 : isFeatureWf ? 5 : 3,

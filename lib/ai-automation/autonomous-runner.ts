@@ -33,8 +33,7 @@ import { discoverLocalProjectRoutes } from "./discover-routes"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 import { performVisibleLoginPlaywright } from "./human-actions"
-
-const UNOROUTER_BASE_URL = "https://api.unorouter.com/v1"
+import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 
 export function isAutonomousCommand(cmd: string): boolean {
   return /(every page|all pages|full (test|audit|run)|autonomous|test every|explore( the app)?|end[\s-]?to[\s-]?end|\d+\s*scenarios?)/i.test(
@@ -265,7 +264,7 @@ async function runScenarioWithStagehand(
 ): Promise<ScenarioRun> {
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
-  const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const apiKey = params.aiApiKey || process.env.NEBIUS_API_KEY || process.env.UNOROUTER_API_KEY
   const baseURL = params.aiBaseUrl?.trim() || UNOROUTER_BASE_URL
   const modelName = params.aiModel?.trim() || "deepseek-v4-flash:free"
 
@@ -546,8 +545,8 @@ export async function executeAutonomousJob(
   job.status = "running"
   job.mode = "autonomous"
   const dir = jobDir(job.id)
-  const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
-  const baseURL = (params.aiBaseUrl?.trim() || UNOROUTER_BASE_URL).replace(/\/$/, "")
+  const baseURL = (params.aiBaseUrl?.trim() || NEBIUS_BASE_URL).replace(/\/$/, "")
+  const apiKey = resolveAiApiKey(baseURL, params.aiApiKey)
   const isLocal = baseURL.includes("localhost") || baseURL.includes("127.0.0.1")
   const aiUsable = isLocal || Boolean(apiKey?.trim())
 
@@ -575,7 +574,7 @@ export async function executeAutonomousJob(
       job.aiError = reason
       appendLog(job, "error", `Autonomous run BLOCKED — ${reason}`)
       say(
-        `⚠️ Autonomous run blocked: ${reason} Add a free key in AI Settings → OmniRouter (or point the gateway at a local endpoint) and try again.`,
+        `⚠️ Autonomous run blocked: ${reason} Add a Nebius Token Factory API key in AI Settings, configure NEBIUS_API_KEY on the server, or point the gateway at a local endpoint.`,
         "error",
       )
       job.status = "failed"
@@ -591,7 +590,7 @@ export async function executeAutonomousJob(
         responsiveScore: 0,
         summary: `Autonomous run could not start — ${reason}`,
         recommendations: [
-          "Add a free UnoRouter key at https://unorouter.com/token and paste it in AI Settings → OmniRouter.",
+          "Add a Nebius Token Factory API key in AI Settings or configure NEBIUS_API_KEY on the server.",
         ],
         issues: [],
         testCases: [],

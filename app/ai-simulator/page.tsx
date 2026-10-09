@@ -223,13 +223,13 @@ export default function AISimulatorPage() {
   const [botError, setBotError] = useState("")
   const [copiedReport, setCopiedReport] = useState(false)
 
-  // OpenRouter / OmniRouter / Local AI Model Provider State
-  const [aiProvider, setAiProvider] = useState<"cloud" | "omnirouter" | "local">("cloud")
+  // Nebius Token Factory / OmniRouter / Local AI Model Provider State
+  const [aiProvider, setAiProvider] = useState<"nebius" | "omnirouter" | "local">("nebius")
   const [localAiBaseUrl, setLocalAiBaseUrl] = useState("http://localhost:11434/v1")
   const [omniRouterBaseUrl, setOmniRouterBaseUrl] = useState("https://api.unorouter.com/v1")
   const [omniRouterKey, setOmniRouterKey] = useState("")
-  const [openRouterKey, setOpenRouterKey] = useState("")
-  const [selectedAiModel, setSelectedAiModel] = useState("google/gemini-2.0-flash-001")
+  const [nebiusApiKey, setNebiusApiKey] = useState("")
+  const [selectedAiModel, setSelectedAiModel] = useState("nvidia/Nemotron-3-Nano-Omni")
   const [omniRouterModel, setOmniRouterModel] = useState("deepseek-v4-flash:free")
   const [showAiSettings, setShowAiSettings] = useState(false)
 
@@ -771,9 +771,9 @@ export default function AISimulatorPage() {
             username || password
               ? { username: username.trim(), password: password.trim() }
               : undefined,
-          openRouterApiKey:
-            aiProvider === "cloud"
-              ? openRouterKey.trim() || undefined
+          aiApiKey:
+            aiProvider === "nebius"
+              ? nebiusApiKey.trim() || undefined
               : aiProvider === "omnirouter"
               ? omniRouterKey.trim() || undefined
               : undefined,
@@ -786,7 +786,7 @@ export default function AISimulatorPage() {
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
               ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
-              : "https://openrouter.ai/api/v1",
+              : "https://api.tokenfactory.nebius.com/v1",
         }),
       })
 
@@ -1006,12 +1006,13 @@ export default function AISimulatorPage() {
 
   // Load saved AI preferences from localStorage
   useEffect(() => {
-    const savedKey = localStorage.getItem("openrouter_api_key")
-    if (savedKey) setOpenRouterKey(savedKey)
-    const savedModel = localStorage.getItem("openrouter_selected_model")
+    const savedKey = localStorage.getItem("nebius_api_key")
+    if (savedKey) setNebiusApiKey(savedKey)
+    const savedModel = localStorage.getItem("nebius_selected_model")
     if (savedModel) setSelectedAiModel(savedModel)
-    const savedProvider = localStorage.getItem("ai_selected_provider") as "cloud" | "omnirouter" | "local" | null
-    if (savedProvider) setAiProvider(savedProvider)
+    const savedProvider = localStorage.getItem("ai_selected_provider") as "nebius" | "omnirouter" | "local" | "cloud" | null
+    if (savedProvider) setAiProvider(savedProvider === "cloud" ? "nebius" : savedProvider)
+    if (savedProvider === "cloud" && !savedModel?.toLowerCase().includes("nemotron")) setSelectedAiModel("nvidia/Nemotron-3-Nano-Omni")
     const savedBaseUrl = localStorage.getItem("ai_local_base_url")
     if (savedBaseUrl) setLocalAiBaseUrl(savedBaseUrl)
     const savedOmniUrl = localStorage.getItem("omnirouter_base_url")
@@ -1026,23 +1027,23 @@ export default function AISimulatorPage() {
     if (savedLayaUrl) setLayaBaseUrl(savedLayaUrl)
   }, [])
 
-  const handleUpdateOpenRouterKey = (key: string) => {
-    setOpenRouterKey(key)
-    localStorage.setItem("openrouter_api_key", key)
+  const handleUpdateNebiusApiKey = (key: string) => {
+    setNebiusApiKey(key)
+    localStorage.setItem("nebius_api_key", key)
   }
 
   const handleUpdateAiModel = (model: string) => {
     setSelectedAiModel(model)
-    localStorage.setItem("openrouter_selected_model", model)
+    localStorage.setItem("nebius_selected_model", model)
   }
 
-  const handleUpdateAiProvider = (provider: "cloud" | "omnirouter" | "local") => {
+  const handleUpdateAiProvider = (provider: "nebius" | "omnirouter" | "local") => {
     setAiProvider(provider)
     localStorage.setItem("ai_selected_provider", provider)
-    if (provider === "local" && selectedAiModel.includes("google")) {
+    if (provider === "local" && (selectedAiModel.includes("google") || selectedAiModel.toLowerCase().includes("nemotron"))) {
       setSelectedAiModel("llama3.2-vision")
-    } else if (provider === "cloud" && selectedAiModel.includes("llama3.2")) {
-      setSelectedAiModel("google/gemini-2.0-flash-001")
+    } else if (provider === "nebius" && !selectedAiModel.toLowerCase().includes("nemotron")) {
+      setSelectedAiModel("nvidia/Nemotron-3-Nano-Omni")
     }
   }
 
@@ -1122,23 +1123,20 @@ export default function AISimulatorPage() {
     setIsTestingAiConnection(true)
     setAiConnectionTestResult(null)
     try {
-      if (aiProvider === "cloud") {
-        if (!openRouterKey.trim()) {
-          setAiConnectionTestResult({ success: false, message: "OpenRouter API Key is missing. Enter your key below." })
-          setIsTestingAiConnection(false)
+      if (aiProvider === "nebius") {
+        if (!nebiusApiKey.trim()) {
+          setAiConnectionTestResult({ success: false, message: "Nebius Token Factory API key is missing. Enter your key below." })
           return
         }
-        const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
-          headers: { Authorization: `Bearer ${openRouterKey.trim()}` }
+        const res = await fetch("https://api.tokenfactory.nebius.com/v1/models", {
+          headers: { Authorization: `Bearer ${nebiusApiKey.trim()}` }
         })
         if (res.ok) {
           const data = await res.json()
-          setAiConnectionTestResult({
-            success: true,
-            message: `Connected to OpenRouter! Rate limit: ${data?.data?.limit || "Standard"}, Key label: ${data?.data?.label || "Active"}`
-          })
+          const count = Array.isArray(data?.data) ? data.data.length : undefined
+          setAiConnectionTestResult({ success: true, message: `Connected to Nebius Token Factory${count === undefined ? "" : ` — ${count} models available`}.` })
         } else {
-          setAiConnectionTestResult({ success: false, message: `OpenRouter error (${res.status}): Please verify your API key.` })
+          setAiConnectionTestResult({ success: false, message: `Nebius Token Factory returned HTTP ${res.status}. Check the API key and model access.` })
         }
       } else if (aiProvider === "omnirouter") {
         const url = omniRouterBaseUrl.trim().replace(/\/+$/, "")
@@ -1574,9 +1572,9 @@ export default function AISimulatorPage() {
           maxScreens: Math.max(maxScreens, 8),
           checkBackNavigation: checkBackNav,
           checkResponsive,
-          openRouterApiKey:
-            aiProvider === "cloud"
-              ? openRouterKey.trim() || undefined
+          aiApiKey:
+            aiProvider === "nebius"
+              ? nebiusApiKey.trim() || undefined
               : aiProvider === "omnirouter"
               ? omniRouterKey.trim() || undefined
               : undefined,
@@ -1589,7 +1587,7 @@ export default function AISimulatorPage() {
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
               ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
-              : "https://openrouter.ai/api/v1",
+              : "https://api.tokenfactory.nebius.com/v1",
         }),
       })
 
@@ -1669,9 +1667,9 @@ export default function AISimulatorPage() {
           maxScreens: Math.max(maxScreens, 6),
           checkBackNavigation: checkBackNav,
           checkResponsive,
-          openRouterApiKey:
-            aiProvider === "cloud"
-              ? openRouterKey.trim() || undefined
+          aiApiKey:
+            aiProvider === "nebius"
+              ? nebiusApiKey.trim() || undefined
               : aiProvider === "omnirouter"
               ? omniRouterKey.trim() || undefined
               : undefined,
@@ -1684,7 +1682,7 @@ export default function AISimulatorPage() {
               ? localAiBaseUrl.trim()
               : aiProvider === "omnirouter"
               ? omniRouterBaseUrl.trim() || "https://api.unorouter.com/v1"
-              : "https://openrouter.ai/api/v1",
+              : "https://api.tokenfactory.nebius.com/v1",
         }),
       })
 
@@ -2275,7 +2273,7 @@ export default function AISimulatorPage() {
                         type="button"
                         onClick={() => setActiveDockTab("config")}
                         className="flex items-center gap-1.5 min-w-0 px-2 py-1 rounded-md bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/50 text-left transition cursor-pointer group"
-                        title="Click to configure AI Provider, Model, and API Key"
+                        title="Configure Nebius Token Factory, OmniRouter, or local AI"
                       >
                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
                         <span className="font-semibold text-white truncate text-[10px]">
@@ -2283,7 +2281,7 @@ export default function AISimulatorPage() {
                             ? "OmniRouter"
                             : aiProvider === "local"
                             ? "Local Ollama"
-                            : "OpenRouter"}
+                            : "Nebius Token Factory"}
                         </span>
                         <span className="text-[10px] text-purple-300 font-mono truncate max-w-[120px]">
                           ({aiProvider === "omnirouter" ? omniRouterModel : selectedAiModel.split("/").pop()})
@@ -3019,24 +3017,24 @@ export default function AISimulatorPage() {
                           </span>
                         </div>
                         <div className="grid grid-cols-3 gap-2">
-                          {/* Cloud (OpenRouter) */}
+                          {/* Nebius Token Factory */}
                           <button
                             type="button"
                             onClick={() => handleUpdateAiProvider("cloud")}
                             className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
-                              aiProvider === "cloud"
+                              aiProvider === "nebius"
                                 ? "bg-purple-950/50 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/40"
                                 : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
                             }`}
                           >
                             <div className="flex items-center justify-between w-full">
-                              <span className="font-bold text-[11px] text-purple-300">Cloud AI</span>
+                              <span className="font-bold text-[11px] text-purple-300">Nebius Token Factory</span>
                               <span className="text-[8px] font-mono uppercase px-1 py-0.2 rounded bg-purple-900/60 text-purple-200">
                                 Top Vision
                               </span>
                             </div>
                             <div className="text-[10px] text-slate-400 mt-1.5 leading-tight">
-                              OpenRouter (Gemini, Claude, GPT-4o)
+                              NVIDIA Nemotron models via Nebius
                             </div>
                           </button>
 
@@ -3085,71 +3083,26 @@ export default function AISimulatorPage() {
                       </div>
 
                       {/* Detailed Provider Form */}
-                      {aiProvider === "cloud" && (
+                      {aiProvider === "nebius" && (
                         <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-200 text-xs">OpenRouter Cloud Settings</span>
-                            <a
-                              href="https://openrouter.ai/keys"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 underline underline-offset-2"
-                            >
-                              <span>Get Free Key</span>
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-slate-200 text-xs">Nebius Token Factory Settings</span>
+                            <a href="https://tokenfactory.nebius.com/" target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 underline underline-offset-2"><span>Get API Key</span><ExternalLink className="h-3 w-3" /></a>
                           </div>
-
-                          {/* API Key */}
+                          <p className="text-[10px] text-slate-400 leading-snug">Uses Nebius Token Factory's OpenAI-compatible API with NVIDIA Nemotron models for planning, visual QA, and recovery reasoning.</p>
                           <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400 flex items-center justify-between">
-                              <span>OpenRouter API Key</span>
-                              {openRouterKey.trim() && (
-                                <span className="text-emerald-400 text-[9px] flex items-center gap-1">
-                                  <CheckCircle2 className="h-3 w-3" /> Key saved
-                                </span>
-                              )}
-                            </label>
-                            <input
-                              type="password"
-                              value={openRouterKey}
-                              onChange={(e) => handleUpdateOpenRouterKey(e.target.value)}
-                              placeholder="sk-or-v1-..."
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono placeholder-slate-600 focus:outline-none transition-colors"
-                            />
+                            <label className="text-[10px] font-semibold text-slate-400 flex items-center justify-between"><span>Nebius API Key</span>{nebiusApiKey.trim() && <span className="text-emerald-400 text-[9px] flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Key saved locally</span>}</label>
+                            <input type="password" value={nebiusApiKey} onChange={(e) => handleUpdateNebiusApiKey(e.target.value)} placeholder="Paste your Nebius Token Factory API key" autoComplete="off" className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono placeholder-slate-600 focus:outline-none transition-colors" />
                           </div>
-
-                          {/* Model Dropdown */}
                           <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">
-                              Selected Model Preset
-                            </label>
-                            <select
-                              value={selectedAiModel}
-                              onChange={(e) => handleUpdateAiModel(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-2.5 py-2 text-[11px] text-white cursor-pointer focus:outline-none transition-colors"
-                            >
-                              <option value="google/gemini-2.0-flash-001">⚡ Gemini 2.0 Flash (Fastest + Vision QA)</option>
-                              <option value="anthropic/claude-3.5-sonnet">🧠 Claude 3.5 Sonnet (Deep Reasoning & QA)</option>
-                              <option value="openai/gpt-4o-mini">🎯 OpenAI GPT-4o Mini (High Reliability)</option>
-                              <option value="deepseek/deepseek-chat">💎 DeepSeek V3 (Low Cost / Strong Code QA)</option>
-                              <option value="meta-llama/llama-3.2-11b-vision-instruct:free">🆓 Llama 3.2 11B Vision (Free)</option>
+                            <label className="text-[10px] font-semibold text-slate-400">Model Preset</label>
+                            <select value={selectedAiModel} onChange={(e) => handleUpdateAiModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-2.5 py-2 text-[11px] text-white cursor-pointer focus:outline-none transition-colors">
+                              <option value="nvidia/Nemotron-3-Nano-Omni">NVIDIA Nemotron 3 Nano Omni (multimodal)</option>
+                              <option value="nvidia/nemotron-3-super-120b-a12b">NVIDIA Nemotron 3 Super 120B (reasoning)</option>
+                              <option value="nvidia/Nemotron-3-Nano-30B-A3B">NVIDIA Nemotron 3 Nano 30B</option>
                             </select>
                           </div>
-
-                          {/* Custom Model Input */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">
-                              Custom Model ID:
-                            </label>
-                            <input
-                              type="text"
-                              value={selectedAiModel}
-                              onChange={(e) => handleUpdateAiModel(e.target.value)}
-                              placeholder="e.g. google/gemini-2.5-pro, mistralai/mistral-large"
-                              className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-purple-500 transition-colors"
-                            />
-                          </div>
+                          <div className="space-y-1"><label className="text-[10px] text-slate-400">Custom Model ID</label><input type="text" value={selectedAiModel} onChange={(e) => handleUpdateAiModel(e.target.value)} placeholder="Use an exact model ID from your Nebius catalog" className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-purple-500 transition-colors" /></div>
                         </div>
                       )}
 

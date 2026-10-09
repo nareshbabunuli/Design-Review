@@ -562,7 +562,7 @@ export type StartAutomationRequest = {
   maxScreens?: number
   checkBackNavigation?: boolean
   checkResponsive?: boolean
-  openRouterApiKey?: string
+  aiApiKey?: string
   aiModel?: string
   aiBaseUrl?: string
   /** "autonomous" runs Stagehand; "full_app" runs systematic discovery->plan->execute; "feature_workflow" tests specific user workflow; default is crawl/chat. */

@@ -24,7 +24,7 @@ import {
   extractActionableInventory,
   createDummyFileBuffer,
 } from "./full-app-engine"
-import { postChatCompletionSafe, resolveModel, resolveBaseUrl } from "./openrouter"
+import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
 
 /**
  * Checks if a user prompt is requesting Feature / Workflow Testing
@@ -545,7 +545,7 @@ export async function executeFeatureWorkflowJob(
     appendLog(job, "info", "Understanding workflow goal, required screens, synthetic data & edge cases...")
 
     const spec = await analyzeFeatureWorkflow(userWorkflowDescription, job.targetUrl, {
-      apiKey: params.openRouterApiKey,
+      apiKey: resolveAiApiKey(params.aiBaseUrl, params.aiApiKey),
       baseUrl: params.aiBaseUrl,
       model: params.aiModel,
     })

@@ -48,10 +48,7 @@ export async function POST(req: NextRequest) {
       maxScreens: Math.min(Math.max(body.maxScreens || 5, 1), 15),
       checkBackNavigation: body.checkBackNavigation ?? true,
       checkResponsive: body.checkResponsive ?? true,
-      openRouterApiKey:
-        process.env.NODE_ENV === "production"
-          ? undefined
-          : body.openRouterApiKey,
+      aiApiKey: body.aiApiKey,
       aiModel: body.aiModel,
       aiBaseUrl: body.aiBaseUrl,
       mode: body.mode,

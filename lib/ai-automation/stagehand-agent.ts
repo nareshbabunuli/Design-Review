@@ -1,5 +1,6 @@
 import type { Browser, Page } from "puppeteer"
 import type { AutomationJob, AutomationIssue, StartAutomationRequest } from "./types"
+import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 
 type StagehandHooks = {
   appendLog: (job: AutomationJob, level: "info" | "success" | "warn" | "error", message: string) => void
@@ -47,17 +48,17 @@ export async function runStagehandExploration(
 ): Promise<{ pagesVisited: number; actions: number; issues: AutomationIssue[] }> {
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
-  const apiKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
-  const baseURL = params.aiBaseUrl?.trim() || "https://api.unorouter.com/v1"
+  const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
+  const apiKey = resolveAiApiKey(baseURL, params.aiApiKey)
   // Free flagship-class model on UnoRouter — small :free models are too weak
   // for the autonomous observe → decide → act loop. Alternatives:
   // "gpt-5.5:free", "qwen3.8-flash-next:free".
-  const modelName = params.aiModel?.trim() || "deepseek-v4-flash:free"
+  const modelName = params.aiModel?.trim() || "nvidia/Nemotron-3-Nano-Omni"
   const isLocalGateway = /localhost|127\.0\.0\.1/.test(baseURL)
   if (!apiKey && !isLocalGateway) {
     throw new Error(
       "Stagehand exploration needs an AI provider key for the remote gateway. " +
-        "Add your UnoRouter key in AI Settings → OmniRouter (free at https://unorouter.com/token), " +
+        "Add your Nebius Token Factory API key in AI Settings, " +
         "or point the gateway URL at a local endpoint.",
     )
   }
@@ -76,7 +77,7 @@ export async function runStagehandExploration(
     verbose: 1,
   }
 
-  hooks.appendLog(job, "info", `Runneric engine: Stagehand ${modelName} via ${baseURL} (open-source browser engine)`)
+  hooks.appendLog(job, "info", `Stagehand browser agent: ${modelName} via ${baseURL}`)
 
   const stagehand = new Stagehand(stagehandConfig)
   const visitedUrls = new Set<string>([job.targetUrl])

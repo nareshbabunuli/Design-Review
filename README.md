@@ -67,7 +67,7 @@ Traditional automated testing breaks when selectors change or auth redirects occ
 | Provider | Type | Models Available | API Key Required | Best For |
 |----------|------|------------------|------------------|----------|
 | **OmniRouter** 🌟 | Multi-Provider Gateway | DeepSeek V4 Flash (free), GPT-5.5 (free), Gemini 2.0 Flash | Yes (free tier) | Recommended - Free flagship models |
-| **OpenRouter** | Multi-Provider Gateway | Claude 3.5 Sonnet, GPT-4o, Llama 3.1 70B, 100+ models | Yes | Popular choice with wide model selection |
+| **Nebius Token Factory** 🌐 | OpenAI-compatible inference API | NVIDIA Nemotron and other open models | Yes | Recommended for NVIDIA/Nebius agent reasoning |
 | **LLMA** | Inference API | LLMA 3.1 70B, LLMA 3.1 8B, LLMA 2 70B | Yes | Optimized large language models |
 | **Local LLM** 🆓 | Self-Hosted | Llama 3.2, Mistral, CodeLlama, DeepSeek | No | Privacy & cost-free local inference via Ollama/LM Studio |
 | **Custom** | Any OpenAI-Compatible API | Your choice | Optional | Connect any compatible endpoint |
@@ -75,15 +75,15 @@ Traditional automated testing breaks when selectors change or auth redirects occ
 **Configuration:**
 ```env
 # Choose your AI provider
-AI_PROVIDER=omnirouter  # or: openrouter, llma, local, custom
-AI_BASE_URL=https://api.unorouter.com/v1
-AI_API_KEY=your_api_key_here
-AI_MODEL=deepseek-v4-flash:free
+AI_PROVIDER=nebius  # or: omnirouter, local
+AI_BASE_URL=https://api.tokenfactory.nebius.com/v1
+NEBIUS_API_KEY=your_nebius_token_factory_api_key
+AI_MODEL=nvidia/Nemotron-3-Nano-Omni
 ```
 
 **Getting API Keys:**
 - OmniRouter: [https://unorouter.com/token](https://unorouter.com/token) (free tier available)
-- OpenRouter: [https://openrouter.ai/keys](https://openrouter.ai/keys)
+- Nebius Token Factory: [https://tokenfactory.nebius.com/](https://tokenfactory.nebius.com/)
 - LLMA: [https://llma.io](https://llma.io)
 - Local: Install [Ollama](https://ollama.ai) or [LM Studio](https://lmstudio.ai) (no key needed)
 
@@ -103,17 +103,20 @@ Free tier includes flagship models with ~1 request/min rate limit per model. Rot
 </details>
 
 <details>
-<summary>🔓 OpenRouter (Most model variety)</summary>
+<summary>🌐 Nebius Token Factory (NVIDIA/Nebius model gateway)</summary>
 
 ```env
-AI_PROVIDER=openrouter
-AI_BASE_URL=https://openrouter.ai/api/v1
-AI_API_KEY=your_openrouter_key
-AI_MODEL=anthropic/claude-3.5-sonnet
+AI_PROVIDER=nebius
+AI_BASE_URL=https://api.tokenfactory.nebius.com/v1
+NEBIUS_API_KEY=your_nebius_token_factory_api_key
+AI_MODEL=nvidia/Nemotron-3-Nano-Omni
 ```
 
-Access 100+ models from OpenAI, Anthropic, Google, Meta, and more.
+The API is OpenAI-compatible. Check your Nebius model catalog for exact model IDs and access.
+
 </details>
+
+
 
 <details>
 <summary>🏠 Local Ollama (100% free, 100% private)</summary>
@@ -190,7 +193,7 @@ Built specifically to stop endless revision loops and misaligned client expectat
 - **Styling**: Tailwind CSS 4 & Lucide Icons
 - **Browser Automation**: Puppeteer & Browserbase Stagehand
 - **Database & Auth**: Supabase (PostgreSQL + Row-Level Security)
-- **AI Providers**: OmniRouter, OpenRouter, LLMA, Local LLMs (Ollama)
+- **AI Providers**: Nebius Token Factory, OmniRouter, Local LLMs (Ollama)
 - **AI Capabilities**: Vision analysis & LLM-driven autonomous testing
 
 ---
@@ -220,13 +223,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
 # AI Provider Configuration (Optional - for AI testing features)
-AI_PROVIDER=omnirouter  # Options: omnirouter, openrouter, llma, local, custom
-AI_BASE_URL=https://api.unorouter.com/v1
-AI_API_KEY=your_api_key_here  # Not needed for local LLMs
-AI_MODEL=deepseek-v4-flash:free
-
-# For OpenRouter
-# OPENROUTER_API_KEY=your_openrouter_api_key
+AI_PROVIDER=nebius  # Options: nebius, omnirouter, local
+AI_BASE_URL=https://api.tokenfactory.nebius.com/v1
+NEBIUS_API_KEY=your_nebius_token_factory_api_key
+AI_MODEL=nvidia/Nemotron-3-Nano-Omni
 
 # For local LLMs (Ollama)
 # AI_PROVIDER=local
@@ -327,14 +327,15 @@ const result = await fetch('/api/ai-automation/start', {
 **Via Environment Variables:**
 ```env
 # Use OmniRouter (recommended)
+AI_PROVIDER=nebius
+AI_BASE_URL=https://api.tokenfactory.nebius.com/v1
+NEBIUS_API_KEY=your_nebius_token_factory_api_key
+AI_MODEL=nvidia/Nemotron-3-Nano-Omni
+
+# Or use OmniRouter
 AI_PROVIDER=omnirouter
 AI_BASE_URL=https://api.unorouter.com/v1
 AI_MODEL=deepseek-v4-flash:free
-
-# Or use OpenRouter
-AI_PROVIDER=openrouter
-AI_BASE_URL=https://openrouter.ai/api/v1
-AI_MODEL=anthropic/claude-3.5-sonnet
 
 # Or use Local Ollama
 AI_PROVIDER=local

@@ -15,12 +15,14 @@ import {
   ChecklistTestItem,
 } from "./types"
 import {
+  resolveAiApiKey,
+  NEBIUS_BASE_URL,
   analyzeScreenWithAI,
   generateAIExecutiveReport,
   interpretCommandWithAI,
   generateVisionThinkingModelAndChecklist,
-} from "./openrouter"
-import type { AICommandInterpretation } from "./openrouter"
+} from "./ai-gateway"
+import type { AICommandInterpretation } from "./ai-gateway"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
@@ -786,18 +788,19 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
 
 async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
-  const openRouterKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
-  const aiBase = (params.aiBaseUrl || "").trim()
+  const aiBase = (params.aiBaseUrl || NEBIUS_BASE_URL).trim()
+  const aiApiKey = resolveAiApiKey(aiBase, params.aiApiKey)
   const isLocalAi = Boolean(aiBase && (aiBase.includes("localhost") || aiBase.includes("127.0.0.1")))
   const isUnoRouter = aiBase.includes("unorouter.com")
-  const hasAiConfigured = isLocalAi || Boolean(openRouterKey)
+  const isNebius = aiBase.includes("tokenfactory.nebius.com")
+  const hasAiConfigured = isLocalAi || Boolean(aiApiKey)
   appendLog(job, "info", `Starting headless automation crawl on: ${job.targetUrl}`)
   if (!hasAiConfigured && aiBase && !isLocalAi) {
     appendLog(
       job,
       "warn",
       "AI provider key missing for the remote gateway — AI visual analysis and autonomous exploration will be skipped. " +
-        "Add a free UnoRouter key at https://unorouter.com/token and paste it in AI Settings → OmniRouter.",
+        "Add a Nebius Token Factory API key in AI Settings, or configure NEBIUS_API_KEY on the server.",
     )
   }
 
@@ -1111,7 +1114,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         screenshotUrl: liveScreenshotUrl || "",
         command: cmdText,
         currentUrl: page.url(),
-        apiKey: openRouterKey,
+        apiKey: aiApiKey,
         baseUrl: params.aiBaseUrl,
         model: params.aiModel,
         pageContext,
@@ -1759,13 +1762,13 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
       // 2.5 OpenRouter / Local AI Model Visual QA Inspection
       let aiAnalysisResult: { uxScore: number; summary: string } | undefined
       if (hasAiConfigured && primaryScreenshotUrl) {
-        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "UnoRouter" : "OpenRouter Cloud"
+        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "OmniRouter" : isNebius ? "Nebius Token Factory" : "OpenAI-compatible AI gateway"
         appendLog(job, "info", `Requesting ${providerName} visual review for "${screenTitle}" (${params.aiModel || "deepseek-v4-flash:free"})...`)
         const aiFinding = await analyzeScreenWithAI({
           screenshotUrl: primaryScreenshotUrl,
           screenTitle,
           screenUrl,
-          apiKey: openRouterKey,
+          apiKey: aiApiKey,
           baseUrl: params.aiBaseUrl,
           model: params.aiModel,
         })
@@ -1876,12 +1879,12 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     // AI Executive Synthesis
     let aiExecSummary: { executiveSummary: string; keyStrengths: string[]; criticalFixes: string[]; overallScore: number } | undefined
     if (hasAiConfigured && job.screens.length > 0) {
-      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : isUnoRouter ? "UnoRouter" : "OpenRouter"} (${params.aiModel || "deepseek-v4-flash:free"})...`)
+      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : isUnoRouter ? "OmniRouter" : isNebius ? "Nebius Token Factory" : "AI gateway"} (${params.aiModel || "deepseek-v4-flash:free"})...`)
       const aiExec = await generateAIExecutiveReport({
         screensSummary: job.screens.map((s) => `${s.title} (${s.url})`).join(", "),
         detectedIssuesCount: job.issues.length,
         targetUrl: job.targetUrl,
-        apiKey: openRouterKey,
+        apiKey: aiApiKey,
         baseUrl: params.aiBaseUrl,
         model: params.aiModel,
       })
