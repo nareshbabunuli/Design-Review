@@ -1759,7 +1759,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         primaryScreenshotUrl = await uploadScreenshot(Buffer.from(fallbackBuffer), job.projectId, "default")
       }
 
-      // 2.5 OpenRouter / Local AI Model Visual QA Inspection
+      // 2.5 Nebius / OmniRouter / Local AI Model Visual QA Inspection
       let aiAnalysisResult: { uxScore: number; summary: string } | undefined
       if (hasAiConfigured && primaryScreenshotUrl) {
         const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "OmniRouter" : isNebius ? "Nebius Token Factory" : "OpenAI-compatible AI gateway"

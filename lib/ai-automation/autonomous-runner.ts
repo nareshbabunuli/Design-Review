@@ -264,9 +264,9 @@ async function runScenarioWithStagehand(
 ): Promise<ScenarioRun> {
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
-  const apiKey = params.aiApiKey || process.env.NEBIUS_API_KEY || process.env.UNOROUTER_API_KEY
-  const baseURL = params.aiBaseUrl?.trim() || UNOROUTER_BASE_URL
-  const modelName = params.aiModel?.trim() || "deepseek-v4-flash:free"
+  const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
+  const apiKey = resolveAiApiKey(baseURL, params.aiApiKey)
+  const modelName = params.aiModel?.trim() || "nvidia/Nemotron-3-Nano-Omni"
 
   const out: ScenarioRun = {
     steps: [],
