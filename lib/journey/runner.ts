@@ -1,6 +1,7 @@
 /**
  * Journey Runner - visits pages, screenshots each one, uses Laya for fast decisions.
  * Reuses the same Puppeteer + auth patterns as app/api/capture-screenshot.
+ * Navigation prefers human mouse click-through; first load uses goto.
  */
 
 import puppeteer, { type Browser, type Page } from "puppeteer"
@@ -9,7 +10,7 @@ import path from "path"
 import fs from "fs"
 import { classifyPage, pickNextLink, DEFAULT_LAYA_URL } from "./laya-client"
 import type { JourneyConfig, JourneyStep, PageType } from "./types"
-import { performVisibleLogin } from "@/lib/ai-automation/human-actions"
+import { performVisibleLogin, humanNavigateTo } from "@/lib/ai-automation/human-actions"
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -90,8 +91,6 @@ async function maybeAutoLogin(page: Page, config: JourneyConfig, targetUrl: stri
   if (!isLogin || !config.credentials?.username || !config.credentials?.password) return
 
   try {
-    if (!config.credentials?.username || !config.credentials?.password) return
-
     const result = await performVisibleLogin(page, {
       username: config.credentials.username,
       password: config.credentials.password,
@@ -219,6 +218,7 @@ export async function runJourney(opts: RunJourneyOptions): Promise<JourneyStep[]
       queue.push(config.startUrl)
     }
 
+    let isFirstStep = true
     while (queue.length > 0 && steps.length < maxSteps) {
       const url = queue.shift()!
       const normalized = url.split("#")[0]
@@ -235,9 +235,10 @@ export async function runJourney(opts: RunJourneyOptions): Promise<JourneyStep[]
       await applyAuth(page, config, hostname)
 
       console.log(`[journey] navigating ${steps.length + 1}/${maxSteps}:`, url)
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 }).catch((e) => {
-        console.warn("[journey] nav notice:", e?.message)
-      })
+      // First screen: direct load. Later screens: human mouse click through the UI when possible.
+      const nav = await humanNavigateTo(page, url, { forceGoto: isFirstStep })
+      console.log(`[journey] nav method=${nav.method} ok=${nav.ok}`)
+      isFirstStep = false
 
       await maybeAutoLogin(page, config, url)
       await waitForStable(page)
