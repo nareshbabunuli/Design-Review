@@ -3,7 +3,7 @@
 > **Open-Source Design Review Platform & Autonomous Web Application Testing Simulator**  
 > Streamline UI sign-offs with Figma comparisons, and automate systematic end-to-end application testing using autonomous AI browser agents.
 
-[![License: MIT + Commons Clause](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Author: Naresh Babu Nuli](https://img.shields.io/badge/Author-Naresh%20Babu%20Nuli-orange.svg)](https://github.com/nareshbabunuli)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -38,12 +38,11 @@
 ---
 
 > [!NOTE]
-> ### 📜 Open Source with Author Attribution & Anti-SaaS Protection
-> This project is free and open source under the **MIT License with Commons Clause & Mandatory Attribution**.  
-> - **Free to use & self-host**: You can freely use, run, and self-host this software for yourself, your team, and client engagements.
-> - **Author credit required**: Any public deployment or fork must include visible, clickable attribution:  
->   *"Powered by Open Design AI by [Naresh Babu Nuli](https://github.com/nareshbabunuli/Design-Review)"*.
-> - **Anti-SaaS Clause**: You may **not** take this codebase, rebrand it, and sell it as a commercial SaaS product or paid service to third parties.
+> ### 📜 Open Source License & Project Attribution
+> This project is licensed under the **MIT License**.
+> - **Reuse is permitted**: You may use, modify, distribute, and commercially reuse the software, including in hosted services, subject to the MIT license terms.
+> - **Preserve the legal notice**: Copies or substantial portions must include the copyright notice and MIT license text.
+> - **Project credit**: This repository is maintained by [Naresh Babu Nuli](https://github.com/nareshbabunuli). Visible product attribution is appreciated, but is not an additional condition of the MIT license.
 
 ---
 
@@ -362,10 +361,10 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 ## ⚖️ License
 
 Copyright (c) 2026 **Naresh Babu Nuli**.  
-Licensed under the **MIT License with Commons Clause & Mandatory Attribution Condition**.
+Licensed under the **MIT License**.
 
-- ✅ Free for personal use, internal team workflows, and client work.
-- ⚠️ Public deployments and forks must visibly credit the author: *"Powered by Open Design AI by Naresh Babu Nuli"*.
-- ❌ Reselling as a standalone commercial SaaS or white-label service is strictly prohibited without written consent.
+You may use, modify, distribute, and commercially reuse this software, including in hosted services, provided that copies or substantial portions retain the copyright notice and MIT license text.
 
-See [LICENSE](LICENSE) for full details. For custom commercial licensing, reach out to [nareshbabu.nuli@gmail.com](mailto:nareshbabu.nuli@gmail.com).
+This license does not require visible in-product attribution and does not restrict commercial SaaS use. Project attribution is appreciated.
+
+See [LICENSE](LICENSE) for the full license text.
