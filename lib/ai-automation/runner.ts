@@ -310,9 +310,30 @@ async function recordAgentAction(
   }
 ) {
   try {
-    let resolvedCoords = action.coordinates
+    let resolvedCoords = action.coordinates || null
 
-    // Inject Antigravity Visual Testing Overlay (Cursor, Radar Pulse, HUD Bar)
+    // 1. Calculate element coordinates if selector present and coords not yet set
+    if (action.highlightSelector && !resolvedCoords) {
+      try {
+        const el = await page.$(action.highlightSelector)
+        if (el) {
+          const box = await el.boundingBox()
+          if (box) {
+            resolvedCoords = {
+              x: Math.round(box.x + box.width / 2),
+              y: Math.round(box.y + box.height / 2),
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Move Puppeteer virtual mouse if coordinates exist
+    if (resolvedCoords) {
+      await page.mouse.move(resolvedCoords.x, resolvedCoords.y, { steps: 5 }).catch(() => {})
+    }
+
+    // 2. Inject Antigravity Visual Testing Overlay (High-visibility SVG Cursor, Radar Pulse, HUD Bar)
     await page.evaluate(
       (actionType, desc, thoughtText, sel, manualCoords) => {
         try {
@@ -328,8 +349,10 @@ async function recordAgentAction(
             if (el) {
               el.scrollIntoView({ behavior: "instant", block: "center" })
               const r = el.getBoundingClientRect()
-              cx = r.left + r.width / 2
-              cy = r.top + r.height / 2
+              if (!manualCoords) {
+                cx = r.left + r.width / 2
+                cy = r.top + r.height / 2
+              }
               const textContent = el.textContent?.trim().slice(0, 24) || ""
               targetLabel = textContent ? `"${textContent}" (${sel})` : sel
             }
@@ -378,58 +401,62 @@ async function recordAgentAction(
           hud.appendChild(actionText)
           root.appendChild(hud)
 
-          // Virtual Cursor & Radar Ring (if action is interactive: click, type, inspect)
-          if (["click", "type", "inspect", "back"].includes(actionType)) {
-            // Radar pulse circle
-            const radar = document.createElement("div")
-            radar.style.cssText = `
-              position: fixed;
-              left: ${cx - 20}px;
-              top: ${cy - 20}px;
-              width: 40px;
-              height: 40px;
-              border-radius: 50%;
-              border: 2px solid #8b5cf6;
-              background: rgba(139, 92, 246, 0.2);
-              box-shadow: 0 0 20px #8b5cf6;
-              animation: antigravityPulse 1.2s infinite ease-out;
-            `
+          // 3. High-visibility Virtual SVG Mouse Cursor, Ripple & Target Radar
+          const cursorWrap = document.createElement("div")
+          cursorWrap.style.cssText = `
+            position: fixed;
+            left: ${cx}px;
+            top: ${cy}px;
+            z-index: 99999999;
+            pointer-events: none;
+            filter: drop-shadow(0 4px 12px rgba(0,0,0,0.6));
+          `
 
-            // Inner pointer dot
-            const dot = document.createElement("div")
-            dot.style.cssText = `
-              position: fixed;
-              left: ${cx - 5}px;
-              top: ${cy - 5}px;
-              width: 10px;
-              height: 10px;
-              border-radius: 50%;
-              background: #ffffff;
-              box-shadow: 0 0 10px #38bdf8;
-            `
+          // Ripple circle
+          const ripple = document.createElement("div")
+          ripple.style.cssText = `
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 44px;
+            height: 44px;
+            margin: -22px 0 0 -22px;
+            border-radius: 50%;
+            border: 2px solid ${actionType === "click" ? "#f43f5e" : "#818cf8"};
+            background: ${actionType === "click" ? "rgba(244,63,94,0.3)" : "rgba(129,140,248,0.2)"};
+            box-shadow: 0 0 16px ${actionType === "click" ? "#f43f5e" : "#818cf8"};
+          `
 
-            // Floating target pill
-            const pill = document.createElement("div")
-            pill.style.cssText = `
-              position: fixed;
-              left: ${Math.max(12, cx + 16)}px;
-              top: ${Math.max(12, cy - 24)}px;
-              padding: 3px 8px;
-              border-radius: 6px;
-              background: rgba(30, 27, 75, 0.95);
-              border: 1px solid rgba(139, 92, 246, 0.6);
-              color: #f1f5f9;
-              font-size: 10px;
-              font-weight: 600;
-              box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-              white-space: nowrap;
-            `
-            pill.textContent = `🎯 ${actionType.toUpperCase()}: ${targetLabel}`
+          // SVG Pointer Arrow
+          const svgPointer = document.createElement("div")
+          svgPointer.innerHTML = `
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z" fill="${actionType === "click" ? "#f43f5e" : actionType === "type" ? "#0ea5e9" : "#6366f1"}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
+            </svg>
+          `
 
-            root.appendChild(radar)
-            root.appendChild(dot)
-            root.appendChild(pill)
-          }
+          // Floating target pill
+          const pill = document.createElement("div")
+          pill.style.cssText = `
+            position: absolute;
+            left: 24px;
+            top: 8px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(139, 92, 246, 0.7);
+            color: #f1f5f9;
+            font-size: 10px;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+            white-space: nowrap;
+          `
+          pill.textContent = `🎯 ${actionType.toUpperCase()}: ${targetLabel}`
+
+          cursorWrap.appendChild(ripple)
+          cursorWrap.appendChild(svgPointer)
+          cursorWrap.appendChild(pill)
+          root.appendChild(cursorWrap)
 
           document.body.appendChild(root)
         } catch {}
@@ -438,28 +465,10 @@ async function recordAgentAction(
       action.description,
       action.thought || "",
       action.highlightSelector || null,
-      action.coordinates || null
+      resolvedCoords
     ).catch(() => {})
 
-    // Calculate element coordinates if selector present
-    if (action.highlightSelector && !resolvedCoords) {
-      try {
-        const el = await page.$(action.highlightSelector)
-        if (el) {
-          const box = await el.boundingBox()
-          if (box) {
-            resolvedCoords = {
-              x: Math.round(box.x + box.width / 2),
-              y: Math.round(box.y + box.height / 2),
-            }
-            // Move Puppeteer virtual mouse
-            await page.mouse.move(resolvedCoords.x, resolvedCoords.y, { steps: 3 }).catch(() => {})
-          }
-        }
-      } catch {}
-    }
-
-    // Capture visual snapshot for live simulator screen
+    // Capture visual snapshot for live simulator screen with the visible cursor overlay
     const buffer = await page.screenshot({ type: "png" }).catch(() => null)
     if (buffer) {
       const base64Url = `data:image/png;base64,${Buffer.from(buffer).toString("base64")}`
@@ -477,7 +486,7 @@ async function recordAgentAction(
       description: action.description,
       thought: action.thought || `Autonomous Antigravity step executing ${action.type} command.`,
       target: action.target || action.highlightSelector,
-      coordinates: resolvedCoords,
+      coordinates: resolvedCoords || undefined,
       observation: action.observation || `Action executed successfully on ${page.url()}`,
       status: action.status || "passed",
       durationMs: action.durationMs || 150,

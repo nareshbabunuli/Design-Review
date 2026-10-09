@@ -659,6 +659,42 @@ export async function executeFeatureWorkflowJob(
         let actionSuccess = false
         const targetText = step.targetName.toLowerCase()
 
+        // Locate coordinates of action target for visual cursor
+        let stepCoords: { x: number; y: number } | null = null
+        try {
+          stepCoords = await page.evaluate((txt, isClick) => {
+            let el: HTMLElement | null = null
+            if (isClick) {
+              const clickables = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]')) as HTMLElement[]
+              el = clickables.find((c) => {
+                const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                return cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15)))
+              }) || clickables.find((c) => /create|add|new|save|submit|register|sign up|continue/i.test(c.textContent || "")) || null
+            } else {
+              el = (document.querySelector('input:not([type="hidden"]), textarea') as HTMLElement) || null
+            }
+            if (el) {
+              const r = el.getBoundingClientRect()
+              return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+            }
+            return null
+          }, targetText, step.actionType === "click")
+        } catch {}
+
+        const actType = step.actionType === "fill" ? "type" : step.actionType === "click" ? "click" : "inspect"
+        job.currentAction = {
+          id: `act-${step.id}`,
+          type: actType,
+          description: `Execute ${step.actionType} on ${step.targetName}`,
+          target: step.targetName,
+          value: step.syntheticValue,
+          coordinates: stepCoords || { x: 195, y: 350 },
+          thought: `Executing step ${step.id}: ${step.actionType} on "${step.targetName}"`,
+          status: "running",
+          timestamp: new Date().toISOString(),
+        }
+        saveJob(job)
+
         // 1. FILL / TYPE ACTION
         if (step.actionType === "fill") {
           const valToType = step.syntheticValue || "Synthetic Test Value"
@@ -733,6 +769,30 @@ export async function executeFeatureWorkflowJob(
           step.actualResult = `Verified expected outcome: ${step.expectedResult}`
         }
 
+        // Render visual cursor overlay before snapshot
+        if (stepCoords) {
+          await page.evaluate((cx, cy, type, label) => {
+            try {
+              document.getElementById("__antigravity_overlay_root__")?.remove()
+              const root = document.createElement("div")
+              root.id = "__antigravity_overlay_root__"
+              root.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:99999999;"
+              root.innerHTML = `
+                <div style="position:fixed;left:${cx}px;top:${cy}px;z-index:99999999;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.6));">
+                  <div style="position:absolute;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid #818cf8;background:rgba(129,140,248,0.25);box-shadow:0 0 16px #818cf8;"></div>
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                    <path d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z" fill="${type === 'click' ? '#f43f5e' : '#6366f1'}" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"/>
+                  </svg>
+                  <div style="position:absolute;left:24px;top:8px;padding:3px 8px;border-radius:6px;background:rgba(15,23,42,0.95);border:1px solid #818cf8;color:#fff;font-size:10px;font-weight:700;white-space:nowrap;">
+                    ${type.toUpperCase()}: ${label.slice(0, 24)}
+                  </div>
+                </div>
+              `
+              document.body.appendChild(root)
+            } catch {}
+          }, stepCoords.x, stepCoords.y, actType, step.targetName).catch(() => {})
+        }
+
         // OBSERVE & RECORD
         let shot = ""
         try {
@@ -741,6 +801,10 @@ export async function executeFeatureWorkflowJob(
           step.screenshotUrl = shot
           job.currentScreenshotUrl = shot
         } catch {}
+
+        await page.evaluate(() => {
+          document.getElementById("__antigravity_overlay_root__")?.remove()
+        }).catch(() => {})
 
         // STEP 8: Handle newly discovered paths
         const currentPath = normalizePath(page.url(), origin)

@@ -45,6 +45,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
+import type { AgentAction } from "@/lib/ai-automation/types"
 import { createClient } from "@/lib/supabase/client"
 import { AreaSelectionOverlay } from "./area-selection-overlay"
 import { CapturedResultModal } from "./captured-result-modal"
@@ -98,6 +99,8 @@ export interface WorkflowSimulatorProps {
   onNavigateView?: (mode: "dashboard" | "editor" | "simulator") => void
   hideLeftView?: boolean
   onToggleHideLeftView?: (val?: boolean) => void
+  currentAction?: AgentAction | null
+  isRunningTest?: boolean
 }
 
 interface Annotation {
@@ -161,6 +164,186 @@ function ToolbarButton({
 }
 
 // ============================================================================
+// Live AI Agent Mouse Cursor & Interaction Overlay
+// ============================================================================
+
+function LiveAgentCursorOverlay({
+  action,
+  workflow,
+  isRunning,
+  viewportWidth,
+  viewportHeight,
+}: {
+  action?: AgentAction | null
+  workflow?: Workflow | null
+  isRunning?: boolean
+  viewportWidth: number
+  viewportHeight: number
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number }>({
+    x: Math.round(viewportWidth / 2),
+    y: Math.round(viewportHeight / 2),
+  })
+  const [isClicking, setIsClicking] = useState(false)
+  const lastActionIdRef = useRef<string | null>(null)
+
+  // Derive active action either from explicit action prop or from workflow notes
+  const effectiveAction = useMemo(() => {
+    if (action) return action
+
+    if (workflow?.ourNotes && (workflow.id === "live-bot-action-feed" || workflow.id?.startsWith("action-step-"))) {
+      const notes = workflow.ourNotes
+      const actionMatch = notes.match(/Action:\s*([A-Za-z]+)/i)
+      const coordMatch = notes.match(/Coordinates:\s*x:\s*(\d+),\s*y:\s*(\d+)/i)
+      const targetMatch = notes.match(/Target:\s*([^\n]+)/i)
+      const thoughtMatch = notes.match(/Thought:\s*([^\n]+)/i)
+
+      if (actionMatch || coordMatch) {
+        return {
+          id: `derived-${workflow.id}`,
+          type: (actionMatch ? actionMatch[1].toLowerCase() : "click") as any,
+          description: workflow.reason || workflow.title || "",
+          target: targetMatch ? targetMatch[1].trim() : "",
+          thought: thoughtMatch ? thoughtMatch[1].trim() : "",
+          coordinates: coordMatch
+            ? { x: parseInt(coordMatch[1], 10), y: parseInt(coordMatch[2], 10) }
+            : undefined,
+        } as AgentAction
+      }
+    }
+    return null
+  }, [action, workflow?.id, workflow?.ourNotes, workflow?.reason, workflow?.title])
+
+  useEffect(() => {
+    if (!effectiveAction && !isRunning) return
+
+    let targetX = Math.round(viewportWidth / 2)
+    let targetY = Math.round(viewportHeight / 2)
+
+    if (
+      effectiveAction?.coordinates &&
+      typeof effectiveAction.coordinates.x === "number" &&
+      typeof effectiveAction.coordinates.y === "number"
+    ) {
+      targetX = Math.max(16, Math.min(viewportWidth - 28, Math.round(effectiveAction.coordinates.x)))
+      targetY = Math.max(16, Math.min(viewportHeight - 28, Math.round(effectiveAction.coordinates.y)))
+    } else if (effectiveAction?.type === "back") {
+      targetX = 26
+      targetY = 56
+    } else if (effectiveAction?.type === "type") {
+      targetX = Math.round(viewportWidth / 2)
+      targetY = Math.round(viewportHeight * 0.36)
+    } else if (effectiveAction?.type === "click") {
+      targetX = Math.round(viewportWidth / 2)
+      targetY = Math.round(viewportHeight * 0.48)
+    } else if (effectiveAction?.type === "scroll") {
+      targetX = Math.round(viewportWidth / 2)
+      targetY = Math.min(viewportHeight - 60, pos.y + 140)
+    }
+
+    setPos({ x: targetX, y: targetY })
+
+    if (
+      effectiveAction?.type === "click" &&
+      (!lastActionIdRef.current || lastActionIdRef.current !== effectiveAction.id)
+    ) {
+      setIsClicking(true)
+      const clickTimer = setTimeout(() => setIsClicking(false), 700)
+      lastActionIdRef.current = effectiveAction.id || `click-${Date.now()}`
+      return () => clearTimeout(clickTimer)
+    }
+
+    if (effectiveAction?.id) {
+      lastActionIdRef.current = effectiveAction.id
+    }
+  }, [effectiveAction, isRunning, viewportWidth, viewportHeight])
+
+  const shouldShow =
+    isRunning ||
+    Boolean(effectiveAction) ||
+    workflow?.id === "live-bot-action-feed" ||
+    Boolean(workflow?.id?.startsWith("action-step-"))
+
+  if (!shouldShow) return null
+
+  const isClick = effectiveAction?.type === "click"
+  const isType = effectiveAction?.type === "type"
+
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none z-30 overflow-hidden select-none"
+      aria-hidden="true"
+    >
+      <div
+        className="absolute top-0 left-0 transition-transform duration-500 ease-out will-change-transform"
+        style={{
+          transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`,
+        }}
+      >
+        {/* Click ripple animation */}
+        {isClicking && (
+          <span className="absolute -top-4 -left-4 w-12 h-12 rounded-full border-2 border-rose-500 bg-rose-500/30 animate-ping pointer-events-none" />
+        )}
+
+        {/* Target radar halo ring */}
+        <div
+          className={`absolute -top-3 -left-3 w-9 h-9 rounded-full border pointer-events-none transition-colors ${
+            isClick
+              ? "border-rose-400/80 bg-rose-500/20 animate-ping"
+              : isType
+              ? "border-sky-400/80 bg-sky-500/20 animate-pulse"
+              : "border-indigo-400/70 bg-indigo-500/15 animate-pulse"
+          }`}
+        />
+
+        {/* High-visibility SVG Mouse Pointer Arrow */}
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          className="drop-shadow-[0_4px_12px_rgba(0,0,0,0.7)]"
+        >
+          <path
+            d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z"
+            fill={isClick ? "#f43f5e" : isType ? "#0284c7" : "#6366f1"}
+            stroke="#ffffff"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+          />
+        </svg>
+
+        {/* Action HUD Pill Badge beside pointer */}
+        <div className="absolute left-6 top-1.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950/95 border border-indigo-500/60 shadow-2xl backdrop-blur-md text-[10px] font-mono whitespace-nowrap">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              isClick
+                ? "bg-rose-400 animate-ping"
+                : isType
+                ? "bg-sky-400 animate-pulse"
+                : "bg-emerald-400 animate-pulse"
+            }`}
+          />
+          <strong className="text-white uppercase font-bold text-[9px] tracking-wide">
+            {effectiveAction?.type || (isRunning ? "EXECUTING" : "ACTIVE")}
+          </strong>
+          <span className="text-slate-300 max-w-[150px] truncate text-[9px]">
+            {effectiveAction?.target || effectiveAction?.description || (isRunning ? "Live testing" : "Target element")}
+          </span>
+        </div>
+
+        {/* Typing Bubble */}
+        {isType && effectiveAction?.value && (
+          <div className="absolute left-6 top-7 px-2 py-0.5 rounded bg-sky-950/95 border border-sky-500/60 text-[9px] text-sky-200 font-mono shadow-xl backdrop-blur-md">
+            ⌨ &quot;{effectiveAction.value}&quot;
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -183,6 +366,8 @@ export function WorkflowSimulator({
   onNavigateView,
   hideLeftView: hideLeftViewProp,
   onToggleHideLeftView,
+  currentAction,
+  isRunningTest = false,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
 
@@ -2186,10 +2371,7 @@ export function WorkflowSimulator({
                     title="Live App Preview"
                     className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
                     style={
-                      isLiveCanvas &&
-                      currentWorkflow?.id !== "live-bot-action-feed" &&
-                      !currentWorkflow?.id?.startsWith("action-step-") &&
-                      !currentWorkflow?.id?.startsWith("bot-screen-")
+                      !currentWorkflow?.designB || isLiveCanvas
                         ? {}
                         : {
                             position: "absolute",
@@ -2203,47 +2385,42 @@ export function WorkflowSimulator({
                   />
 
                   {/* Area Selection Box Overlay for live screen */}
-                  {isLiveCanvas &&
-                    currentWorkflow?.id !== "live-bot-action-feed" &&
-                    !currentWorkflow?.id?.startsWith("action-step-") &&
-                    !currentWorkflow?.id?.startsWith("bot-screen-") && (
-                      <AreaSelectionOverlay
-                        isActive={isAreaSelectionActive}
-                        containerWidth={viewportWidth}
-                        containerHeight={viewportHeight}
-                        scale={currentScale}
-                        selectionBoxRef={selectionBoxRef}
-                        onCapture={(box) => handleLiveScreenCapture(false, box)}
-                        onCaptureFullScreen={() => handleLiveScreenCapture(true)}
-                        onClose={() => setIsAreaSelectionActive(false)}
-                        isCapturing={isCapturing}
-                      />
-                    )}
+                  {(!currentWorkflow?.designB || isLiveCanvas) && (
+                    <AreaSelectionOverlay
+                      isActive={isAreaSelectionActive}
+                      containerWidth={viewportWidth}
+                      containerHeight={viewportHeight}
+                      scale={currentScale}
+                      selectionBoxRef={selectionBoxRef}
+                      onCapture={(box) => handleLiveScreenCapture(false, box)}
+                      onCaptureFullScreen={() => handleLiveScreenCapture(true)}
+                      onClose={() => setIsAreaSelectionActive(false)}
+                      isCapturing={isCapturing}
+                    />
+                  )}
 
-                  {/* The Saved App Screenshot View */}
-                  {(!isLiveCanvas ||
-                    currentWorkflow?.id === "live-bot-action-feed" ||
-                    currentWorkflow?.id?.startsWith("action-step-") ||
-                    currentWorkflow?.id?.startsWith("bot-screen-")) && (
+                  {/* The Saved App Screenshot View: shown when screenshot is available and not in forced live mode */}
+                  {currentWorkflow?.designB && !isLiveCanvas && (
                     <div className="absolute inset-0 z-10 w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden select-none">
-                      {currentWorkflow?.designB ? (
-                        <>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={currentWorkflow.designB}
-                            alt="Saved app screenshot"
-                            className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
-                            style={{ imageRendering: "-webkit-optimize-contrast" }}
-                          />
-                          <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
-                        </>
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400 dark:text-[#7e8596] p-6 text-center">
-                          No screenshot saved. Click &quot;Capture Live Screen&quot; to capture and save a screenshot.
-                        </div>
-                      )}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={currentWorkflow.designB}
+                        alt="Saved app screenshot"
+                        className="w-full h-full object-contain pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                        style={{ imageRendering: "-webkit-optimize-contrast" }}
+                      />
+                      <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
                     </div>
                   )}
+
+                  {/* Live AI Agent Visual Mouse Cursor Overlay */}
+                  <LiveAgentCursorOverlay
+                    action={currentAction}
+                    workflow={currentWorkflow}
+                    isRunning={isRunningTest}
+                    viewportWidth={viewportWidth}
+                    viewportHeight={viewportHeight}
+                  />
                 </DeviceFrame>
               </div>
             </section>

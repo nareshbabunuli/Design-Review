@@ -1,0 +1,10 @@
+Date,Property,Type,Description,Amount_GBP,Category
+2024-05-01,"14 High Street, Abingdon",Income,"Monthly Rent - Sarah Connor",1650.00,Rental Income
+2024-05-15,"14 High Street, Abingdon",Expense,"Boiler Service & Radiator Bleed",-180.00,Repairs & Maintenance
+2024-06-01,"14 High Street, Abingdon",Income,"Monthly Rent - Sarah Connor",1650.00,Rental Income
+2024-06-12,"Flat 3, Crown Court",Income,"Monthly Rent - Michael Davis",1250.00,Rental Income
+2024-06-20,"Flat 3, Crown Court",Expense,"Replacement Smoke Alarm & Test",-65.00,Safety Compliance
+2024-07-01,"14 High Street, Abingdon",Income,"Monthly Rent - Sarah Connor",1650.00,Rental Income
+2024-07-15,"Flat 3, Crown Court",Income,"Monthly Rent - Michael Davis",1250.00,Rental Income
+2024-08-01,"14 High Street, Abingdon",Income,"Monthly Rent - Sarah Connor",1650.00,Rental Income
+2024-08-25,"14 High Street, Abingdon",Expense,"Garden Maintenance & Hedge Trimming",-90.00,Grounds Maintenance

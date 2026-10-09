@@ -52,6 +52,7 @@ import {
   FileUp,
   FolderKanban,
   Folder,
+  FolderCheck,
   CreditCard,
   FileCode,
   Mail,
@@ -189,10 +190,10 @@ const DEFAULT_AI_PROJECT: Project = {
 export default function AISimulatorPage() {
   const supabase = createClient()
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
-  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([DEFAULT_AI_PROJECT])
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(DEFAULT_AI_PROJECT.id)
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(DEFAULT_AI_PROJECT.workflows[0]?.id || null)
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [isSimulatorFullscreen, setIsSimulatorFullscreen] = useState(false)
 
@@ -266,8 +267,13 @@ export default function AISimulatorPage() {
   const [isSubmittingSettings, setIsSubmittingSettings] = useState(false)
 
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+  // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
+
+  // Workspace layout mode: "device" (Phone Simulator) | "split" (Side-by-Side) | "stage" (Map & Plan)
+  type WorkspaceLayoutMode = "device" | "split" | "stage"
+  const [workspaceLayoutMode, setWorkspaceLayoutMode] = useState<WorkspaceLayoutMode>("split")
 
   // Sync testing mode when a job is active
   useEffect(() => {
@@ -292,6 +298,11 @@ export default function AISimulatorPage() {
         ["simulator", "map", "screens", "plan", "execution", "files", "coverage"].includes(tabParam)
       ) {
         setStageViewMode(tabParam as StageViewMode)
+        if (tabParam === "simulator") {
+          setWorkspaceLayoutMode("device")
+        } else {
+          setWorkspaceLayoutMode("split")
+        }
       }
     }
   }, [])
@@ -308,6 +319,13 @@ export default function AISimulatorPage() {
 
   const handleSelectWorkspaceTab = useCallback((tabId: StageViewMode) => {
     setStageViewMode(tabId)
+    if (tabId === "simulator") {
+      setWorkspaceLayoutMode("device")
+    } else {
+      if (workspaceLayoutMode === "device") {
+        setWorkspaceLayoutMode("split")
+      }
+    }
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href)
       if (tabId === "simulator") {
@@ -319,7 +337,7 @@ export default function AISimulatorPage() {
       }
       window.history.replaceState(null, "", url.toString())
     }
-  }, [])
+  }, [workspaceLayoutMode])
 
   const handleOpenMapPage = useCallback(() => {
     handleSelectWorkspaceTab("map")
@@ -417,6 +435,59 @@ export default function AISimulatorPage() {
     }
   }, [selectedProjectDir, targetUrl])
 
+  // Test Data Provisioning & Verification state
+  interface TestDataInfo {
+    exists: boolean
+    filesCount: number
+    folderPath: string
+    files: Array<{ name: string; size: number; category: string; lastModified?: string }>
+    message?: string
+  }
+
+  const [testDataStatus, setTestDataStatus] = useState<TestDataInfo | null>(null)
+  const [isCheckingTestData, setIsCheckingTestData] = useState<boolean>(false)
+  const [isGeneratingTestData, setIsGeneratingTestData] = useState<boolean>(false)
+  const [isTestDataModalOpen, setIsTestDataModalOpen] = useState<boolean>(false)
+
+  const fetchTestDataStatus = useCallback(async (projectName?: string) => {
+    const proj = projectName || selectedProjectDir
+    if (!proj) return
+    setIsCheckingTestData(true)
+    try {
+      const res = await fetch(`/api/ai-automation/test-data?projectDir=${encodeURIComponent(proj)}`)
+      const data = await res.json()
+      if (data && typeof data.exists === "boolean") {
+        setTestDataStatus(data)
+      }
+    } catch (e) {
+      console.error("Failed to check test data status", e)
+    } finally {
+      setIsCheckingTestData(false)
+    }
+  }, [selectedProjectDir])
+
+  const handleGenerateTestData = useCallback(async (projectName?: string) => {
+    const proj = projectName || selectedProjectDir
+    if (!proj) return
+    setIsGeneratingTestData(true)
+    try {
+      const res = await fetch("/api/ai-automation/test-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectDir: proj }),
+      })
+      const data = await res.json()
+      if (data && typeof data.exists === "boolean") {
+        setTestDataStatus(data)
+        setIsTestDataModalOpen(true)
+      }
+    } catch (e) {
+      console.error("Failed to generate test data", e)
+    } finally {
+      setIsGeneratingTestData(false)
+    }
+  }, [selectedProjectDir])
+
   const handleSelectTestingProject = (projectName: string) => {
     setSelectedProjectDir(projectName)
     localStorage.setItem("ai_target_project_dir", projectName)
@@ -427,6 +498,7 @@ export default function AISimulatorPage() {
     setTargetUrl(newUrl)
     localStorage.setItem("ai_target_app_url", newUrl)
     fetchLocalRoutes(projectName, newUrl)
+    fetchTestDataStatus(projectName)
   }
 
   useEffect(() => {
@@ -435,6 +507,7 @@ export default function AISimulatorPage() {
     setSelectedProjectDir(savedProject)
     setTargetUrl(savedUrl)
     fetchLocalRoutes(savedProject, savedUrl)
+    fetchTestDataStatus(savedProject)
   }, [])
 
   // Laya fast health checker (runs only if explicitly enabled)
@@ -467,8 +540,8 @@ export default function AISimulatorPage() {
     }
   }, [enableLaya, layaBaseUrl])
 
-  // AI Agent Chat Command Center State
-  const [activeDockTab, setActiveDockTab] = useState<"chat" | "config" | "crawl" | "report">("chat")
+  // AI Agent Chat Command Center State (Focused Chat & AI Config Dock)
+  const [activeDockTab, setActiveDockTab] = useState<"chat" | "config">("chat")
   const [isTestingAiConnection, setIsTestingAiConnection] = useState(false)
   const [aiConnectionTestResult, setAiConnectionTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
@@ -1122,12 +1195,18 @@ export default function AISimulatorPage() {
 
   // Load projects from database (silent refresh prevents tearing down the screen)
   const loadWorkspace = useCallback(async (showFullLoader = false) => {
-    if (showFullLoader) setLoading(true)
+    if (showFullLoader && projects.length === 0) setLoading(true)
     try {
-      const { data: ps, error: pError } = await supabase
+      const fetchPromise = supabase
         .from("projects")
         .select("id,title,is_expanded,user_id,figma_url,workflow_order,is_order_locked")
         .order("created_at", { ascending: true })
+
+      const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
+        setTimeout(() => reject(new Error("Supabase timeout")), 3000)
+      )
+
+      const { data: ps, error: pError } = (await Promise.race([fetchPromise, timeoutPromise])) as any
 
       if (pError || !ps || ps.length === 0) {
         setProjects([DEFAULT_AI_PROJECT])
@@ -1215,10 +1294,10 @@ export default function AISimulatorPage() {
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [supabase, projects.length])
 
   useEffect(() => {
-    loadWorkspace(true)
+    loadWorkspace(false)
   }, [loadWorkspace])
 
   const activeProject = useMemo(() => {
@@ -1520,6 +1599,7 @@ export default function AISimulatorPage() {
       }
 
       localStorage.setItem("ai_automation_last_job_id", data.jobId)
+      setWorkspaceLayoutMode("split")
       handleSelectWorkspaceTab("map")
 
       // Fetch immediately to load initial state
@@ -1615,6 +1695,7 @@ export default function AISimulatorPage() {
 
       localStorage.setItem("ai_automation_last_job_id", data.jobId)
       setTestingMode("feature_workflow")
+      setWorkspaceLayoutMode("split")
       handleSelectWorkspaceTab("plan")
 
       // Fetch immediately to load initial state
@@ -1971,72 +2052,152 @@ export default function AISimulatorPage() {
               </div>
             </aside>
 
-            {/* 1. CORE WORKSPACE: PHONE SIMULATOR PAGE OR FULL PAGE TABS */}
+            {/* 1. CORE WORKSPACE: PHONE SIMULATOR PAGE OR FULL PAGE TABS OR SIDE-BY-SIDE */}
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
-              {stageViewMode !== "simulator" ? (
-                /* FULL PAGE TAB VIEW: FEATURE / WORKFLOW TESTING OR FULL APP TESTING */
-                <div className="flex-1 w-full h-full flex flex-col overflow-hidden bg-slate-950 relative">
-                  {testingMode === "feature_workflow" ? (
-                    <FeatureWorkflowView
-                      job={currentJob}
-                      isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
-                      targetUrl={targetUrl}
-                      activeSubTab={stageViewMode}
-                      onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
-                      onStartWorkflowTest={handleStartWorkflowTesting}
-                      onCancelJob={handleStopAutomation}
-                      onOpenMapPage={() => handleSelectWorkspaceTab("map")}
-                      isMapPageActive={stageViewMode === "map"}
-                      testingMode={testingMode}
-                      onSelectTestingMode={(m) => setTestingMode(m)}
-                      fullPageView={true}
-                    />
-                  ) : (
-                    <FullAppTestingView
-                      job={currentJob}
-                      isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
-                      targetUrl={targetUrl}
-                      onStartFullAppTest={handleStartFullAppTesting}
-                      onCancelJob={handleStopAutomation}
-                      onJobUpdate={(updated) => setCurrentJob(updated)}
-                      activeSubTab={stageViewMode}
-                      onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
-                      fullPageView={true}
-                      hideSubNav={true}
-                      onOpenMapPage={() => handleSelectWorkspaceTab("map")}
-                      isMapPageActive={stageViewMode === "map"}
-                      testingMode={testingMode}
-                      onSelectTestingMode={(m) => setTestingMode(m)}
-                    />
+              {/* Top View Mode Switcher Header: Switch between Live Device, Side by Side Split, and App Map */}
+              <div className="h-9 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between text-xs shrink-0 select-none z-20">
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Layout:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceLayoutMode("device")
+                      setStageViewMode("simulator")
+                    }}
+                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
+                      workspaceLayoutMode === "device" && stageViewMode === "simulator"
+                        ? "bg-indigo-600 text-white shadow-xs font-semibold"
+                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                    }`}
+                    title="View Live Phone Simulator in full width"
+                  >
+                    <Smartphone className="h-3.5 w-3.5" />
+                    <span>Live Device</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceLayoutMode("split")
+                      if (stageViewMode === "simulator") setStageViewMode("map")
+                    }}
+                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
+                      workspaceLayoutMode === "split"
+                        ? "bg-indigo-600 text-white shadow-xs font-semibold ring-1 ring-indigo-400/30"
+                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                    }`}
+                    title="View Live Device and App Map side by side"
+                  >
+                    <Columns className="h-3.5 w-3.5" />
+                    <span>Side by Side</span>
+                    <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">Split</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceLayoutMode("stage")
+                      if (stageViewMode === "simulator") setStageViewMode("map")
+                    }}
+                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
+                      workspaceLayoutMode === "stage" && stageViewMode !== "simulator"
+                        ? "bg-indigo-600 text-white shadow-xs font-semibold"
+                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
+                    }`}
+                    title="View Map and Test Plan in full width"
+                  >
+                    <MapIcon className="h-3.5 w-3.5" />
+                    <span>App Map & Plan</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {currentJob?.status === "running" && (
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                      <span>Live Testing In Flight</span>
+                    </div>
                   )}
                 </div>
-              ) : (
-                /* PHONE SIMULATOR PAGE */
-                <WorkflowSimulator
-                    project={mergedSimulatorProject}
-                    initialWorkflowId={activeWorkflowId}
-                    initialLiveMode={false}
-                    initialUrl={targetUrl}
-                    isOwner={true}
-                    canEdit={true}
-                    userRole="owner"
-                    onSelectWorkflow={(id) => setActiveWorkflowId(id)}
-                    onDuplicateWorkflow={duplicateWorkflow}
-                    onUpdateField={updateWorkflowField}
-                    onOpenPresentation={() => {}}
-                    theme={theme}
-                    onToggleTheme={toggleTheme}
-                    isFullscreen={isSimulatorFullscreen}
-                    onToggleFullscreen={(val?: boolean) =>
-                      setIsSimulatorFullscreen((prev) => (typeof val === "boolean" ? val : !prev))
-                    }
-                    onNavigateView={(mode) => {
-                      if (mode === "dashboard") window.location.href = "/"
-                      else if (mode === "editor") window.location.href = "/?view=editor"
-                      else if (mode === "simulator") window.location.href = "/?view=simulator"
-                    }}
-                  />
-              )}
+              </div>
+
+              {/* Main Content Workspace Panes */}
+              <div className="flex-1 w-full h-full flex overflow-hidden relative">
+                {/* 1. Live Device Pane: shown in "device" or "split" mode */}
+                {(workspaceLayoutMode === "device" || workspaceLayoutMode === "split") && (
+                  <div
+                    className={`${
+                      workspaceLayoutMode === "split"
+                        ? "w-full lg:w-[480px] xl:w-[540px] 2xl:w-[600px] shrink-0 border-r border-slate-800 flex flex-col h-full overflow-hidden"
+                        : "flex-1 h-full flex flex-col overflow-hidden"
+                    }`}
+                  >
+                    <WorkflowSimulator
+                      project={mergedSimulatorProject}
+                      initialWorkflowId={activeWorkflowId}
+                      initialLiveMode={true}
+                      initialUrl={targetUrl}
+                      isOwner={true}
+                      canEdit={true}
+                      userRole="owner"
+                      onSelectWorkflow={(id) => setActiveWorkflowId(id)}
+                      onDuplicateWorkflow={duplicateWorkflow}
+                      onUpdateField={updateWorkflowField}
+                      onOpenPresentation={() => {}}
+                      theme={theme}
+                      onToggleTheme={toggleTheme}
+                      isFullscreen={isSimulatorFullscreen}
+                      onToggleFullscreen={(val?: boolean) =>
+                        setIsSimulatorFullscreen((prev) => (typeof val === "boolean" ? val : !prev))
+                      }
+                      onNavigateView={(mode) => {
+                        if (mode === "dashboard") window.location.href = "/"
+                        else if (mode === "editor") window.location.href = "/?view=editor"
+                        else if (mode === "simulator") window.location.href = "/?view=simulator"
+                      }}
+                      currentAction={currentJob?.currentAction || activeAction}
+                      isRunningTest={currentJob?.status === "running"}
+                    />
+                  </div>
+                )}
+
+                {/* 2. Stage View Pane (Map / Screens / Plan / Execution): shown in "stage" or "split" mode */}
+                {(workspaceLayoutMode === "stage" || workspaceLayoutMode === "split") && (
+                  <div className="flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0">
+                    {testingMode === "feature_workflow" ? (
+                      <FeatureWorkflowView
+                        job={currentJob}
+                        isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
+                        targetUrl={targetUrl}
+                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
+                        onStartWorkflowTest={handleStartWorkflowTesting}
+                        onCancelJob={handleStopAutomation}
+                        onOpenMapPage={() => handleSelectWorkspaceTab("map")}
+                        isMapPageActive={stageViewMode === "map"}
+                        testingMode={testingMode}
+                        onSelectTestingMode={(m) => setTestingMode(m)}
+                        fullPageView={true}
+                      />
+                    ) : (
+                      <FullAppTestingView
+                        job={currentJob}
+                        isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
+                        targetUrl={targetUrl}
+                        onStartFullAppTest={handleStartFullAppTesting}
+                        onCancelJob={handleStopAutomation}
+                        onJobUpdate={(updated) => setCurrentJob(updated)}
+                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
+                        fullPageView={true}
+                        hideSubNav={false}
+                        onOpenMapPage={() => handleSelectWorkspaceTab("map")}
+                        isMapPageActive={stageViewMode === "map"}
+                        testingMode={testingMode}
+                        onSelectTestingMode={(m) => setTestingMode(m)}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 2. DOCKED AI AUTOMATION TESTING COCKPIT (Slides out from right) */}
@@ -2077,8 +2238,8 @@ export default function AISimulatorPage() {
                   </button>
                 </div>
 
-                {/* Dock Tab Selector */}
-                <div className="grid grid-cols-4 p-1.5 bg-slate-900 border-b border-slate-800 text-[11px] font-semibold shrink-0 gap-1">
+                {/* Dock Tab Selector: Focused Chat & AI Config */}
+                <div className="grid grid-cols-2 p-1.5 bg-slate-900 border-b border-slate-800 text-[11px] font-semibold shrink-0 gap-1">
                   <button
                     type="button"
                     onClick={() => setActiveDockTab("chat")}
@@ -2101,31 +2262,7 @@ export default function AISimulatorPage() {
                     }`}
                   >
                     <Settings className="h-3.5 w-3.5 text-purple-400" />
-                    <span>Config</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveDockTab("crawl")}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      activeDockTab === "crawl"
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                    <span>Crawler</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveDockTab("report")}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      activeDockTab === "report"
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <Activity className="h-3.5 w-3.5" />
-                    <span>Report</span>
+                    <span>AI Config</span>
                   </button>
                 </div>
 
@@ -2626,24 +2763,66 @@ export default function AISimulatorPage() {
                               ))}
                             </div>
 
-                            {/* Project Routes Presets with Target Project Switcher */}
+                            {/* Project Routes Presets with Target Project Switcher & Test Data Provisioning */}
                             <div className="pt-1.5 border-t border-slate-800/60 space-y-1.5">
-                              <div className="flex items-center justify-between text-[10px] text-slate-400 gap-1">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
-                                  <span className="font-semibold text-slate-300 shrink-0">Target Project:</span>
-                                  <select
-                                    value={selectedProjectDir}
-                                    onChange={(e) => handleSelectTestingProject(e.target.value)}
-                                    className="bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 font-mono outline-none cursor-pointer max-w-[170px] truncate"
-                                    title="Switch local testing project to load its routes"
-                                  >
-                                    {availableProjects.map((p) => (
-                                      <option key={p.name} value={p.name}>
-                                        {p.name} {p.defaultPort ? `(:${p.defaultPort})` : ""}
-                                      </option>
-                                    ))}
-                                  </select>
+                              <div className="flex items-center justify-between text-[10px] text-slate-400 gap-1 flex-wrap">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
+                                    <span className="font-semibold text-slate-300 shrink-0">Target Project:</span>
+                                    <select
+                                      value={selectedProjectDir}
+                                      onChange={(e) => handleSelectTestingProject(e.target.value)}
+                                      className="bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 font-mono outline-none cursor-pointer max-w-[145px] truncate"
+                                      title="Switch local testing project to load its routes & test data"
+                                    >
+                                      {availableProjects.map((p) => (
+                                        <option key={p.name} value={p.name}>
+                                          {p.name} {p.defaultPort ? `(:${p.defaultPort})` : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  {/* Test Data Status / Generate Test Data beside Target Project */}
+                                  {testDataStatus?.exists && testDataStatus.filesCount > 0 ? (
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => setIsTestDataModalOpen(true)}
+                                        className="px-1.5 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 flex items-center gap-1 text-[10px] font-mono transition cursor-pointer"
+                                        title={`Verified ${testDataStatus.filesCount} files in test-files/. Click to view.`}
+                                      >
+                                        <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400 shrink-0" />
+                                        <span className="font-semibold">{testDataStatus.filesCount} Test Data</span>
+                                        <span className="text-[9px] text-emerald-400/80">✓</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => fetchTestDataStatus()}
+                                        disabled={isCheckingTestData}
+                                        className="text-[9px] text-slate-500 hover:text-slate-300 p-0.5 transition cursor-pointer"
+                                        title="Re-verify test data folder"
+                                      >
+                                        <RotateCcw className={`h-2.5 w-2.5 ${isCheckingTestData ? "animate-spin" : ""}`} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleGenerateTestData()}
+                                      disabled={isGeneratingTestData || isCheckingTestData}
+                                      className="px-1.5 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center gap-1 text-[10px] font-semibold transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                                      title="Generate dummy files (PDFs, CSVs, images, notes) in target project test-files/"
+                                    >
+                                      {isGeneratingTestData ? (
+                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-400 shrink-0" />
+                                      ) : (
+                                        <Sparkles className="h-2.5 w-2.5 text-amber-400 shrink-0" />
+                                      )}
+                                      <span>Generate Test Data</span>
+                                    </button>
+                                  )}
                                 </div>
                                 <button
                                   type="button"
@@ -3170,1009 +3349,6 @@ export default function AISimulatorPage() {
                     </div>
                   )}
 
-                  {/* TAB 3: CRAWLER / TEST MODES */}
-                  {activeDockTab === "crawl" && (
-                    <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar">
-                      {/* Mode Switcher */}
-                      <div className="p-1 rounded-xl bg-slate-900 border border-slate-800 grid grid-cols-2 gap-1 text-[11px] font-bold">
-                        <button
-                          type="button"
-                          onClick={() => setTestingMode("feature_workflow")}
-                          className={`py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            testingMode === "feature_workflow"
-                              ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm"
-                              : "text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          <Sparkles className="h-3 w-3 text-indigo-300" />
-                          <span>Feature / Workflow</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTestingMode("full_app")}
-                          className={`py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            testingMode === "full_app"
-                              ? "bg-indigo-600 text-white shadow-sm"
-                              : "text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          <Compass className="h-3 w-3 text-indigo-400" />
-                          <span>Full App Test</span>
-                        </button>
-                      </div>
-
-                      {/* Configuration Form */}
-                      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                        {/* If in Feature Workflow Mode: Ask what workflow or feature to test */}
-                        {testingMode === "feature_workflow" && (
-                          <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/40 space-y-2.5">
-                            <div>
-                              <label className="text-[11px] font-bold text-white flex items-center gap-1.5">
-                                <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-                                <span>What workflow or feature would you like to test?</span>
-                              </label>
-                              <p className="text-[10px] text-slate-400 mt-0.5">
-                                Describe it naturally. The AI will extract the goal, locate relevant screens, and generate a pre-flight test plan.
-                              </p>
-                            </div>
-
-                            <textarea
-                              value={workflowPromptInput}
-                              onChange={(e) => setWorkflowPromptInput(e.target.value)}
-                              placeholder="e.g. Test creating a new task, or test registration flow..."
-                              rows={2}
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg p-2 text-xs text-white placeholder-slate-500 resize-none outline-none font-sans"
-                            />
-
-                            {/* Quick Presets */}
-                            <div className="space-y-1">
-                              <span className="text-[10px] text-slate-400 font-semibold block">Quick Examples:</span>
-                              <div className="flex flex-wrap gap-1">
-                                {[
-                                  { label: "📝 Create New Task", prompt: "I want to test creating a new task." },
-                                  { label: "👤 Registration Flow", prompt: "Test the registration flow." },
-                                  { label: "🖼️ Upload Avatar", prompt: "Test whether a user can upload a profile picture." },
-                                  { label: "💳 Checkout Process", prompt: "Test the checkout process from adding a product to completing payment." },
-                                  { label: "🔑 Reset Password", prompt: "Test login, forgot password, and resetting the password." },
-                                  { label: "🏥 Caregiver", prompt: "Test caregiver registration and completing the first activity." },
-                                ].map((item, idx) => (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() => setWorkflowPromptInput(item.prompt)}
-                                    className="px-2 py-0.5 rounded text-[10px] bg-slate-900 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/50 text-slate-300 hover:text-white transition cursor-pointer"
-                                  >
-                                    {item.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="pt-1 flex items-center justify-between text-[10px]">
-                              <button
-                                type="button"
-                                onClick={() => handleSelectWorkspaceTab("plan")}
-                                className="text-indigo-400 hover:text-indigo-300 underline font-medium cursor-pointer"
-                              >
-                                View Workflow Plan Workspace →
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="space-y-1">
-                          <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
-                            <span>Target App URL</span>
-                            <span className="text-[10px] text-slate-500">
-                              {testingMode === "feature_workflow" ? "Entry point for feature" : "Auto-crawls internal pages"}
-                            </span>
-                          </label>
-                          <div className="relative">
-                            <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
-                            <input
-                              type="url"
-                              value={targetUrl}
-                              onChange={(e) => {
-                                const newUrl = e.target.value
-                                setTargetUrl(newUrl)
-                                localStorage.setItem("ai_target_app_url", newUrl)
-                                fetchLocalRoutes(selectedProjectDir, newUrl)
-                              }}
-                              placeholder="http://localhost:3001"
-                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Discovered Local Routes Picker from Filesystem */}
-                        {discoveredRoutes.length > 0 && (
-                          <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
-                            <div className="flex items-center justify-between text-[10px]">
-                              <span className="font-semibold text-slate-300 flex items-center gap-1">
-                                <Layers className="h-3 w-3 text-indigo-400" />
-                                <span>Project Routes ({discoveredRoutes.length})</span>
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => fetchLocalRoutes()}
-                                disabled={isScanningRoutes}
-                                className="text-[9px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer"
-                                title="Rescan local project files"
-                              >
-                                <RotateCcw className={`h-2.5 w-2.5 ${isScanningRoutes ? "animate-spin" : ""}`} />
-                                <span>Rescan</span>
-                              </button>
-                            </div>
-
-                            <div className="flex flex-wrap gap-1">
-                              {discoveredRoutes.map((r, i) => (
-                                <button
-                                  key={i}
-                                  type="button"
-                                  onClick={() => setTargetUrl(r.url)}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition cursor-pointer ${
-                                    targetUrl === r.url
-                                      ? "bg-indigo-600 text-white shadow-sm"
-                                      : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
-                                  }`}
-                                  title={`Source File: ${r.file}`}
-                                >
-                                  {r.path}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Crawl limit slider */}
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-400 text-[11px]">Crawl limit:</span>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="range"
-                              min="1"
-                              max="10"
-                              value={maxScreens}
-                              onChange={(e) => setMaxScreens(Number(e.target.value))}
-                              className="w-24 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                            />
-                            <span className="font-mono text-indigo-400 font-semibold text-[11px] w-12 text-right">
-                              {maxScreens} screens
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Journey Role Selector */}
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
-                            <span>Journey Role</span>
-                            <span className="text-[10px] text-indigo-400 font-mono">Laya System-1</span>
-                          </label>
-                          <div className="flex flex-wrap gap-1">
-                            {(["user", "admin", "client", "editor", "custom"] as const).map((r) => (
-                              <button
-                                key={r}
-                                type="button"
-                                onClick={() => setJourneyRole(r)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase transition cursor-pointer ${
-                                  journeyRole === r
-                                    ? "bg-indigo-600 text-white shadow-xs font-semibold"
-                                    : "bg-slate-950 border border-slate-800 text-slate-400 hover:text-white"
-                                }`}
-                              >
-                                {r}
-                              </button>
-                            ))}
-                          </div>
-                          {journeyRole === "custom" && (
-                            <input
-                              type="text"
-                              value={customJourneyRole}
-                              onChange={(e) => setCustomJourneyRole(e.target.value)}
-                              placeholder="Custom role (e.g. VIP Member)"
-                              className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1 text-xs text-white placeholder-slate-500 mt-1"
-                            />
-                          )}
-                        </div>
-
-                        {/* Laya Fast Decision Reflexes Card (Optional Toggle) */}
-                        <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2 text-[11px]">
-                          <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-2 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={enableLaya}
-                                onChange={(e) => handleToggleLaya(e.target.checked)}
-                                className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
-                              />
-                              <span className="text-slate-300 font-medium">Use Laya Reflexes</span>
-                              <span className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Optional</span>
-                            </label>
-                            <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${
-                              !enableLaya
-                                ? "bg-slate-900 text-slate-500 border border-slate-800"
-                                : isLayaLive
-                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                            }`}>
-                              {!enableLaya ? "Off (Heuristic)" : isLayaLive ? "Ready (~30ms)" : "Offline"}
-                            </span>
-                          </div>
-
-                          {enableLaya && (
-                            <div className="pt-1.5 border-t border-slate-900 space-y-1">
-                              <div className="flex items-center justify-between text-[10px] text-slate-400">
-                                <span>Laya Gateway URL</span>
-                                <span className="text-slate-500 font-mono text-[9px]">e.g. port 8001</span>
-                              </div>
-                              <input
-                                type="text"
-                                value={layaBaseUrl}
-                                onChange={(e) => handleUpdateLayaUrl(e.target.value)}
-                                placeholder="http://127.0.0.1:8001"
-                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
-                              />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Credentials Toggle */}
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() => setShowCredentials((prev) => !prev)}
-                            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-indigo-400 transition cursor-pointer"
-                          >
-                            <Key className="h-3 w-3" />
-                            <span>{showCredentials ? "Hide Credentials" : "Add Login Credentials"}</span>
-                            <ChevronDown className={`h-3 w-3 transition-transform ${showCredentials ? "rotate-180" : ""}`} />
-                          </button>
-
-                          {showCredentials && (
-                            <div className="mt-2 p-2.5 rounded-lg bg-slate-950 border border-slate-800 grid grid-cols-2 gap-2 text-xs">
-                              <input
-                                type="text"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                placeholder="Email / User"
-                                className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white"
-                              />
-                              <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Password"
-                                className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white"
-                              />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Active AI Model Info Card */}
-                        <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px]">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <Sparkles className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-                            <span className="text-slate-400">AI Engine:</span>
-                            <span className="font-semibold text-white truncate">
-                              {aiProvider === "omnirouter"
-                                ? `OmniRouter (${omniRouterModel})`
-                                : aiProvider === "local"
-                                ? `Ollama (${selectedAiModel})`
-                                : `OpenRouter (${selectedAiModel.split("/").pop()})`}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setActiveDockTab("config")}
-                            className="text-purple-400 hover:text-purple-300 font-semibold underline text-[10px] shrink-0 cursor-pointer"
-                          >
-                            Configure AI →
-                          </button>
-                        </div>
-
-                        {/* Pre-Flight Quick Badge Summary */}
-                        <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800/80 text-[10px] text-slate-400">
-                          <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar min-w-0">
-                            <span className="flex items-center gap-1 font-mono text-amber-300 shrink-0" title="Upload folder for test files">
-                              <Folder className="h-2.5 w-2.5" />
-                              <span>{uploadFilesDir ? uploadFilesDir.split(/[\/\\]/).pop() || "fixtures" : "auto"}</span>
-                            </span>
-                            <span className="text-slate-600 shrink-0">•</span>
-                            <span className="flex items-center gap-1 font-mono text-indigo-300 shrink-0" title="Postman collection status">
-                              <FileCode className="h-2.5 w-2.5" />
-                              <span>{postmanFileName ? "Postman ON" : "No Postman"}</span>
-                            </span>
-                            <span className="text-slate-600 shrink-0">•</span>
-                            <span className="flex items-center gap-1 font-mono text-emerald-300 shrink-0" title="Sandbox test card status">
-                              <CreditCard className="h-2.5 w-2.5" />
-                              <span>{allowTestPayments ? "Cards ON" : "Cards OFF"}</span>
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => openPreFlightModal(testingMode)}
-                            className="text-indigo-400 hover:text-indigo-300 font-semibold underline text-[9px] shrink-0 ml-1 cursor-pointer"
-                          >
-                            Setup →
-                          </button>
-                        </div>
-
-                        {/* Launch / Stop Button */}
-                        <div className="pt-2">
-                          {currentJob?.status === "running" ? (
-                            <button
-                              type="button"
-                              onClick={handleStopAutomation}
-                              className="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs py-2 rounded-lg transition shadow-lg shadow-rose-600/20 cursor-pointer"
-                            >
-                              <Square className="h-3.5 w-3.5 fill-current" />
-                              <span>Stop Test</span>
-                            </button>
-                          ) : testingMode === "feature_workflow" ? (
-                            <button
-                              type="button"
-                              disabled={isSubmitting || !workflowPromptInput.trim()}
-                              onClick={() => openPreFlightModal("feature_workflow")}
-                              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs py-2.5 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
-                            >
-                              {isSubmitting ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Sparkles className="h-3.5 w-3.5 text-indigo-200 fill-current" />
-                              )}
-                              <span>🎯 Configure &amp; Test Workflow</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={isSubmitting}
-                              onClick={() => openPreFlightModal("full_app")}
-                              className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
-                            >
-                              {isSubmitting ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Play className="h-3.5 w-3.5 fill-current" />
-                              )}
-                              <span>🚀 Start Full App Test (Pre-Flight)</span>
-                            </button>
-                          )}
-                        </div>
-
-                        {botError && (
-                          <div className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[11px] flex items-center gap-1.5">
-                            <XCircle className="h-3.5 w-3.5 shrink-0" />
-                            <span>{botError}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Interactive Verification Prompt Card */}
-                      {currentJob && currentJob.verificationState === "awaiting_verification" && (
-                        <div className="p-3.5 rounded-xl bg-gradient-to-br from-amber-950/60 via-slate-900 to-slate-950 border-2 border-amber-500/60 shadow-xl shadow-amber-950/40 text-xs space-y-3 animate-in fade-in duration-300">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="relative flex items-center justify-center p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                <Mail className="h-4 w-4" />
-                                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
-                                </span>
-                              </div>
-                              <div>
-                                <h4 className="font-bold text-amber-200 text-xs flex items-center gap-1.5">
-                                  External Verification Required
-                                </h4>
-                                <span className="text-[10px] text-amber-400/80 font-mono">Testing paused at confirmation step</span>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              Action Required
-                            </span>
-                          </div>
-
-                          <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
-                            {currentJob.verificationPrompt ||
-                              "The application sent a confirmation email or external verification link. Please check your inbox and click the link, or paste the link / code below."}
-                          </p>
-
-                          <div className="space-y-2">
-                            <div>
-                              <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                                Confirmation / Magic Link URL (optional):
-                              </label>
-                              <input
-                                type="url"
-                                value={verificationUrlInput}
-                                onChange={(e) => setVerificationUrlInput(e.target.value)}
-                                placeholder="https://app.example.com/verify?token=..."
-                                className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                                OTP / Verification Code (optional):
-                              </label>
-                              <input
-                                type="text"
-                                value={verificationCodeInput}
-                                onChange={(e) => setVerificationCodeInput(e.target.value)}
-                                placeholder="e.g. 482910"
-                                className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              disabled={isSubmittingVerification}
-                              onClick={() => handleConfirmVerification()}
-                              className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition shadow-lg shadow-emerald-600/30 cursor-pointer disabled:opacity-50"
-                            >
-                              {isSubmittingVerification ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                              )}
-                              <span>I&apos;ve Completed Verification</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={isSubmittingVerification}
-                              onClick={handleSkipVerification}
-                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
-                            >
-                              Skip
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Interactive Secure Settings Credentials Form */}
-                      {currentJob && currentJob.settingsState === "awaiting_credentials" && (
-                        <div className="p-3.5 rounded-xl bg-gradient-to-br from-indigo-950/60 via-slate-900 to-slate-950 border-2 border-indigo-500/60 shadow-xl shadow-indigo-950/40 text-xs space-y-3 animate-in fade-in duration-300">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                                <Key className="h-4 w-4" />
-                              </div>
-                              <div>
-                                <h4 className="font-bold text-indigo-200 text-xs flex items-center gap-1.5">
-                                  Settings Credentials Required
-                                </h4>
-                                <span className="text-[10px] text-indigo-400/80 font-mono">Protected &amp; Redacted in memory</span>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                              Secure Input
-                            </span>
-                          </div>
-
-                          <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
-                            {currentJob.settingsPrompt ||
-                              "The application settings requires API keys or credentials to test integrated features. Values entered here are never written to logs or screenshots."}
-                          </p>
-
-                          <div className="space-y-2">
-                            {(currentJob.requiredSettingsFields && currentJob.requiredSettingsFields.length > 0
-                              ? currentJob.requiredSettingsFields
-                              : [{ key: "apiKey", label: "API Key / Secret Token", isSecret: true, placeholder: "sk-..." }]
-                            ).map((field) => (
-                              <div key={field.key} className="space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <label className="text-[10px] font-semibold text-slate-300 flex items-center gap-1">
-                                    <span>{field.label}</span>
-                                    {field.isSecret && (
-                                      <span className="text-[9px] text-indigo-400 font-mono">(Secret)</span>
-                                    )}
-                                  </label>
-                                  {field.isSecret && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setShowSettingsSecrets((prev) => ({
-                                          ...prev,
-                                          [field.key]: !prev[field.key],
-                                        }))
-                                      }
-                                      className="text-[10px] text-slate-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
-                                    >
-                                      <Eye className="h-2.5 w-2.5" />
-                                      <span>{showSettingsSecrets[field.key] ? "Hide" : "Show"}</span>
-                                    </button>
-                                  )}
-                                </div>
-                                <input
-                                  type={field.isSecret && !showSettingsSecrets[field.key] ? "password" : "text"}
-                                  value={settingsFormValues[field.key] || ""}
-                                  onChange={(e) =>
-                                    setSettingsFormValues((prev) => ({
-                                      ...prev,
-                                      [field.key]: e.target.value,
-                                    }))
-                                  }
-                                  placeholder={field.placeholder || `Enter ${field.label}`}
-                                  className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                                />
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-1">
-                            <button
-                              type="button"
-                              disabled={isSubmittingSettings}
-                              onClick={handleSaveSettingsCredentials}
-                              className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
-                            >
-                              {isSubmittingSettings ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Check className="h-3.5 w-3.5" />
-                              )}
-                              <span>Save &amp; Resume Testing</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={isSubmittingSettings}
-                              onClick={handleSkipSettingsCredentials}
-                              className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
-                            >
-                              Skip
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Real-time Progress & Terminal Log */}
-                      {currentJob && (
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg space-y-0">
-                          {/* Step & Progress Header */}
-                          <div className="px-3.5 py-2 border-b border-slate-800 flex items-center justify-between text-xs bg-slate-950/60">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <Terminal className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-                              <span className="text-[11px] font-medium text-slate-300 truncate">
-                                {currentJob.currentStep}
-                              </span>
-                            </div>
-                            <span className="font-mono text-indigo-400 font-bold text-xs shrink-0 ml-2">
-                              {currentJob.progress}%
-                            </span>
-                          </div>
-
-                          {/* Progress bar line */}
-                          <div className="w-full bg-slate-800 h-1">
-                            <div
-                              className="bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-1 transition-all duration-300"
-                              style={{ width: `${currentJob.progress}%` }}
-                            />
-                          </div>
-
-                          {/* Terminal log stream */}
-                          <div
-                            ref={terminalRef}
-                            className="p-3 font-mono text-[11px] text-slate-300 max-h-36 overflow-y-auto space-y-1 custom-scrollbar bg-slate-950/90"
-                          >
-                            {currentJob.logs.map((log, i) => (
-                              <div key={i} className="flex items-start gap-1.5 leading-relaxed">
-                                <span className="text-slate-600 text-[9px] shrink-0">{log.timestamp.slice(11, 19)}</span>
-                                <span
-                                  className={`shrink-0 font-bold text-[9px] px-1 rounded ${
-                                    log.level === "success"
-                                      ? "text-emerald-400 bg-emerald-950/40"
-                                      : log.level === "warn"
-                                      ? "text-amber-400 bg-amber-950/40"
-                                      : log.level === "error"
-                                      ? "text-rose-400 bg-rose-950/40"
-                                      : "text-slate-400 bg-slate-800"
-                                  }`}
-                                >
-                                  {log.level.toUpperCase()}
-                                </span>
-                                <span
-                                  className={
-                                    log.level === "success"
-                                      ? "text-emerald-300"
-                                      : log.level === "error"
-                                      ? "text-rose-300 font-semibold"
-                                      : log.level === "warn"
-                                      ? "text-amber-300"
-                                      : "text-slate-300"
-                                  }
-                                >
-                                  {log.message}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Antigravity-Style Live Agent Trajectory Stream */}
-                      {currentJob && currentJob.actionHistory && currentJob.actionHistory.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-white flex items-center gap-1.5">
-                              <Activity className="h-3.5 w-3.5 text-indigo-400" />
-                              <span>Action Trajectory ({currentJob.actionHistory.length})</span>
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (activeActionIndex > 0) {
-                                    setSelectedActionId(chronologicalActions[activeActionIndex - 1].id)
-                                    setIsPlayingReplay(false)
-                                  }
-                                }}
-                                disabled={activeActionIndex <= 0}
-                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-                                title="Previous action"
-                              >
-                                Prev
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setIsPlayingReplay((prev) => !prev)}
-                                disabled={chronologicalActions.length <= 1}
-                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 transition cursor-pointer"
-                                title={isPlayingReplay ? "Pause replay" : "Replay actions in simulator frame"}
-                              >
-                                {isPlayingReplay ? <Pause className="h-2.5 w-2.5" /> : <Play className="h-2.5 w-2.5 fill-current" />}
-                                <span>{isPlayingReplay ? "Pause" : "Replay"}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (activeActionIndex < chronologicalActions.length - 1) {
-                                    setSelectedActionId(chronologicalActions[activeActionIndex + 1].id)
-                                    setIsPlayingReplay(false)
-                                  }
-                                }}
-                                disabled={activeActionIndex >= chronologicalActions.length - 1}
-                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
-                                title="Next action"
-                              >
-                                Next
-                              </button>
-                              {selectedActionId && currentJob.status === "running" && (
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedActionId(null)}
-                                  className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/50 transition cursor-pointer"
-                                  title="Return to real-time stream"
-                                >
-                                  Live
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
-                            {currentJob.actionHistory.slice(0, 15).map((act, i) => {
-                              const isSelected = selectedActionId === act.id
-                              return (
-                                <div
-                                  key={act.id || i}
-                                  onClick={() => {
-                                    setSelectedActionId(act.id)
-                                    setIsPlayingReplay(false)
-                                  }}
-                                  className={`p-2 rounded-lg border transition cursor-pointer text-xs space-y-1 ${
-                                    isSelected
-                                      ? "bg-indigo-950/60 border-indigo-500 ring-1 ring-indigo-500"
-                                      : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-1.5 min-w-0">
-                                      <span
-                                        className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase font-mono ${
-                                          act.type === "click"
-                                            ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
-                                            : act.type === "back"
-                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                            : act.type === "type"
-                                            ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                                            : act.type === "scroll"
-                                            ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
-                                            : act.type === "assert"
-                                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                            : "bg-slate-800 text-slate-300"
-                                        }`}
-                                      >
-                                        {act.type}
-                                      </span>
-                                      <span className="text-[11px] font-medium text-slate-200 truncate">
-                                        {act.description}
-                                      </span>
-                                    </div>
-                                    <span className="text-[9px] text-slate-500 font-mono shrink-0">
-                                      {act.timestamp.slice(11, 19)}
-                                    </span>
-                                  </div>
-
-                                  {act.thought && (
-                                    <p className="text-[10px] text-slate-400 italic line-clamp-1 pl-1 border-l border-indigo-500/40">
-                                      {act.thought}
-                                    </p>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                    </div>
-                  )}
-
-                  {/* TAB 3: AUDIT REPORT */}
-                  {activeDockTab === "report" && (
-                    <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar">
-                      {currentJob?.report ? (
-                        <div className="space-y-3">
-                          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-                            <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
-                              <span className="font-bold text-white flex items-center gap-1.5">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                                Audit Summary
-                              </span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={handleCopyReport}
-                                  className="p-1 rounded text-slate-400 hover:text-white"
-                                  title="Copy summary"
-                                >
-                                  {copiedReport ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleDownloadReport}
-                                  className="p-1 rounded text-slate-400 hover:text-white"
-                                  title="Download JSON Report"
-                                >
-                                  <Download className="h-3 w-3" />
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                                <span className="text-[10px] text-slate-400 block font-medium">Back Nav Score</span>
-                                <span className="text-xl font-bold text-emerald-400">
-                                  {currentJob.report.backNavigationScore}%
-                                </span>
-                              </div>
-                              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-                                <span className="text-[10px] text-slate-400 block font-medium">Responsive Score</span>
-                                <span className="text-xl font-bold text-indigo-400">
-                                  {currentJob.report.responsiveScore}%
-                                </span>
-                              </div>
-                            </div>
-
-                            <p className="text-[11px] text-slate-300 leading-relaxed">
-                              {currentJob.report.summary}
-                            </p>
-
-                            {currentJob.report.aiExecutiveSummary && (
-                              <div className="p-2.5 rounded-lg bg-purple-950/30 border border-purple-800/40 text-[11px] text-purple-200 space-y-1">
-                                <span className="font-bold text-purple-300 block flex items-center gap-1">
-                                  <Sparkles className="h-3 w-3 text-purple-400" />
-                                  <span>AI Executive Review:</span>
-                                </span>
-                                <p className="leading-relaxed">{currentJob.report.aiExecutiveSummary.executiveSummary}</p>
-                              </div>
-                            )}
-
-                            {/* Chained Journey Workflow Banner */}
-                            {currentJob.chainedWorkflowId && (
-                              <div className="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/40 flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider block">
-                                    🏁 Workflow Chain Created
-                                  </span>
-                                  <p className="text-xs font-semibold text-white truncate">
-                                    {currentJob.screens.map((s) => s.pageType ? s.pageType.toUpperCase() : s.title).join(" ➔ ")}
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (currentJob.chainedWorkflowId) {
-                                      setActiveWorkflowId(currentJob.chainedWorkflowId)
-                                    }
-                                  }}
-                                  className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold shrink-0 transition shadow-xs cursor-pointer"
-                                >
-                                  Inspect Chain ➔
-                                </button>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Session Recording */}
-                          {currentJob.recordingUrl && (
-                            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-                              <span className="font-bold text-white text-xs flex items-center gap-1.5">
-                                <Video className="h-3.5 w-3.5 text-indigo-400" />
-                                Session Recording
-                              </span>
-                              <video
-                                src={currentJob.recordingUrl}
-                                controls
-                                className="w-full rounded-lg border border-slate-800 bg-black"
-                              />
-                            </div>
-                          )}
-
-                          {/* Autonomous Test Cases */}
-                          {currentJob.testCases && currentJob.testCases.length > 0 && (
-                            <div className="space-y-2">
-                              <span className="font-bold text-white text-xs flex items-center gap-1.5 px-0.5">
-                                <ListChecks className="h-3.5 w-3.5 text-emerald-400" />
-                                Test Cases (
-                                {currentJob.testCases.filter((t) => t.status === "passed").length}/
-                                {currentJob.testCases.length} passed)
-                              </span>
-                              {currentJob.testCases.map((tc) => (
-                                <div
-                                  key={tc.scenarioId}
-                                  className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold text-white truncate">{tc.name}</span>
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
-                                        tc.status === "passed"
-                                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                          : tc.status === "blocked"
-                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                            : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
-                                      }`}
-                                    >
-                                      {tc.status}
-                                    </span>
-                                  </div>
-                                  {tc.error && <p className="text-[11px] text-rose-300/90">{tc.error}</p>}
-                                  {tc.steps.length > 0 && (
-                                    <ul className="text-[11px] text-slate-400 space-y-0.5 list-disc pl-4">
-                                      {tc.steps.slice(0, 5).map((st, i) => (
-                                        <li key={i} className="leading-snug">
-                                          {st}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                  {tc.screenshots.length > 0 && (
-                                    <div className="flex gap-1.5 overflow-x-auto custom-scrollbar">
-                                      {tc.screenshots.map((shot, i) => (
-                                        <a key={i} href={shot.url} target="_blank" rel="noreferrer" title={shot.label}>
-                                          <img
-                                            src={shot.url}
-                                            alt={shot.label}
-                                            className="h-16 w-28 object-cover rounded-md border border-slate-700 hover:border-indigo-500 transition"
-                                          />
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {tc.bugs.length > 0 && (
-                                    <div className="space-y-1">
-                                      {tc.bugs.map((b, i) => (
-                                        <div key={i} className="p-2 rounded-lg bg-rose-950/30 border border-rose-900/50">
-                                          <p className="text-[11px] text-rose-200 font-medium">
-                                            &#x1F41E; [{b.severity}] {b.description}
-                                          </p>
-                                          <p className="text-[10px] text-slate-400 mt-0.5">
-                                            Repro: {b.repro.join(" \u2192 ")}
-                                          </p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Test Flow Graph */}
-                          {currentJob.flowGraph && currentJob.flowGraph.nodes.length > 0 && (
-                            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-                              <span className="font-bold text-white text-xs flex items-center gap-1.5">
-                                <GitBranch className="h-3.5 w-3.5 text-indigo-400" />
-                                Test Flow ({currentJob.flowGraph.nodes.length} screens)
-                              </span>
-                              <TestFlowGraph graph={currentJob.flowGraph} />
-                            </div>
-                          )}
-
-                          {/* Issues Breakdown */}
-                          {currentJob.report.issues && currentJob.report.issues.length > 0 ? (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-white flex items-center gap-1.5">
-                                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                                  <span>Issues Detected ({currentJob.report.issues.length})</span>
-                                </span>
-                              </div>
-
-                              <div className="space-y-2">
-                                {currentJob.report.issues.map((issue) => (
-                                  <div
-                                    key={issue.id}
-                                    className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5 text-xs"
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span
-                                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                          issue.severity === "high" || issue.severity === "blocker"
-                                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
-                                            : issue.severity === "medium"
-                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                            : "bg-blue-500/20 text-blue-300 border border-blue-500/40"
-                                        }`}
-                                      >
-                                        {issue.severity}
-                                      </span>
-                                      <span className="text-[10px] text-slate-500 font-mono">
-                                        {issue.type} {issue.viewport ? `(${issue.viewport})` : ""}
-                                      </span>
-                                    </div>
-
-                                    <p className="text-[11px] text-slate-200 font-medium">{issue.description}</p>
-
-                                    {issue.expected && (
-                                      <p className="text-[10px] text-slate-400">
-                                        <span className="text-slate-500 font-semibold">Expected:</span> {issue.expected}
-                                      </p>
-                                    )}
-
-                                    {issue.actual && (
-                                      <p className="text-[10px] text-rose-400/90">
-                                        <span className="text-rose-500 font-semibold">Actual:</span> {issue.actual}
-                                      </p>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800 text-center space-y-1">
-                              <CheckCircle2 className="h-6 w-6 text-emerald-400 mx-auto" />
-                              <p className="text-xs font-semibold text-white">No Issues Detected</p>
-                              <p className="text-[11px] text-slate-400">All audited views passed navigation and layout checks.</p>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
-                          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                            <Activity className="h-6 w-6" />
-                          </div>
-                          <div className="space-y-1">
-                            <h4 className="text-xs font-bold text-white">No Audit Report Generated Yet</h4>
-                            <p className="text-[11px] text-slate-400 max-w-[240px] leading-relaxed">
-                              Run the autonomous crawler or send chat commands to test UI flows. The bot will automatically inspect responsive viewports, test back buttons, and compile an audit report here.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setActiveDockTab("crawl")}
-                            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition cursor-pointer"
-                          >
-                            Open Crawler
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                 </aside>
               </>
@@ -4865,6 +4041,143 @@ export default function AISimulatorPage() {
                 alt="Full resolution preview"
                 className="max-h-[80vh] w-auto object-contain rounded-lg border border-slate-800"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Data Explorer & Verification Modal */}
+      {isTestDataModalOpen && testDataStatus && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsTestDataModalOpen(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-3.5 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                  <FolderCheck className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-xs font-bold text-white">Target Project Test Data</h3>
+                    <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      Verified
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-mono truncate max-w-[340px] mt-0.5" title={testDataStatus.folderPath}>
+                    {testDataStatus.folderPath}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTestDataModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                title="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 space-y-3 flex-1 overflow-y-auto custom-scrollbar text-xs">
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-[11px] font-bold text-white block">
+                    {testDataStatus.filesCount} Test Assets Available
+                  </span>
+                  <p className="text-[10px] text-slate-400 leading-snug mt-0.5">
+                    Autonomous AI Bot and testing crawler use these mock files for file upload inputs, form submissions, and identity verification.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleGenerateTestData()}
+                  disabled={isGeneratingTestData}
+                  className="px-2.5 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[10px] font-bold flex items-center gap-1.5 transition cursor-pointer shrink-0 disabled:opacity-50"
+                  title="Generate or refresh universal test files (PDFs, CSVs, images, notes)"
+                >
+                  {isGeneratingTestData ? <Loader2 className="h-3 w-3 animate-spin text-indigo-400" /> : <Sparkles className="h-3 w-3 text-indigo-400" />}
+                  <span>{testDataStatus.filesCount === 0 ? "Generate Files" : "Refresh Files"}</span>
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                  Files in Folder:
+                </span>
+                {testDataStatus.files.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-1">
+                    <p className="text-[11px] text-slate-400">No test files detected in this folder yet.</p>
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateTestData()}
+                      disabled={isGeneratingTestData}
+                      className="px-3 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold"
+                    >
+                      Generate Universal Test Files Now
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
+                    {testDataStatus.files.map((file, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2 rounded-lg bg-slate-950 border border-slate-800/80 hover:border-slate-700 text-[11px] transition"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase shrink-0 ${
+                              file.category === "pdf"
+                                ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                : file.category === "csv"
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                : file.category === "image"
+                                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+                                : file.category === "notes"
+                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                : file.category === "json"
+                                ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                                : "bg-slate-800 text-slate-300"
+                            }`}
+                          >
+                            {file.category}
+                          </span>
+                          <span className="font-mono text-slate-200 truncate" title={file.name}>
+                            {file.name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0 pl-2">
+                          {file.size > 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${file.size} B`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => fetchTestDataStatus()}
+                disabled={isCheckingTestData}
+                className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                title="Rescan folder on disk"
+              >
+                <RotateCcw className={`h-3 w-3 ${isCheckingTestData ? "animate-spin" : ""}`} />
+                <span>Re-verify Folder</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsTestDataModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

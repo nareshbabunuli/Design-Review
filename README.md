@@ -271,6 +271,30 @@ Open [http://localhost:3000](http://localhost:3000) (Design Review) and [http://
 
 ---
 
+## 🧪 Preparing Target Apps for Automated Testing
+
+To test any external or local web application with the AI Simulator:
+
+1. **Generate Test Files in the Target Project**:  
+   The autonomous crawler tests file-upload inputs (drag & drop, file choosers) by looking for standard test directories (`test-files/`, `fixtures/`, or `scripts/fixtures/`).  
+   Run the universal one-line generator script in your target project directory:  
+   👉 See **[TESTING_SETUP_PROMPT.md](TESTING_SETUP_PROMPT.md)** for copy-paste generator scripts for Windows & Linux/macOS.
+
+2. **Start Target App on Port 3001**:  
+   Ensure your target application runs on a dedicated port (e.g. `http://localhost:3001`):
+   ```bash
+   # Run target app
+   PORT=3001 npm run dev
+   ```
+
+3. **Launch AI Simulator**:  
+   - Visit [http://localhost:3000/ai-simulator](http://localhost:3000/ai-simulator)
+   - Set **Target URL** to `http://localhost:3001`
+   - In the **AI Bot Dock**, select `test-files/` as your upload folder
+   - Click **▶ Launch Autonomous Test** to crawl, discover screens, and verify flows!
+
+---
+
 ## 📖 Usage Examples
 
 ### Running AI Tests
