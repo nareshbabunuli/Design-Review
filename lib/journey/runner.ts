@@ -1,7 +1,7 @@
 /**
  * Journey Runner - visits pages, screenshots each one, uses Laya for fast decisions.
- * Reuses the same Puppeteer + auth patterns as app/api/capture-screenshot.
  * Navigation prefers human mouse click-through; first load uses goto.
+ * Failed navigations are skipped; steps always store the actual browser URL.
  */
 
 import puppeteer, { type Browser, type Page } from "puppeteer"
@@ -235,10 +235,14 @@ export async function runJourney(opts: RunJourneyOptions): Promise<JourneyStep[]
       await applyAuth(page, config, hostname)
 
       console.log(`[journey] navigating ${steps.length + 1}/${maxSteps}:`, url)
-      // First screen: direct load. Later screens: human mouse click through the UI when possible.
       const nav = await humanNavigateTo(page, url, { forceGoto: isFirstStep })
       console.log(`[journey] nav method=${nav.method} ok=${nav.ok}`)
       isFirstStep = false
+
+      if (!nav.ok) {
+        console.warn(`[journey] navigation failed for ${url}, skipping step`)
+        continue
+      }
 
       await maybeAutoLogin(page, config, url)
       await waitForStable(page)
