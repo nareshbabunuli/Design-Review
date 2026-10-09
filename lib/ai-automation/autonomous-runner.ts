@@ -460,6 +460,13 @@ async function runScenarioWithStagehand(
         }
         out.actionsTaken = actionList.length
         if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
+        const recoveryScreenshotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-recovery`)
+        addEvidence(out, "OBSERVE", "Captured the browser state after the evidence-driven recovery action.", {
+          url: await stagePage.url().catch(() => job.targetUrl),
+          screenshotUrl: recoveryScreenshotUrl,
+          consoleErrors: pageErrors.slice(-5),
+          actions: actionList.length,
+        })
         appendLog(job, recovery?.success === false ? "warn" : "info",
           `[${scenario.name}] Recovery attempted ${recoveryActions.length} alternate action(s).`)
       } catch (recoveryError: any) {
