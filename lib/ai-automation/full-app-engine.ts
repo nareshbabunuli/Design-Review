@@ -45,10 +45,13 @@ import {
   buildFormPayloadFromPostman,
   confirmMappingOnWire,
 } from "./postman-importer"
-import type {
+import {
   PostmanCollectionSummary,
   PostmanEndpointMapping,
+  WorkflowRun,
 } from "./types"
+import { executeChainedWorkflows } from "./workflow-chainer"
+import { buildAutomationReport } from "./evidence-reporter"
 
 // Generate realistic dummy file buffers (PNG, PDF, CSV, TXT)
 export function createDummyFileBuffer(type: "image" | "pdf" | "document" | "csv" | "video" | "other"): {
@@ -947,6 +950,7 @@ export function generateStructuredTestPlan(
     screens,
     transitions,
     steps,
+    postmanSummary,
     requiredFileTypes,
     status: "planned",
     coverage: {
@@ -972,7 +976,12 @@ export async function executeStructuredTestPlan(
   testPlan: FullAppTestPlan,
   dummyFiles?: Record<string, { name: string; url: string; type: string }>,
   credentials?: { username?: string; password?: string },
-  options?: { allowActions?: string[]; noiseHosts?: string[] }
+  options?: {
+    allowActions?: string[]
+    noiseHosts?: string[]
+    postmanSummary?: PostmanCollectionSummary
+    skipWorkflows?: boolean
+  }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
   job.testingPhase = "executing"
@@ -1757,6 +1766,37 @@ export async function executeStructuredTestPlan(
     }
   }
 
+  // PHASE 4: Chained Multi-Step Workflows ("go next next" & state persistence)
+  if (!options?.skipWorkflows) {
+    appendLog(job, "info", `Starting Phase 4: Chained Workflow Execution & State Persistence...`)
+    try {
+      testPlan.workflows = await executeChainedWorkflows(
+        job,
+        page,
+        testPlan.screens,
+        testPlan.transitions,
+        testPlan.targetUrl,
+        {
+          postmanSummary: options?.postmanSummary || testPlan.postmanSummary,
+          allowActions: options?.allowActions,
+          noiseHosts: options?.noiseHosts,
+        }
+      )
+    } catch (wfErr: any) {
+      appendLog(job, "warn", `Workflow chaining encountered error: ${wfErr?.message}`)
+    }
+  }
+
+  // PHASE 5: Comprehensive Evidence Reporting & Markdown Artifact
+  appendLog(job, "info", `Generating Phase 5: Evidence-Based Failure Report & Markdown Artifact...`)
+  try {
+    buildAutomationReport(job, testPlan, testPlan.workflows || [], {
+      postmanSummary: options?.postmanSummary || testPlan.postmanSummary,
+    })
+  } catch (repErr: any) {
+    appendLog(job, "warn", `Evidence report generation encountered error: ${repErr?.message}`)
+  }
+
   testPlan.status = "completed"
   job.testingPhase = "reporting"
   job.status = "completed"
@@ -1893,10 +1933,11 @@ export async function executeFullAppTestingJob(
       `📋 Test Plan Generated: ${testPlan.steps.length} test steps across ${testPlan.screens.length} screens (${testPlan.requiredFileTypes.length} file upload types detected).`
     )
 
-    // PHASE 3: Systematic Execution of Test Plan
+    // PHASE 3: Systematic Execution of Test Plan & Workflows
     await executeStructuredTestPlan(job, page, testPlan, params.dummyTestFiles, sessionCreds, {
       allowActions: params.allowActions,
       noiseHosts: params.noiseHosts,
+      postmanSummary: testPlan.postmanSummary,
     })
 
     // PHASE 4: Final Reporting & Coverage

@@ -22,6 +22,8 @@ import {
   matchEndpointToForm,
   buildFormPayloadFromPostman,
 } from "../lib/ai-automation/postman-importer"
+import { executeChainedWorkflows } from "../lib/ai-automation/workflow-chainer"
+import { buildAutomationReport } from "../lib/ai-automation/evidence-reporter"
 
 async function main() {
   console.log("=== Testing Outcome-Verified UI Testing Engine (Phases 1, 2 & 6) ===")
@@ -240,7 +242,7 @@ async function main() {
     maxScreens: 5,
   }
 
-  await executeStructuredTestPlan(job, page, plan)
+  await executeStructuredTestPlan(job, page, plan, undefined, undefined, { skipWorkflows: true })
 
   console.assert(
     formSteps[0].status === "passed",
@@ -379,7 +381,7 @@ async function main() {
     maxScreens: 5,
   }
 
-  await executeStructuredTestPlan(postmanJob, page, postmanPlan)
+  await executeStructuredTestPlan(postmanJob, page, postmanPlan, undefined, undefined, { skipWorkflows: true })
 
   console.assert(postmanValidStep?.status === "passed", `Expected valid step to pass, got ${postmanValidStep?.status}`)
   console.assert(
@@ -387,6 +389,60 @@ async function main() {
     `Expected confirmedOnWire to be true for API-mapped form step`
   )
   console.log(`✔ On-wire confirmation PASSED: intercepted outgoing POST call matched Postman endpoint (${postmanValidStep?.actualResult})`)
+
+  // --- Test Suite 6: Multi-Step Workflow Chaining & Evidence Reporting (Phases 4 & 5) ---
+  console.log("\n--- Test Suite 6: Multi-Step Workflow Chaining & Evidence Reporting (Phases 4 & 5) ---")
+  postmanJob.status = "running"
+  const workflowRuns = await executeChainedWorkflows(
+    postmanJob,
+    page,
+    postmanPlan.screens,
+    postmanPlan.transitions,
+    fixtureUrl,
+    {
+      postmanSummary,
+    }
+  )
+
+  console.assert(workflowRuns.length > 0, "Expected at least 1 workflow run")
+  const wf = workflowRuns[0]
+  console.log(`✔ Chained workflow initialized: "${wf.name}" with tracking ID ${wf.entityTrackingId}`)
+
+  // Step 1 check (Form submit)
+  console.assert(wf.steps[0].verdict === "passed", `Expected Step 1 to pass, got ${wf.steps[0].verdict}`)
+  console.assert(Boolean(wf.steps[0].reproCurl), "Expected Step 1 to produce reproducible cURL")
+  console.log(`✔ Workflow Step 1 (Form Submit): PASSED with cURL command generated`)
+
+  // Persistence check
+  console.assert(wf.dataReflected === true, "Expected data persistence to be verified in DOM")
+  console.log(`✔ State persistence verified: tracking ID "${wf.entityTrackingId}" reflected in rendered DOM`)
+
+  // Step 2 check (Dummy control)
+  console.assert(wf.failedAtStep === 2, `Expected workflow to stall at step 2, got ${wf.failedAtStep}`)
+  console.assert(
+    wf.verdict === "suspected_non_functional",
+    `Expected workflow verdict suspected_non_functional, got ${wf.verdict}`
+  )
+  console.log(`✔ Workflow Step 2 correctly flagged dummy control as suspected_non_functional ("${wf.steps[1]?.targetName}")`)
+  console.log(`✔ Entire workflow timeline written out with failure point and root cause`)
+
+  // Evidence Report check
+  const report = buildAutomationReport(postmanJob, postmanPlan, workflowRuns, { postmanSummary })
+  console.assert(Boolean(report.markdownReport), "Expected markdownReport to be generated")
+  console.assert(report.markdownReport?.includes("## 📊 Executive Summary"), "Expected Executive Summary in markdown")
+  console.assert(
+    report.markdownReport?.includes("## 🛤️ Multi-Step Workflow Journeys & Failure Timeline"),
+    "Expected Workflow Journeys section in markdown"
+  )
+  console.assert(
+    report.markdownReport?.includes("curl -X POST"),
+    "Expected cURL command in markdown report"
+  )
+  console.assert(
+    postmanJob.issues.some((i) => i.type === "non_functional_control"),
+    "Expected non_functional_control issue in job.issues"
+  )
+  console.log("✔ Phase 5 Evidence-based Markdown report generated with full timeline, cURL & issue taxonomy")
 
   // Cleanup
   await browser.close()

@@ -250,11 +250,20 @@ export class NetworkRecorder {
       const method = req.method().toUpperCase()
       const isMutating = ["POST", "PUT", "PATCH", "DELETE"].includes(method)
 
+      let headers: Record<string, string> | undefined = undefined
+      let postData: string | undefined = undefined
+      try {
+        headers = req.headers()
+        postData = req.postData()
+      } catch {}
+
       this.calls.push({
         method,
         url: req.url(),
         status: res.status(),
         isMutating,
+        headers,
+        postData,
       })
     }
 

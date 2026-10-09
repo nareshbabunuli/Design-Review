@@ -172,11 +172,15 @@
           phone: regForm.elements['phone'] ? regForm.elements['phone'].value : ''
         })
       }).then(() => {
+        const submittedName = regForm.elements['name'] ? regForm.elements['name'].value : '';
+        regSuccess.textContent = 'Account registered successfully' + (submittedName ? ' for ' + submittedName : '') + '!';
         regSuccess.style.display = 'block';
       }).catch(() => {
+        const submittedName = regForm.elements['name'] ? regForm.elements['name'].value : '';
+        regSuccess.textContent = 'Account registered successfully' + (submittedName ? ' for ' + submittedName : '') + '!';
         regSuccess.style.display = 'block';
       });
     });
-  </script>
+    </script>
 </body>
 </html>

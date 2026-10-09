@@ -136,6 +136,12 @@ export type AutomationReport = {
   flowGraph?: FlowGraph
   /** Autonomous runs: session recording (webm) URL. */
   recordingUrl?: string
+  /** Structured multi-step workflows executed during full app testing */
+  workflows?: WorkflowRun[]
+  /** Evidence-based failure report in Markdown format */
+  markdownReport?: string
+  postmanSummary?: PostmanCollectionSummary
+  endpointMappings?: PostmanEndpointMapping[]
   aiExecutiveSummary?: {
     executiveSummary: string
     keyStrengths: string[]
@@ -290,6 +296,8 @@ export type NetworkCallEvidence = {
   status?: number
   durationMs?: number
   isMutating: boolean
+  headers?: Record<string, string>
+  postData?: string
 }
 
 export type StepEvidence = {
@@ -305,6 +313,40 @@ export type StepEvidence = {
   beforeScreenshotUrl?: string
   afterScreenshotUrl?: string
   coveredElementDetected?: boolean
+  reproCurl?: string
+}
+
+export type WorkflowStepEvidence = {
+  stepIndex: number
+  screenId: string
+  screenName: string
+  action: string
+  targetSelector?: string
+  targetName?: string
+  inputData?: Record<string, any>
+  expectedOutcome: string
+  observedOutcome?: string
+  verdict: AutomationVerdict
+  durationMs: number
+  evidence?: StepEvidence
+  reproCurl?: string
+  dataPersisted?: boolean
+  screenshotUrl?: string
+  error?: string
+}
+
+export type WorkflowRun = {
+  id: string
+  name: string
+  entryScreenId: string
+  entryUrl: string
+  steps: WorkflowStepEvidence[]
+  failedAtStep?: number
+  verdict: AutomationVerdict
+  entityTrackingId?: string
+  dataReflected?: boolean
+  summary: string
+  reproSteps?: string[]
 }
 
 export type TestPlanStep = {
@@ -349,6 +391,8 @@ export type FullAppTestPlan = {
   screens: AppScreenNode[]
   transitions: AppWorkflowTransition[]
   steps: TestPlanStep[]
+  workflows?: WorkflowRun[]
+  postmanSummary?: PostmanCollectionSummary
   requiredFileTypes: Array<{
     type: "image" | "pdf" | "document" | "video" | "csv" | "other"
     count: number
