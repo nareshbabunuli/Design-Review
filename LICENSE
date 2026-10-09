@@ -1,54 +1,13 @@
-MIT License with Commons Clause & Mandatory Attribution Condition
+MIT License
 
-Copyright (c) 2026 Naresh Babu Nuli (https://github.com/nareshbabunuli/Design-Review)
-
-Software: Open Design AI
-Licensor: Naresh Babu Nuli <nareshbabu.nuli@gmail.com>
-
-The Software is provided to you by the Licensor under the MIT License defined below,
-subject to the Commons Clause Condition and the Mandatory Attribution Condition.
-
-===============================================================================
-CONDITION 1: "COMMONS CLAUSE" LICENSE CONDITION v1.0
-===============================================================================
-
-Without limiting other conditions in the License, the grant of rights under the
-License will not include, and the License does not grant to you, the right to 
-Sell the Software.
-
-For purposes of the foregoing, "Sell" means practicing any or all of the rights
-granted to you under the License to provide to third parties, for a fee or other
-consideration (including without limitation fees for hosting, SaaS subscriptions,
-or consulting/support services whose primary value is the Software itself), a product
-or service whose value derives, entirely or substantially, from the functionality 
-of the Software.
-
-===============================================================================
-CONDITION 2: MANDATORY AUTHOR ATTRIBUTION CONDITION
-===============================================================================
-
-Any public deployment, fork, hosted instance, modified version, or derivative 
-work of this Software must include prominent, un-obscured, and clickable attribution 
-to the original author in the user interface (e.g., in the footer, navigation bar, 
-or about modal):
-
-  "Powered by Open Design AI by Naresh Babu Nuli"
-  Linking to: https://github.com/nareshbabunuli/Design-Review
-
-Removing, hiding, or altering this author attribution, copyright notice, or 
-associated links is strictly prohibited and immediately terminates all rights 
-granted under this License.
-
-===============================================================================
-MIT LICENSE
-===============================================================================
+Copyright (c) 2026 Naresh Babu Nuli
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, and sublicense copies of
-the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the conditions above and the following conditions:
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
@@ -58,25 +17,5 @@ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-===============================================================================
-SUMMARY FOR HUMANS
-===============================================================================
-
-✅ You CAN:
-  - Freely inspect, use, and run this software for your own projects and client work
-  - Self-host it for your personal use or internal team workflows
-  - Fork it and customize it for your own needs
-  - Submit pull requests and contribute back to the community
-
-⚠️ You MUST:
-  - Keep this license, copyright notice, and author credit intact
-  - Include visible, clickable attribution to Naresh Babu Nuli on any public instance or fork
-  - Retain the Commons Clause notice in any distributed copies
-
-❌ You CANNOT:
-  - Take this codebase and sell it as a commercial SaaS or paid product
-  - Package or resell it as a white-label service to third parties for a fee
-  - Strip or conceal the author's name, links, or copyright attribution
