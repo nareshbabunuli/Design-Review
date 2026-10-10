@@ -3020,7 +3020,7 @@ export default function AISimulatorPage() {
                           {/* Nebius Token Factory */}
                           <button
                             type="button"
-                            onClick={() => handleUpdateAiProvider("cloud")}
+                            onClick={() => handleUpdateAiProvider("nebius")}
                             className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
                               aiProvider === "nebius"
                                 ? "bg-purple-950/50 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/40"
