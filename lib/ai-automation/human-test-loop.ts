@@ -203,7 +203,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     try {
       if (back) await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 })
       else await page.goForward({ waitUntil: "domcontentloaded", timeout: 10000 })
-      await page.waitForTimeout(350)
+      await new Promise((resolve) => setTimeout(resolve, 350))
     } catch (error: any) {
       return { ok: false, observation: (back ? "Back" : "Forward") + " navigation failed: " + (error?.message || String(error)) }
     }
@@ -216,7 +216,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   if (candidate.pattern === "refresh") {
     try {
       await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 })
-      await page.waitForTimeout(300)
+      await new Promise((resolve) => setTimeout(resolve, 300))
       const title = await page.title()
       return title || page.url()
         ? { ok: true, observation: "Reloaded " + page.url() + '; document title: "' + title + '".' }
@@ -263,69 +263,99 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
 
   const selector = candidate.target?.selector
   if (!selector) return { ok: false, observation: "Candidate has no executable target; it cannot be marked passed." }
-  const locator = page.locator(selector)
-  if (!(await locator.count().catch(() => 0))) return { ok: false, observation: "Target is no longer present; state changed before execution." }
-  const target = locator.first()
-  if (!(await target.isEnabled().catch(() => false))) return { ok: false, observation: "Target is disabled or not actionable." }
+  const target = await page.$(selector).catch(() => null)
+  if (!target) return { ok: false, observation: "Target is no longer present; state changed before execution." }
+  const targetInfo = await target.evaluate((el) => {
+    const input = el as HTMLInputElement
+    return {
+      enabled: !input.disabled && el.getAttribute("aria-disabled") !== "true",
+      type: input.type || "",
+      value: "value" in input ? String(input.value || "") : "",
+      required: !!input.required || !!input.closest("form")?.querySelector("[required]"),
+      valid: typeof input.checkValidity === "function" ? input.checkValidity() : true,
+    }
+  }).catch(() => null)
+  if (!targetInfo?.enabled) {
+    await target.dispose().catch(() => {})
+    return { ok: false, observation: "Target is disabled or not actionable." }
+  }
+
+  const setInputValue = async (value: string) => target.evaluate((el, nextValue) => {
+    const input = el as HTMLInputElement
+    const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+      : input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+    if (setter) setter.call(input, nextValue)
+    else input.value = nextValue
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  }, value)
 
   if (candidate.pattern === "required_validation") {
-    const result = await target.evaluate((el) => {
+    const required = await target.evaluate((el) => {
       const input = el as HTMLInputElement
-      const required = input.required || !!input.closest("form")?.querySelector("[required]")
-      return { required, valuePresent: !!input.value.trim(), nativeInvalid: required && !input.checkValidity() }
-    }).catch(() => null)
-    if (!result) return { ok: false, observation: "Could not inspect required-field validity." }
-    return result.required
-      ? { ok: true, observation: "Inspected required-field validation without submitting the form; field " + (result.valuePresent ? "currently contains a value." : "is empty.") }
+      return input.required || !!input.closest("form")?.querySelector("[required]")
+    }).catch(() => false)
+    await target.dispose().catch(() => {})
+    return required
+      ? { ok: true, observation: "Confirmed required-field constraint from DOM without submitting the form." }
       : { ok: false, observation: "Target is not a required field." }
   }
 
   if (candidate.pattern === "invalid_input") {
-    const type = await target.getAttribute("type").catch(() => null)
-    if (type !== "email") return { ok: false, observation: 'Safe invalid-input check is not implemented for field type "' + (type || "unknown") + '".' }
-    const original = await target.inputValue().catch(() => "")
+    if (targetInfo.type !== "email") {
+      await target.dispose().catch(() => {})
+      return { ok: false, observation: 'Safe invalid-input check is not implemented for field type "' + (targetInfo.type || "unknown") + '".' }
+    }
+    const original = targetInfo.value
     try {
-      await target.fill("not-an-email")
+      await setInputValue("not-an-email")
       const invalid = await target.evaluate((el) => !(el as HTMLInputElement).checkValidity()).catch(() => false)
-      await target.fill(original).catch(() => {})
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
       return invalid
         ? { ok: true, observation: "Browser rejected malformed email via native validity; original value restored." }
         : { ok: false, observation: "Malformed email was not rejected by native validity; original value restored." }
     } catch (error: any) {
-      await target.fill(original).catch(() => {})
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
       return { ok: false, observation: "Invalid-input interaction failed: " + (error?.message || String(error)) }
     }
   }
 
   if (candidate.pattern === "search" || candidate.pattern === "valid_input") {
-    const type = await target.getAttribute("type").catch(() => null)
-    const original = await target.inputValue().catch(() => "")
-    const value = type === "email" ? "qa-test+" + Date.now() + "@example.com" : "QA test input"
+    const original = targetInfo.value
+    const value = targetInfo.type === "email" ? "qa-test+" + Date.now() + "@example.com" : "QA test input"
     try {
-      await target.fill(value)
-      await page.waitForTimeout(500)
-      const actual = await target.inputValue().catch(() => "")
+      await setInputValue(value)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const actual = await target.evaluate((el) => String((el as HTMLInputElement).value || "")).catch(() => "")
       const afterText = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1200)).catch(() => "")
-      await target.fill(original).catch(() => {})
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
       return actual === value
         ? { ok: true, observation: "Synthetic value accepted by " + candidate.title + "; field verified and original value restored. Visible text: " + afterText.slice(0, 180) }
         : { ok: false, observation: 'Input did not retain the synthetic value; observed "' + actual.slice(0, 60) + '".' }
     } catch (error: any) {
-      await target.fill(original).catch(() => {})
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
       return { ok: false, observation: "Input interaction failed: " + (error?.message || String(error)) }
     }
   }
 
-  if (candidate.target?.elementType?.toLowerCase() === "submit" || candidate.pattern === "form_submit") {
+  if (targetInfo.type === "submit" || candidate.target?.elementType?.toLowerCase() === "submit" || candidate.pattern === "form_submit") {
+    await target.dispose().catch(() => {})
     return { ok: false, blocked: true, observation: "Form submission blocked because no isolated test-data cleanup transaction is configured." }
   }
   try {
-    await target.scrollIntoViewIfNeeded()
-    await target.click({ timeout: 7000 })
+    await target.evaluate((el) => el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }))
+    await target.click()
   } catch (error: any) {
+    await target.dispose().catch(() => {})
     return { ok: false, observation: "Click failed: " + (error?.message || String(error)) }
   }
-  await page.waitForTimeout(500)
+  await target.dispose().catch(() => {})
+  await new Promise((resolve) => setTimeout(resolve, 500))
   const afterUrl = page.url()
   const after = await page.evaluate(() => ({
     title: document.title,
