@@ -1712,7 +1712,9 @@ export default function AISimulatorPage() {
     }
   }
 
-  const handleRecordingControl = async (action: "pause_recording" | "resume_recording") => {
+  const handleRecordingControl = async (
+    action: "pause_recording" | "resume_recording" | "stop_recording",
+  ) => {
     if (!currentJob?.id) return
     try {
       const res = await fetch("/api/ai-automation/status", {
@@ -2137,9 +2139,14 @@ export default function AISimulatorPage() {
                         <button type="button" onClick={() => handleRecordingControl("resume_recording")} className="px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium">
                           Resume Recording
                         </button>
-                      ) : (
+                      ) : currentJob.recordingControl !== "stopped" ? (
                         <button type="button" onClick={() => handleRecordingControl("pause_recording")} className="px-2 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-medium">
                           Pause Recording
+                        </button>
+                      ) : null}
+                      {currentJob.recordingControl !== "stopped" && (
+                        <button type="button" onClick={() => handleRecordingControl("stop_recording")} className="px-2 py-1 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 text-[10px] font-medium">
+                          Stop Recording
                         </button>
                       )}
                     </>
