@@ -71,6 +71,7 @@ import { SettingsModal } from "@/components/design-review/settings-modal"
 import TestFlowGraph from "@/components/design-review/test-flow-graph"
 import FullAppTestingView from "@/components/design-review/full-app-testing-view"
 import FeatureWorkflowView from "@/components/design-review/feature-workflow-view"
+import ActionLedger from "@/components/design-review/action-ledger"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import type {
   AutomationJob,
@@ -389,7 +390,11 @@ export default function AISimulatorPage() {
         const idx = currentJob.screens.findIndex((s) => {
           const sTitle = (s.title || "").toLowerCase()
           const nTitle = screenNode.name.toLowerCase()
-          return (
+          const actionLedgerLive = currentJob?.steps?.filter((s: any) => s.status === "running").map((s: any) => ({ id: s.id, title: s.title || s.name || "Running action", detail: s.description, status: "running" as const })) || []
+  const actionLedgerQueue = currentJob?.steps?.filter((s: any) => ["pending", "queued"].includes(s.status)).map((s: any) => ({ id: s.id, title: s.title || s.name || "Pending action", detail: s.description, status: "queued" as const })) || []
+  const actionLedgerHistory = currentJob?.steps?.filter((s: any) => ["passed", "failed", "skipped"].includes(s.status)).slice(-30).reverse().map((s: any) => ({ id: s.id, title: s.title || s.name || "Completed action", detail: s.description, status: s.status as "passed" | "failed" | "skipped" })) || []
+
+  return (
             sTitle.includes(nTitle) ||
             nTitle.includes(sTitle) ||
             (s.path && screenNode.path && s.path === screenNode.path) ||
@@ -407,7 +412,8 @@ export default function AISimulatorPage() {
   )
 
   // Local Project Route Scanner State
-  const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
+  const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>
+        <ActionLedger live={actionLedgerLive} queue={actionLedgerQueue} history={actionLedgerHistory} className="mb-4" />>([])
   const [isScanningRoutes, setIsScanningRoutes] = useState(false)
 
   const fetchLocalRoutes = useCallback(async (dirOverride?: string, urlOverride?: string) => {
@@ -4150,4 +4156,3 @@ export default function AISimulatorPage() {
     </div>
   )
 }
-
