@@ -952,7 +952,7 @@ export async function executeFeatureWorkflowJob(
       totalIssues: job.issues.length,
       backNavigationScore: 100,
       responsiveScore: 100,
-      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.`,
+      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.${job.recordingUrl ? " Session video attached." : ""}`,
       recommendations: [
         `Ensure all form validation error messages for "${spec.workflowName}" are accessible with aria-live attributes.`,
         `Maintain synthetic test data boundaries for workflow regressions.`,
@@ -960,7 +960,6 @@ export async function executeFeatureWorkflowJob(
       issues: job.issues,
       flowGraph: job.flowGraph,
       recordingUrl: job.recordingUrl,
-      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.${job.recordingUrl ? " Session video attached." : ""}`,
     }
 
     saveJob(job)
