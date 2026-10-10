@@ -355,6 +355,61 @@ export async function extractActionableInventory(page: Page): Promise<{
       })
     })
 
+    // 9. Custom clickable / accessibility controls
+    // Native buttons/links are already covered above. This catches common
+    // React/Vue/custom controls such as <div onClick>, role=button/link,
+    // keyboard-focusable elements, and aria-controls-driven triggers.
+    const customInteractiveSelector =
+      '[onclick], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="switch"], [aria-controls], [tabindex]:not([tabindex="-1"])'
+    document.querySelectorAll(customInteractiveSelector).forEach((el: any) => {
+      const tag = (el.tagName || '').toLowerCase()
+      if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
+
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
+      const rawText = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").trim()
+      if (!rawText && !el.getAttribute("aria-controls")) return
+      if (/(logout|sign out|log off|delete account)/i.test(rawText)) return
+
+      const name = rawText.replace(/\s+/g, " ").slice(0, 40) || el.getAttribute("aria-controls") || "Custom Action"
+      const role = el.getAttribute("role")
+      const type: ActionableElementType =
+        role === "tab" ? "tab" :
+        role === "switch" ? "toggle" :
+        role === "menuitem" ? "menu" :
+        role === "link" ? "link" : "clickable"
+      const hrefAttr = el.getAttribute("href") || undefined
+      let href: string | undefined
+      try {
+        href = hrefAttr ? new URL(hrefAttr, window.location.href).href : undefined
+      } catch {
+        href = hrefAttr
+      }
+
+      const selector = el.id
+        ? "#" + el.id
+        : el.getAttribute("data-testid")
+        ? "[data-testid=\"" + el.getAttribute("data-testid") + "\"]"
+        : undefined
+      const actionKey = [
+        type,
+        window.location.pathname,
+        name.toLowerCase(),
+        href || "",
+        el.getAttribute("aria-controls") || "",
+      ].join("|")
+
+      elements.push({
+        id: `elem-${elementCounter++}`,
+        name,
+        type,
+        selector,
+        href,
+        actionKey,
+        isInteractive: true,
+      })
+    })
     // 9. Links & Navigation
     document.querySelectorAll("a[href]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
