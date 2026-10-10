@@ -210,7 +210,7 @@ function readChoice(answer: any, candidates: CandidateTest[]): { index: number; 
 }
 
 function isDestructive(candidate: CandidateTest): boolean {
-  return candidate.risk === "destructive" || /delete|remove|destroy|purchase|pay|checkout|charge|send email|publish|deploy|logout|unsubscribe/i.test(candidate.title)
+  return candidate.risk === "destructive" || /delete|remove|destroy|purchase|pay|checkout|charge|send|publish|deploy|invite|refund|transfer|grant access|revoke access|change password|reset password|log\s*out|sign\s*out|unsubscribe/i.test(candidate.title)
 }
 
 async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{ ok: boolean; blocked?: boolean; observation: string }> {
@@ -219,7 +219,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     isDestructive(candidate) ||
     candidate.pattern === "external_link" ||
     ["form_submit", "multi_step_form", "save", "create", "update", "delete_data", "logout", "login"].includes(candidate.pattern) ||
-    /\b(submit|send|publish|deploy|purchase|pay|checkout|charge|subscribe|unsubscribe|delete|remove|destroy|logout|sign out)\b/i.test(unsafeText) ||
+    /\b(submit|send|publish|deploy|purchase|pay|checkout|charge|subscribe|unsubscribe|delete|remove|destroy|refund|transfer|invite|grant access|revoke access|change password|reset password|logout|log\s+out|sign\s+out)\b/i.test(unsafeText) ||
     candidate.target?.elementType?.toLowerCase() === "submit"
   ) {
     return { ok: false, blocked: true, observation: "Blocked by safe-testing policy: action could submit a form, mutate data, leave the target site, or cause an irreversible side effect." }
