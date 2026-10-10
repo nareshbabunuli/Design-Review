@@ -82,6 +82,7 @@ export function buildAutomationReport(
     (s) => s.verdict === "skipped_unsafe" || s.status === "skipped_unsafe"
   ).length
   const blockedSteps = steps.filter((s) => s.verdict === "blocked" || s.status === "blocked").length
+  const pendingSteps = steps.filter((s) => s.status === "pending" || !s.status && !s.verdict).length
 
   const totalIssues = job.issues.length
   const postmanCoverage = buildPostmanCoverageReport(testPlan, options?.postmanSummary || testPlan.postmanSummary)
@@ -122,14 +123,16 @@ export function buildAutomationReport(
       "Improve WCAG accessibility: ensure closing modal dialogs returns focus to the initiating trigger element."
     )
   }
-  if (recommendations.length === 0) {
+  if (blockedSteps > 0) recommendations.push(`${blockedSteps} action(s) were blocked and require review or an explicitly documented safety decision.`)
+  if (pendingSteps > 0) recommendations.push(`${pendingSteps} planned step(s) remain pending or have no recorded verdict; the run is incomplete.`)
+  if (recommendations.length === 0 && failedSteps === 0 && blockedSteps === 0 && pendingSteps === 0 && suspectedSteps === 0 && skippedUnsafe === 0) {
     recommendations.push("All tested screens and workflows demonstrated verified outcomes and expected functional behavior.")
   }
 
   const summary = `Outcome-Verified Full App Testing completed across ${totalScreens} screens. ` +
     `${passedSteps}/${steps.length} test steps passed. ` +
     `${suspectedSteps} suspected non-functional controls flagged. ` +
-    `${failedSteps} failed. ${skippedUnsafe} skipped by safety guard. ` +
+    `${failedSteps} failed, ${blockedSteps} blocked, ${pendingSteps} pending/unresolved, ${skippedUnsafe} skipped by safety guard. ` +
     `${workflows.length} multi-step workflow chains executed (${passedWorkflows} passed, ${failedWorkflows} failed/stalled).`
 
   // Build Markdown Document
@@ -142,6 +145,7 @@ export function buildAutomationReport(
     failedSteps,
     skippedUnsafe,
     blockedSteps,
+    pendingSteps,
     totalScreens,
     passedScreens,
     failedScreens,
@@ -186,6 +190,7 @@ function generateMarkdownReportText(params: {
   failedSteps: number
   skippedUnsafe: number
   blockedSteps: number
+  pendingSteps: number
   totalScreens: number
   passedScreens: number
   failedScreens: number
@@ -214,7 +219,7 @@ function generateMarkdownReportText(params: {
   } = params
 
   const dateStr = new Date().toLocaleString()
-  const overallVerdict = failedSteps > 0 || totalIssues > 0 ? "ISSUES DETECTED" : "PASSED"
+  const overallVerdict = failedSteps > 0 || totalIssues > 0 ? "ISSUES DETECTED" : (blockedSteps > 0 || pendingSteps > 0 || suspectedSteps > 0 || skippedUnsafe > 0) ? "INCOMPLETE — REVIEW REQUIRED" : "PASSED"
 
   const sections: string[] = []
 
@@ -234,6 +239,8 @@ function generateMarkdownReportText(params: {
   sections.push(`| **Passed Steps** | ${passedSteps} | ✅ Healthy |`)
   sections.push(`| **Suspected Non-Functional** | ${suspectedSteps} | ⚠️ Placeholder / Dead Controls |`)
   sections.push(`| **Failed Steps** | ${failedSteps} | ❌ Action Failed |`)
+  sections.push(`| **Blocked Steps** | ${blockedSteps} | ⛔ Blocked / Needs Review |`)
+  sections.push(`| **Pending / Unresolved Steps** | ${pendingSteps} | ⏳ Not Verified |`)
   sections.push(`| **Safety Skipped** | ${skippedUnsafe} | 🛡️ Protected by Safety Guard |`)
   sections.push(`| **Total Issues Flagged** | ${totalIssues} | Detailed Below |`)
   sections.push(`| **Workflow Chains Tested** | ${workflows.length} | Multi-step Journeys |\n`)
