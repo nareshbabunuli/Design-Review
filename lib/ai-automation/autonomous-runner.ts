@@ -33,6 +33,7 @@ import { discoverLocalProjectRoutes } from "./discover-routes"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 import { performVisibleLoginPlaywright } from "./human-actions"
+import { runHumanLikeDecisionLoop } from "./human-test-loop"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 
 export function isAutonomousCommand(cmd: string): boolean {
@@ -311,6 +312,40 @@ async function runScenarioWithStagehand(
 
     if (scenario.needsAuth) {
       await performAutoLogin(job, stagePage, params)
+    }
+
+    // Closed-loop human-like pass: deterministic pattern discovery -> Laya decision
+    // -> safe browser execution -> Action Ledger -> missed-coverage queue.
+    // Stagehand remains the broader exploration layer after this bounded pass.
+    try {
+      const humanLoop = await runHumanLikeDecisionLoop(job, stagePage, {
+        maxSteps: 24,
+        layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
+      })
+      out.actionsTaken += humanLoop.actions.length
+      out.issues.push(...humanLoop.issues)
+      for (const action of humanLoop.actions) {
+        out.steps.push(action.description)
+      }
+      addEvidence(
+        out,
+        "DECIDE",
+        `Human-like decision loop completed ${humanLoop.actions.length} action(s); ${humanLoop.missedCoverage.length} candidate(s) remain in missed coverage.`,
+        {
+          url: await stagePage.url().catch(() => job.targetUrl),
+          actions: humanLoop.actions.length,
+        },
+      )
+      appendLog(
+        job,
+        humanLoop.missedCoverage.length === 0 ? "success" : "info",
+        `[HumanLoop] ${humanLoop.actions.length} actions executed; ${humanLoop.missedCoverage.length} missed-coverage item(s) queued.`,
+      )
+    } catch (loopError: any) {
+      appendLog(job, "warn", `[HumanLoop] Loop unavailable; continuing with Stagehand: ${loopError?.message || String(loopError)}`)
+      addEvidence(out, "DECIDE", "Human-like decision loop could not complete; broader autonomous exploration continued.", {
+        url: await stagePage.url().catch(() => job.targetUrl),
+      })
     }
 
     // Track every URL the agent actually visits, with a masked screenshot each.
