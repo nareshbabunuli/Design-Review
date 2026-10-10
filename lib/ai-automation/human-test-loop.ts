@@ -270,7 +270,7 @@ function queueMissedCoverage(job: AutomationJob, candidates: CandidateTest[]) {
       ledger.untestedQueue.push(candidate.id)
     }
   }
-  ledger.untested = ledger.untestedQueue.length
+  ledger.untested = ledger.untestedQueue.length + ledger.entries.filter((e) => e.status === "untested").length
   ledger.total = Math.max(ledger.total, ledger.entries.length + ledger.untestedQueue.length)
   ledger.updatedAt = new Date().toISOString()
 }
