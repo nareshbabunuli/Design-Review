@@ -23,11 +23,18 @@ export type AutomationIssue = {
     | "http_error"
     | "request_failed"
     | "empty_data_surface"
+  | "correlated_ui_data_failure"
   severity: "low" | "medium" | "high" | "blocker"
   viewport?: string
   description: string
   expected?: string
   actual?: string
+  /** Related browser, network and visible-data evidence observed in the same step. */
+  correlatedEvidence?: {
+    consoleErrors?: string[]
+    networkFailures?: Array<{ url: string; status?: number; errorText?: string; resourceType?: string }>
+    emptyDataSurfaces?: string[]
+  }
   timestamp: string
 }
 
