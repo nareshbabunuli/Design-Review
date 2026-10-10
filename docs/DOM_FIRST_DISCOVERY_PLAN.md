@@ -35,12 +35,12 @@
 - [ ] Bound total routes/actions/time, but report remaining work as incomplete rather than silently dropping it.
 
 ### Phase 3 — Central runner integration
-- [ ] Make the discovery loop the primary MAP → PLAN → EXECUTE → VERIFY loop for full autonomous exploration.
+- [x] Run the DOM-first discovery loop once centrally before scenario verification in autonomous mode.
 - [x] Budget calculation excludes merely discovered/untested inventory rows; a truly shared run-wide cap still needs central-runner ownership.
 - [ ] Keep Laya as candidate selector; deterministic engine defines candidates; browser only executes approved actions.
 - [x] Discovery-loop exceptions are now surfaced as scenario errors instead of silently allowing a clean pass.
 - [ ] Retain scenario-based Stagehand testing as an explicitly separate optional verification layer, not as a silent replacement for failed discovery.
-- [ ] Connect route graph, destination screenshots, console/network evidence, Action Ledger and final report.
+- [x] Destination screenshots/DOM inventories and unresolved counts are recorded in the Action Ledger and final report; route graph/report enrichment remains.
 
 ### Phase 4 — Tests and release evidence
 - [ ] Add isolated DOM fixture tests for internal links, external/prefix-confusion links, SPA routes, popups, tabs, forms, target=_blank, navigation loops, and restoration failure.
