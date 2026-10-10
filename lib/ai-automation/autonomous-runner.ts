@@ -456,9 +456,9 @@ async function runScenarioWithStagehand(
       await tracker.catch(() => {})
     }
 
-    const actionList: any[] = Array.isArray(result?.actions) ? result.actions : []
-    out.agentSummary = result?.message || ""
-    out.agentSuccess = result?.success !== false && !out.error
+    const actionList: any[] = Array.isArray((result as any)?.actions) ? (result as any).actions : []
+    out.agentSummary = (result as any)?.message || ""
+    out.agentSuccess = (result as any)?.success !== false && !out.error
 
     // Closed-loop recovery: when the browser produced concrete error evidence,
     // ask the same agent for one bounded alternate action informed by that evidence.
@@ -489,14 +489,14 @@ async function runScenarioWithStagehand(
           highlightCursor: true,
           page: stagePage,
         } as any)
-        const recoveryActions: any[] = Array.isArray(recovery?.actions) ? recovery.actions : []
+        const recoveryActions: any[] = Array.isArray((recovery as any)?.actions) ? (recovery as any).actions : []
         for (const action of recoveryActions) {
           const description = String(action?.action || action?.type || "recovery action")
           actionList.push({ ...action, action: `RECOVERY: ${description}` })
           if (RISKY_ACTION.test(description)) out.riskyHit = description
         }
         out.actionsTaken += recoveryActions.length
-        if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
+        if ((recovery as any)?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
         const recoveryScreenshotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-recovery`)
         addEvidence(out, "OBSERVE", "Captured the browser state after the evidence-driven recovery action.", {
           url: await stagePage.url().catch(() => job.targetUrl),
@@ -902,7 +902,7 @@ export async function executeAutonomousJob(
           steps,
         )
         job.chainedWorkflowId = created.workflowId
-        job.report.chainedWorkflowId = created.workflowId
+        if (job.report) job.report.chainedWorkflowId = created.workflowId
       } catch (err: any) {
         appendLog(job, "warn", `Workflow record note: ${err?.message}`)
       }
@@ -912,7 +912,7 @@ export async function executeAutonomousJob(
     job.status = "completed"
     job.currentStep = "Autonomous run completed."
     job.finishedAt = new Date().toISOString()
-    appendLog(job, "success", `Autonomous run finished: ${job.report.summary}`)
+    appendLog(job, "success", `Autonomous run finished: ${job.report?.summary || "report generated"}`)
     say(
       `✅ Autonomous run complete: ${passed}/${testCases.length} scenarios passed, ${flowGraph.nodes.length} screens, ${job.issues.length} issues.${recordingUrl ? " Video attached in the Report tab." : ""}`,
       "completed",
