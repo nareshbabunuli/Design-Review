@@ -154,6 +154,13 @@ export async function promptPaymentCredentialsIfNeeded(
   }
 
   const supplied = job.pendingPaymentCredentials || DEFAULT_SANDBOX_CARD
+  secretRedactor.registerMultiple([
+    supplied.cardNumber,
+    supplied.cardHolder,
+    supplied.expiryDate,
+    supplied.cvv,
+    supplied.zipCode,
+  ])
   job.pendingPaymentCredentials = undefined
   job.paymentState = supplied.skip ? "skipped" : "provided"
   job.paymentPrompt = undefined
@@ -662,6 +669,7 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
       active = supplied
     }
 
+    secretRedactor.registerMultiple([active.username, active.password])
     appendLog(job, "info", `[AUTH] Typing credentials for "${active.username}" and submitting login form...`)
     job.authPrompt = undefined
     job.currentStep = "Logging in with provided credentials..."
@@ -1985,9 +1993,11 @@ export async function executeStructuredTestPlan(
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
           else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
         }
-        await showActionBanner(page, `Type "${inputVal}" -> ${step.targetName}`)
+        const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|cvv|security code/i.test(step.targetName)
+        const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
+        await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
         if (step.targetSelector) {
-          await highlightInputTyping(page, step.targetSelector, inputVal)
+          await highlightInputTyping(page, step.targetSelector, displayValue)
         }
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const before = await captureState(page)
@@ -2016,7 +2026,9 @@ export async function executeStructuredTestPlan(
 
         if (filled) {
           actionVerdict = "passed"
-          observation = `Typed synthetic value "${inputVal}" into field "${step.targetName}".`
+          observation = isSensitiveField
+            ? `Filled sensitive field "${step.targetName}" (value redacted from evidence).`
+            : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}".`
         } else {
           actionVerdict = "failed"
           observation = `Could not locate input field "${step.targetName}".`
@@ -2532,6 +2544,16 @@ export async function executeFullAppTestingJob(
   let videoRecorder: SessionVideoRecorder | null = null
 
   try {
+    secretRedactor.registerMultiple([
+      params.credentials?.username,
+      params.credentials?.password,
+      params.credentials?.token,
+      params.paymentCredentials?.cardNumber,
+      params.paymentCredentials?.cardHolder,
+      params.paymentCredentials?.expiryDate,
+      params.paymentCredentials?.cvv,
+      params.paymentCredentials?.zipCode,
+    ])
     job.status = "running"
     job.testingPhase = "discovery"
     job.progress = 5
