@@ -18,7 +18,7 @@ import {
   type CandidateTest,
   type PatternState,
 } from "./interaction-pattern-engine"
-import type { AutomationIssue, AutomationJob, AgentAction } from "./types"
+import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
 
 const MAX_LOOP_STEPS = 24
@@ -550,13 +550,25 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
     existing.evidence = { ...(existing.evidence || {}), observedOutcome: observation, beforeScreenshotUrl: screenshots?.before || existing.evidence?.beforeScreenshotUrl, afterScreenshotUrl: screenshots?.after || existing.evidence?.afterScreenshotUrl }
     existing.history = [...(existing.history || []), { status, timestamp: now, observedOutcome: observation, error: existing.error, beforeScreenshotUrl: screenshots?.before, afterScreenshotUrl: screenshots?.after }]
   } else {
+    const role = (candidate.target?.role || "").toLowerCase()
+    const elementType = (candidate.target?.elementType || "").toLowerCase()
+    const actionType: ActionableElementType =
+      role === "tab" ? "tab" :
+      role === "menuitem" ? "menu" :
+      role === "switch" ? "toggle" :
+      role === "checkbox" || elementType === "checkbox" ? "checkbox" :
+      role === "radio" || elementType === "radio" ? "radio" :
+      role === "button" || elementType === "button" ? "button" :
+      role === "link" || !!candidate.target?.href || elementType === "a" ? "link" :
+      elementType === "select" ? "select" :
+      ["input", "textarea"].includes(elementType) ? "input" : "other"
     ledger.entries.push({
       actionKey,
       screenId: candidate.stateKey,
       screenUrl,
       screenPath: (() => { try { return new URL(screenUrl).pathname } catch { return screenUrl } })(),
       name: candidate.title,
-      type: (() => { const role = (candidate.target?.role || "").toLowerCase(); const v = (candidate.target?.elementType || "").toLowerCase(); if (role === "tab") return "tab" as const; if (role === "menuitem") return "menu" as const; if (role === "switch") return "toggle" as const; if (role === "checkbox" || v === "checkbox") return "checkbox" as const; if (role === "radio" || v === "radio") return "radio" as const; if (role === "button" || v === "button") return "button" as const; if (role === "link" || candidate.target?.href || v === "a") return "link" as const; if (["input","select","textarea"].includes(v)) return v === "select" ? ("select" as const) : ("input" as const); return "other" as const })(),
+      type: actionType,
       selector: candidate.target?.selector,
       href: candidate.target?.href,
       interactionConfidence: candidate.priority / 100,
@@ -599,7 +611,7 @@ export async function runHumanLikeDecisionLoop(
   const issues: AutomationIssue[] = []
   const runtimeEvidence = { consoleErrors: [] as string[], pageErrors: [] as string[], failedRequests: [] as string[], badResponses: [] as string[] }
   const onConsole = (message: any) => { if (message.type?.() === "error") runtimeEvidence.consoleErrors.push(String(message.text?.() || "Console error").slice(0, 300)) }
-  const onPageError = (error: unknown) => { runtimeEvidence.pageErrors.push(String(error instanceof Error ? error.message : error).slice(0, 300)) }
+  const onPageError = (error: unknown): void => { runtimeEvidence.pageErrors.push(String(error instanceof Error ? error.message : error).slice(0, 300)); }
   const onRequestFailed = (request: any) => runtimeEvidence.failedRequests.push((String(request.resourceType?.() || "other") + " " + String(request.method?.() || "GET") + " " + String(request.url?.() || "") + ": " + String(request.failure?.()?.errorText || "request failed")).slice(0, 400))
   const onResponse = (response: any) => { if (response.status?.() >= 400) runtimeEvidence.badResponses.push((String(response.request?.()?.resourceType?.() || "other") + " " + String(response.status()) + " " + String(response.request?.()?.method?.() || "GET") + " " + String(response.url?.() || "")).slice(0, 400)) }
   page.on("console", onConsole)
