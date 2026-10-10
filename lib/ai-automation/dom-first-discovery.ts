@@ -11,6 +11,10 @@ export type DomNavigationEvent = {
 /** Install a lightweight, idempotent observer for SPA/history/hash URL changes. */
 export async function installDomNavigationObserver(page: Page): Promise<void> {
   await page.evaluate(() => {
+    // TypeScript test runners may inject an esbuild __name helper into the
+    // serialized callback. Define a harmless browser-local fallback first.
+    const browserWindow = window as Window & { __name?: (fn: unknown, name?: string) => unknown }
+    browserWindow.__name ??= (fn) => fn
     const target = window as Window & { __domDiscoveryObserverInstalled?: boolean; __domDiscoveryNavigationEvents?: DomNavigationEvent[] }
     if (target.__domDiscoveryObserverInstalled) return
     target.__domDiscoveryObserverInstalled = true
