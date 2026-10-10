@@ -194,5 +194,9 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 
 - [x] Fixed a classification mismatch where same-origin links opened in a new tab, malformed/stale links, external URLs, and consequential navigation paths were intentionally not clicked but could be recorded as failed instead of blocked. The DOM probe now returns an explicit policy-blocked signal, and the decision loop records that distinction.
 - [x] Final autonomous-run messaging now distinguishes scenario execution finishing from DOM discovery coverage being incomplete, and includes Action Ledger tested/blocked/untested counts when available.
-- [ ] TypeScript CI for these follow-up code commits is running; record the result once complete.
+- [x] TypeScript validation passed for the navigation-blocking commits #71 and #72 ([#71](https://github.com/nareshbabunuli/Design-Review/actions/runs/38081734186), [#72](https://github.com/nareshbabunuli/Design-Review/actions/runs/38081736028)).
+- [ ] TypeScript CI is still running/queued for completion-messaging and same-URL state-verification commits #73–#76; update after the runs finish.
+
+- [x] Fixed a false-positive pass for same-URL link interactions: discovery now compares pre/post DOM inventory signatures and only treats the interaction as verified when an observable inventory change occurs. A click with no URL or meaningful inventory change is recorded as failed/unverified, not passed.
+- [ ] This inventory-signature check is a bounded heuristic; application-specific semantic assertions and browser fixture evidence are still required.
 - [ ] Route graph edges, stronger same-URL/SPA state evidence, and automated browser fixtures remain the next code phases. No live-browser result is claimed.
