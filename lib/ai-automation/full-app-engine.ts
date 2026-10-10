@@ -784,6 +784,7 @@ function mergeScreenActionsIntoLedger(job: AutomationJob, screen: AppScreenNode)
       workflowId: previous?.workflowId,
       error: previous?.error,
       evidence: previous?.evidence,
+      history: previous?.history || [],
     })
   }
 
@@ -811,15 +812,36 @@ function updateActionLedgerForStep(
 
   if (!entry) return
 
+  const timestamp = new Date().toISOString()
   entry.status = status
-  if (status !== "running") entry.attempts += 1
-  entry.lastTestedAt = new Date().toISOString()
-  entry.error = error ? secretRedactor.redact(error) : undefined
+  entry.lastTestedAt = timestamp
+
+  // Starting a retry should not erase the previous resolved outcome.
+  if (status === "running") {
+    rebuildActionLedger(job, ledger.entries)
+    return
+  }
+
+  entry.attempts += 1
+  const safeError = error ? secretRedactor.redact(error) : undefined
+  const safeOutcome = observedOutcome ? secretRedactor.redact(observedOutcome) : undefined
+  entry.error = safeError
   entry.evidence = {
     beforeScreenshotUrl: evidence?.beforeScreenshotUrl,
     afterScreenshotUrl: evidence?.afterScreenshotUrl,
-    observedOutcome: observedOutcome ? secretRedactor.redact(observedOutcome) : undefined,
+    observedOutcome: safeOutcome,
   }
+  entry.history = [
+    ...(entry.history || []),
+    {
+      status,
+      timestamp,
+      observedOutcome: safeOutcome,
+      error: safeError,
+      beforeScreenshotUrl: evidence?.beforeScreenshotUrl,
+      afterScreenshotUrl: evidence?.afterScreenshotUrl,
+    },
+  ].slice(-20)
 
   rebuildActionLedger(job, ledger.entries)
 }
