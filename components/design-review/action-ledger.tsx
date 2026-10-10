@@ -7,7 +7,7 @@ export type ActionLedgerItem = {
   id: string
   title: string
   detail?: string
-  status: "running" | "queued" | "passed" | "failed" | "skipped"
+  status: "running" | "queued" | "passed" | "failed" | "blocked" | "skipped"
   category?: string
   timestamp?: string
 }
@@ -24,6 +24,7 @@ const statusStyles: Record<ActionLedgerItem["status"], string> = {
   queued: "bg-amber-500/10 text-amber-300 border-amber-500/20",
   passed: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
   failed: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+  blocked: "bg-orange-500/10 text-orange-300 border-orange-500/20",
   skipped: "bg-slate-500/10 text-slate-300 border-slate-500/20",
 }
 
@@ -41,6 +42,7 @@ function LedgerList({ items, emptyLabel }: { items: ActionLedgerItem[]; emptyLab
               {item.status === "running" ? <Play className="h-3.5 w-3.5 text-indigo-400" /> :
                item.status === "queued" ? <Clock3 className="h-3.5 w-3.5 text-amber-400" /> :
                item.status === "passed" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> :
+               item.status === "blocked" ? <ShieldAlert className="h-3.5 w-3.5 text-orange-400" /> :
                <ShieldAlert className="h-3.5 w-3.5 text-slate-400" />}
             </div>
             <div className="min-w-0 flex-1">
