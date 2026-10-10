@@ -304,19 +304,23 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
   }
 
   for (const form of state.forms) {
-    const targets = form.fields.map((f) => ({
+    const targetForField = (f: PatternFormField): PatternTarget => ({
       selector: f.selector,
       label: f.label || f.name || f.type,
       elementType: f.type,
-    }))
-    if (form.fields.some((f) => f.required)) {
-      add(out, "required_validation", targets, "Form contains required fields.", 0.99)
+    })
+    const targets = form.fields.map(targetForField)
+    const requiredTargets = form.fields.filter((f) => f.required).map(targetForField)
+    const invalidTargets = form.fields.filter((f) => f.invalid || f.type === "email").map(targetForField)
+    const confirmationTargets = form.fields.filter((f) => f.confirmationFor).map(targetForField)
+    if (requiredTargets.length) {
+      add(out, "required_validation", requiredTargets, "Form contains required fields.", 0.99)
     }
-    if (form.fields.some((f) => f.invalid)) {
-      add(out, "invalid_input", targets, "Form contains invalid-field state.", 0.98)
+    if (invalidTargets.length) {
+      add(out, "invalid_input", invalidTargets, "Form contains fields suitable for safe invalid-input validation.", 0.98)
     }
-    if (form.fields.some((f) => f.confirmationFor)) {
-      add(out, "password_confirmation", targets, "Form contains a confirmation field.", 0.98)
+    if (confirmationTargets.length) {
+      add(out, "password_confirmation", confirmationTargets, "Form contains a confirmation field.", 0.98)
     }
     if (form.submitTargets?.length) add(out, "form_submit", form.submitTargets, "Form has a submit action.", 0.95)
     if (form.cancelTargets?.length) add(out, "form_cancel", form.cancelTargets, "Form has a cancel action.", 0.97)
