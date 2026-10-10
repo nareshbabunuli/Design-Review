@@ -1,5 +1,53 @@
 import type { Page } from "puppeteer"
 
+
+export type DomNavigationEvent = {
+  kind: "pushState" | "replaceState" | "popstate" | "hashchange"
+  from: string
+  to: string
+  observedAt: string
+}
+
+/** Install a lightweight, idempotent observer for SPA/history/hash URL changes. */
+export async function installDomNavigationObserver(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const target = window as Window & { __domDiscoveryObserverInstalled?: boolean; __domDiscoveryNavigationEvents?: DomNavigationEvent[] }
+    if (target.__domDiscoveryObserverInstalled) return
+    target.__domDiscoveryObserverInstalled = true
+    target.__domDiscoveryNavigationEvents = []
+    const record = (kind: DomNavigationEvent["kind"], from: string) => {
+      target.__domDiscoveryNavigationEvents!.push({ kind, from, to: location.href, observedAt: new Date().toISOString() })
+      if (target.__domDiscoveryNavigationEvents!.length > 100) target.__domDiscoveryNavigationEvents!.splice(0, target.__domDiscoveryNavigationEvents!.length - 100)
+    }
+    const originalPushState = history.pushState.bind(history)
+    const originalReplaceState = history.replaceState.bind(history)
+    history.pushState = function (...args: Parameters<History["pushState"]>) {
+      const from = location.href
+      const result = originalPushState(...args)
+      if (location.href !== from) record("pushState", from)
+      return result
+    }
+    history.replaceState = function (...args: Parameters<History["replaceState"]>) {
+      const from = location.href
+      const result = originalReplaceState(...args)
+      if (location.href !== from) record("replaceState", from)
+      return result
+    }
+    addEventListener("popstate", () => record("popstate", location.href))
+    addEventListener("hashchange", (event) => record("hashchange", (event as HashChangeEvent).oldURL))
+  })
+}
+
+/** Drain observed client-side URL changes without retaining stale events across actions. */
+export async function drainDomNavigationEvents(page: Page): Promise<DomNavigationEvent[]> {
+  return page.evaluate(() => {
+    const target = window as Window & { __domDiscoveryNavigationEvents?: DomNavigationEvent[] }
+    const events = target.__domDiscoveryNavigationEvents || []
+    target.__domDiscoveryNavigationEvents = []
+    return events
+  }).catch(() => [])
+}
+
 export type DomDiscoveryElement = {
   selector: string
   tag: string
