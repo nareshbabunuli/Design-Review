@@ -817,7 +817,7 @@ function updateActionLedgerForStep(
   entry.lastTestedAt = timestamp
 
   // Starting a retry should not erase the previous resolved outcome.
-  if (status === "running") {
+  if (status === "running" || status === "untested") {
     rebuildActionLedger(job, ledger.entries)
     return
   }
