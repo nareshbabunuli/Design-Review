@@ -314,49 +314,9 @@ async function runScenarioWithStagehand(
       await performAutoLogin(job, stagePage, params)
     }
 
-    // Closed-loop human-like pass: deterministic pattern discovery -> Laya decision
-    // -> safe browser execution -> Action Ledger -> missed-coverage queue.
-    // The ledger is the run-wide de-duplication source, so later scenarios continue
-    // into newly discovered UI states instead of repeating already-tested actions.
-    const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
-    try {
-      const completedLedgerActions = (job.actionLedger?.entries || []).filter((entry) => entry.status !== "untested" && entry.status !== "running").length
-      const remainingLedgerBudget = Math.max(0, 24 - completedLedgerActions)
-      const humanLoop = await runHumanLikeDecisionLoop(job, stagePage, {
-        maxSteps: remainingLedgerBudget,
-        layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
-        captureScreenshot: takeShot,
-      })
-      out.actionsTaken += humanLoop.actions.length
-      out.issues.push(...humanLoop.issues)
-      for (const action of humanLoop.actions) {
-        out.steps.push(action.description)
-      }
-      addEvidence(
-        out,
-        "DECIDE",
-        `Human-like decision loop completed ${humanLoop.actions.length} action(s); ${humanLoop.missedCoverage.length} candidate(s) remain in missed coverage.`,
-        {
-          url: await stagePage.url().catch(() => job.targetUrl),
-          actions: humanLoop.actions.length,
-        },
-      )
-      appendLog(
-        job,
-        humanLoop.missedCoverage.length === 0 ? "success" : "info",
-        `[HumanLoop] ${humanLoop.actions.length} actions executed; ${humanLoop.missedCoverage.length} missed-coverage item(s) queued.`,
-      )
-    } catch (loopError: any) {
-      const message = `[HumanLoop] Discovery/decision loop failed; this scenario cannot be considered fully verified: ${loopError?.message || String(loopError)}`
-      out.error = message
-      out.agentSuccess = false
-      appendLog(job, "error", message)
-      addEvidence(out, "DECIDE", "Human-like discovery loop failed. Stagehand observations may continue, but the overall scenario remains incomplete and cannot receive a clean pass.", {
-        url: await stagePage.url().catch(() => job.targetUrl),
-      })
-    }
+    // DOM-first discovery is run once centrally before scenario verification.
 
-    // Track every URL the agent actually visits, with a masked screenshot each.
+        // Track every URL the agent actually visits, with a masked screenshot each.
     // Screenshots come from the Stagehand page itself — the agent's real view.
     const seen = new Map<string, string>()
     let prevUrl = ""
@@ -461,6 +421,7 @@ async function runScenarioWithStagehand(
     }
 
     const actionList: any[] = Array.isArray((result as any)?.actions) ? (result as any).actions : []
+    out.actionsTaken += actionList.length
     out.agentSummary = (result as any)?.message || ""
     out.agentSuccess = (result as any)?.success !== false && !out.error
 
@@ -681,6 +642,28 @@ export async function executeAutonomousJob(
     } catch (err: any) {
       appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
       recorder = null
+    }
+
+    // ---- Central DOM-first discovery pass ----
+    // One run-level exploration pass inventories the page, explores safe local states,
+    // then visits queued same-origin routes and returns to each parent route.
+    try {
+      job.currentStep = "DOM-first discovery: inventorying page and exploring safe interactions"
+      saveJob(job)
+      const discovery = await runHumanLikeDecisionLoop(job, page, {
+        maxSteps: 24,
+        layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
+        captureScreenshot: (suffix) => captureMasked(page, job.projectId, "dom-" + suffix),
+      })
+      job.issues.push(...discovery.issues)
+      appendLog(job, discovery.missedCoverage.length === 0 ? "success" : "info", `[DOMDiscovery] Central pass finished: ${discovery.actions.length} action(s), ${discovery.missedCoverage.length} unresolved candidate(s); ledger has ${job.actionLedger?.entries.length || 0} inventory/action record(s).`)
+      if (!discovery.completed) appendLog(job, "warn", "[DOMDiscovery] Coverage is not complete; unresolved candidates remain visible in the Action Ledger.")
+      saveJob(job)
+    } catch (discoveryError: any) {
+      const message = `[DOMDiscovery] Central discovery pass failed; autonomous coverage is incomplete: ${discoveryError?.message || String(discoveryError)}`
+      job.error = message
+      appendLog(job, "error", message)
+      saveJob(job)
     }
 
     // ---- Plan scenarios ----
