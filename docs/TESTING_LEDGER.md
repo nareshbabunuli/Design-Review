@@ -1,10 +1,17 @@
 # Open Design AI — Testing Ledger
 
 **Branch:** `action-ledger-development`  
-**Last updated:** 2026-10-10  
+**Last updated:** 2026-10-10 (architecture closeout pass)  
 **Purpose:** Single source of truth for testing work, code changes, CI, evidence, defects, and remaining coverage. Update this file as work progresses; do not mark a test passed without evidence.
 
 ## Current status
+
+- [x] Architecture audit and release gate documented in `docs/ARCHITECTURE_AUDIT_AND_RELEASE_READINESS.md`.
+- [x] Regression coverage for safety boundaries and same-document hash-link outcome expectations added to CI.
+- [x] Outcome verifier now distinguishes absolute same-document hash links from cross-route navigation when current URL is available.
+- [x] Report summary now counts blocked and pending/unresolved steps and marks runs incomplete when review is required.
+- [ ] Confirm CI for the latest report change: [run #115](https://github.com/nareshbabunuli/Design-Review/actions/runs/38089178309).
+- [ ] Run the seven fixture/release sessions from the architecture audit and record evidence; do not call E2E/release ready before this is done.
 
 - [x] Input classification fix committed.
 - [x] Type-appropriate synthetic values for text, email, URL, telephone, password, and search fields committed.
@@ -209,3 +216,16 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [x] Record observed navigation and inventory-changing same-URL transitions with source/destination state IDs, action label, selector, status, and evidence summary.
 - [x] Graph limits are 200 nodes and 400 edges; overflow is explicitly flagged as truncated.
 - [ ] TypeScript CI for the graph changes is pending; browser fixtures, SPA/hash behavior, and real-browser route restoration remain unverified.
+
+## Architecture closeout — 2026-10-10
+
+| Commit | Change | Verification |
+|---|---|---|
+| `45e59f88fe4f6867f7b9c9d7ad5397c81bb72e4a` | Add safety and interaction-pattern boundary tests | CI #110 passed |
+| `09509001b793dce5a9a2bd2075309c54fb159170` | Wire safety fixtures into CI | CI #111 passed |
+| `92d87b0aa1d1cc47a5553ca5bd363cf5d4d65214` | Architecture audit and release plan | CI #112 passed |
+| `a0c7dbac35b8bd11fd570fa696077e0ce328e86d` | Correct same-document hash link outcome expectations | CI #113 passed |
+| `c9272a68111724b349b62fa43be6466844152018` | Add hash-link regression tests | CI #114 passed |
+| `edb02367426a70a8518730fe1991ce4589496db0` | Report blocked and unresolved actions; avoid false PASSED status | CI #115 pending at time of update |
+
+**Release position:** implementation is not declared complete yet. Fixture-app E2E, production build/deployment, report/evidence inspection, and unresolved-coverage scenarios remain release gates.
