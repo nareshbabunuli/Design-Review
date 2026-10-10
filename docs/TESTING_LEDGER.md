@@ -229,3 +229,11 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 | `edb02367426a70a8518730fe1991ce4589496db0` | Report blocked and unresolved actions; avoid false PASSED status | CI #115 pending at time of update |
 
 **Release position:** implementation is not declared complete yet. Fixture-app E2E, production build/deployment, report/evidence inspection, and unresolved-coverage scenarios remain release gates.
+
+
+## 2026-10-10 — Multiple role-based workflow prototype
+
+- Added a role/name selector to Feature / Workflow Testing (Admin, Customer, Student, Teacher, Custom role).
+- Added session-local saved-flow cards so a project can draft distinct named flows, reload their prompts, and start each flow separately. Each run prompt is tagged with the selected role and workflow name for the planner/report trace.
+- Prototype limitation: saved flows currently live in component state only (not persisted to the database/project after refresh); role-tagging is prompt context, not an authorization boundary. Use dedicated test accounts and verify credentials handling in the runner before relying on role-specific access assertions.
+- CI must pass before treating the prototype as ready to demo. Persistent project-level workflow storage and role-specific credential profiles remain follow-up work.
