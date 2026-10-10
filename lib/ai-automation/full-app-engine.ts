@@ -994,6 +994,36 @@ function queueUnplannedLedgerActions(
   return added
 }
 
+/**
+ * Keep pending work for the current screen together in the queue. This avoids
+ * repeatedly leaving and re-entering tabs while their controls are still pending.
+ * Dismiss/close controls are moved to the end so they do not hide untested siblings.
+ */
+function prioritizePendingStepsForScreen(
+  testPlan: FullAppTestPlan,
+  screenId: string,
+  afterIndex: number
+): number {
+  const start = afterIndex + 1
+  if (start >= testPlan.steps.length) return 0
+
+  const remaining = testPlan.steps.slice(start)
+  const sameScreen = remaining.filter((step) => step.screenId === screenId && step.status === "pending")
+  if (sameScreen.length === 0) return 0
+
+  const sameScreenIds = new Set(sameScreen.map((step) => step.id))
+  const otherSteps = remaining.filter((step) => !sameScreenIds.has(step.id))
+  sameScreen.sort((a, b) => {
+    const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(a.targetName.trim())
+    const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(b.targetName.trim())
+    return Number(aDismiss) - Number(bDismiss)
+  })
+
+  testPlan.steps.splice(start, remaining.length, ...sameScreen, ...otherSteps)
+  testPlan.steps.forEach((step, index) => { step.stepIndex = index + 1 })
+  return sameScreen.length
+}
+
 export async function discoverAndMapApp(
   job: AutomationJob,
   page: Page,
@@ -2524,8 +2554,13 @@ export async function executeStructuredTestPlan(
       mergeScreenActionsIntoLedger(job, resolvedScreen)
       linkTestPlanStepsToLedger(job, testPlan)
       const queuedNow = queueUnplannedLedgerActions(job, testPlan, resolvedScreen.id, i)
-      if (queuedNow > 0) {
-        appendLog(job, "info", `[COVERAGE] "${resolvedScreen.name}" now has ${resolvedScreen.actionableElements.length} known controls; ${queuedNow} new/unplanned action(s) queued for execution.`)
+      const prioritizedNow = prioritizePendingStepsForScreen(testPlan, resolvedScreen.id, i)
+      if (queuedNow > 0 || prioritizedNow > 0) {
+        appendLog(
+          job,
+          "info",
+          `[COVERAGE] "${resolvedScreen.name}" has ${resolvedScreen.actionableElements.length} known controls; ${queuedNow} new action(s) queued and ${prioritizedNow} pending step(s) prioritized for this screen.`
+        )
       }
       saveJob(job)
 
