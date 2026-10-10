@@ -853,7 +853,8 @@ function linkTestPlanStepsToLedger(job: AutomationJob, testPlan: FullAppTestPlan
 function queueUnplannedLedgerActions(
   job: AutomationJob,
   testPlan: FullAppTestPlan,
-  onlyScreenId?: string
+  onlyScreenId?: string,
+  insertAfterIndex?: number
 ): number {
   const ledger = job.actionLedger
   if (!ledger) return 0
@@ -863,9 +864,19 @@ function queueUnplannedLedgerActions(
     testPlan.steps.map((step) => step.actionKey).filter((key): key is string => Boolean(key))
   )
   let added = 0
+  let insertAt = insertAfterIndex === undefined ? -1 : insertAfterIndex + 1
 
-  for (const entry of ledger.entries) {
-    if (entry.status !== "untested" || (onlyScreenId && entry.screenId !== onlyScreenId)) continue
+  // Keep dismiss/close controls last when a modal is discovered, so the queue
+  // gets a chance to exercise the other controls before the view disappears.
+  const candidates = ledger.entries
+    .filter((entry) => entry.status === "untested" && (!onlyScreenId || entry.screenId === onlyScreenId))
+    .sort((a, b) => {
+      const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(a.name.trim())
+      const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(b.name.trim())
+      return Number(aDismiss) - Number(bDismiss)
+    })
+
+  for (const entry of candidates) {
     if (represented.has(entry.actionKey)) continue
 
     const screen = testPlan.screens.find((candidate) => candidate.id === entry.screenId)
@@ -903,11 +914,11 @@ function queueUnplannedLedgerActions(
         /doc/i.test(accept + name) ? "document" : "image"
     }
 
-    testPlan.steps.push({
-      id: `step-${testPlan.steps.length + 1}`,
+    const queuedStep: TestPlanStep = {
+      id: `step-${Date.now()}-${testPlan.steps.length + added + 1}`,
       screenId: entry.screenId,
       screenName: screen?.name || entry.screenPath,
-      stepIndex: testPlan.steps.length + 1,
+      stepIndex: insertAt < 0 ? testPlan.steps.length + 1 : insertAt + 1,
       actionType,
       targetName: name,
       targetSelector: entry.selector,
@@ -924,12 +935,19 @@ function queueUnplannedLedgerActions(
               ? `Upload control "${name}" accepts a compatible test file.`
               : `Control "${name}" responds to interaction and its outcome is recorded.`,
       status: "pending",
-    })
+    }
+    if (insertAt < 0) {
+      testPlan.steps.push(queuedStep)
+    } else {
+      testPlan.steps.splice(insertAt, 0, queuedStep)
+      insertAt++
+    }
     represented.add(entry.actionKey)
     added++
   }
 
   if (added > 0) {
+    testPlan.steps.forEach((step, index) => { step.stepIndex = index + 1 })
     appendLog(job, "info", `[QUEUE] Added ${added} previously unplanned action(s) to the execution queue.`)
   }
   return added
@@ -2395,7 +2413,7 @@ export async function executeStructuredTestPlan(
       if (step.screenshotUrl) currentScreen.screenshotUrl = step.screenshotUrl
       mergeScreenActionsIntoLedger(job, currentScreen)
       linkTestPlanStepsToLedger(job, testPlan)
-      const queuedNow = queueUnplannedLedgerActions(job, testPlan, currentScreen.id)
+      const queuedNow = queueUnplannedLedgerActions(job, testPlan, currentScreen.id, i)
       if (queuedNow > 0) {
         appendLog(job, "info", `[COVERAGE] "${currentScreen.name}" now has ${currentScreen.actionableElements.length} known controls; ${queuedNow} new/unplanned action(s) queued for execution.`)
       }
