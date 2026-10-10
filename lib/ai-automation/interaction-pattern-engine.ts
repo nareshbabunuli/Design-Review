@@ -305,7 +305,7 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
         add(out, "valid_input", [t], "Text-entry field can be tested with a type-appropriate synthetic value.", 0.9)
       }
       if (el.required) add(out, "required_validation", [t], "Required text-entry field can be tested empty without submitting.", 0.98)
-      if (type === "email" || type === "url" || type === "tel") {
+      if (type === "email" || type === "url") {
         add(out, "invalid_input", [t], "Typed field supports malformed-input validation.", 0.96)
       }
     }
