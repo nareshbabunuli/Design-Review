@@ -275,8 +275,13 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     }
 
     if (tag === "button" || role === "button" || role === "tab" || role === "menuitem" || role === "option" || role === "link" || type === "button" || type === "submit") {
-      if (containsAny(text, ["delete", "remove", "destroy", "unsubscribe", "cancel subscription"])) {
-        add(out, "delete", [t], "Destructive action detected; execution is disabled by default.", 0.99)
+      if (containsAny(text, [
+        "delete", "remove", "destroy", "unsubscribe", "cancel subscription",
+        "purchase", "buy now", "pay now", "checkout", "charge", "refund",
+        "transfer", "send email", "send message", "publish", "deploy",
+        "invite user", "grant access", "revoke access", "change password",
+      ])) {
+        add(out, "delete", [t], "Potentially destructive or externally consequential action detected; execution is disabled by default.", 0.99)
       } else if (containsAny(text, ["save", "update"])) {
         add(out, "save", [t], "Save/update action detected.", 0.96)
       } else if (containsAny(text, ["cancel", "close"])) {
