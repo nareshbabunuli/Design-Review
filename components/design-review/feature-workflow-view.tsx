@@ -106,6 +106,9 @@ export default function FeatureWorkflowView({
   fullPageView = true,
 }: FeatureWorkflowViewProps) {
   const [workflowInput, setWorkflowInput] = useState("")
+  const [selectedRole, setSelectedRole] = useState("Customer")
+  const [savedFlows, setSavedFlows] = useState<Array<{ id: string; role: string; name: string; prompt: string }>>([])
+  const [flowName, setFlowName] = useState("Customer journey")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analyzedSpec, setAnalyzedSpec] = useState<FeatureWorkflowSpec | null>(null)
   const [previewPlan, setPreviewPlan] = useState<FullAppTestPlan | null>(null)
@@ -328,6 +331,23 @@ export default function FeatureWorkflowView({
                 <span>Test Another Feature</span>
               </button>
             )}
+          </div>
+
+          {/* Project-scoped workflow prototype: each role/flow is independently selectable. */}
+          <div className="mb-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex-1 min-w-[150px] text-[11px] text-slate-400">User role
+                <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white">
+                  <option>Admin</option><option>Customer</option><option>Student</option><option>Teacher</option><option>Custom role</option>
+                </select>
+              </label>
+              <label className="flex-[2] min-w-[180px] text-[11px] text-slate-400">Workflow name
+                <input value={flowName} onChange={(e) => setFlowName(e.target.value)} placeholder="e.g. Customer checkout" className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white placeholder:text-slate-500" />
+              </label>
+              <button type="button" disabled={!workflowInput.trim() || !flowName.trim()} onClick={() => { const prompt = workflowInput.trim(); const name = flowName.trim(); setSavedFlows((flows) => [...flows.filter((f) => f.name !== name || f.role !== selectedRole), { id: crypto.randomUUID(), role: selectedRole, name, prompt }]); }} className="rounded-lg border border-indigo-500/50 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-950 disabled:opacity-40">Save flow</button>
+            </div>
+            <p className="text-[10px] text-slate-500">A project can contain multiple separate role-based flows. Each run gets its own role/name in the test instruction; use test credentials for that role when starting the run.</p>
+            {savedFlows.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2">{savedFlows.map((flow) => <div key={flow.id} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-white">{flow.name}</div><div className="text-[10px] text-slate-400">{flow.role} · saved in this browser session</div><div className="truncate text-[10px] text-slate-500">{flow.prompt}</div></div><button type="button" disabled={isRunning} onClick={() => { setSelectedRole(flow.role); setFlowName(flow.name); setWorkflowInput(flow.prompt); setAnalyzedSpec(null); setPreviewPlan(null); }} className="rounded-md bg-slate-800 px-2 py-1 text-[10px] text-slate-200 disabled:opacity-40">Load</button><button type="button" onClick={() => setSavedFlows((flows) => flows.filter((f) => f.id !== flow.id))} aria-label={`Remove ${flow.name}`} className="px-1 text-slate-500 hover:text-rose-300">×</button></div>)}</div>}
           </div>
 
           {/* Workflow Input Form */}
