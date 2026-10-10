@@ -321,7 +321,9 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
       elementType: f.type,
     })
     const targets = form.fields.map(targetForField)
-    const requiredTargets = form.fields.filter((f) => f.required).map(targetForField)
+    const requiredTargets = form.fields
+      .filter((f) => f.required && (f.type === "textarea" || ["text", "email", "search", "tel", "url", "password"].includes(norm(f.type))))
+      .map(targetForField)
     const invalidTargets = form.fields.filter((f) => f.invalid || f.type === "email").map(targetForField)
     const confirmationTargets = form.fields.filter((f) => f.confirmationFor).map(targetForField)
     if (requiredTargets.length) {
