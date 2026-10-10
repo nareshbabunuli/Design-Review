@@ -866,7 +866,7 @@ export async function executeAutonomousJob(
       totalIssues: job.issues.length,
       backNavigationScore: passRate,
       responsiveScore: passRate,
-      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 ? ` DOM-first discovery left ${job.actionLedger?.untested || 0} inventory item(s) unresolved; see the Action Ledger.` : ""}`,
+      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.actionLedger ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.` : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 ? ` DOM-first discovery left ${job.actionLedger?.untested || 0} inventory item(s) unresolved; see the Action Ledger.` : ""}`
       recommendations: [...recommendations, ...((job.error?.startsWith("[DOMDiscovery]")) ? ["DOM-first discovery failed; do not treat this run as full application coverage."] : (job.actionLedger?.untested || 0) > 0 ? [`${job.actionLedger?.untested || 0} DOM inventory item(s) remain untested or unresolved.`] : [])],
       issues: job.issues,
       testCases,
@@ -902,11 +902,17 @@ export async function executeAutonomousJob(
 
     job.progress = 100
     job.status = "completed"
-    job.currentStep = "Autonomous run completed."
+    const discoveryIncomplete = job.error?.startsWith("[DOMDiscovery]") || (job.actionLedger?.untested || 0) > 0
+    const ledgerStatus = job.actionLedger
+      ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.`
+      : ""
+    job.currentStep = discoveryIncomplete
+      ? "Scenario execution finished; DOM discovery coverage is incomplete."
+      : "Autonomous run finished; review blocked actions and evidence."
     job.finishedAt = new Date().toISOString()
-    appendLog(job, "success", `Autonomous run finished: ${job.report?.summary || "report generated"}`)
+    appendLog(job, discoveryIncomplete ? "warn" : "success", `Autonomous run finished: ${job.report?.summary || "report generated"}`)
     say(
-      `✅ Autonomous run complete: ${passed}/${testCases.length} scenarios passed, ${flowGraph.nodes.length} screens, ${job.issues.length} issues.${recordingUrl ? " Video attached in the Report tab." : ""}`,
+      `${discoveryIncomplete ? "⚠️ Scenario execution finished, but DOM discovery coverage is incomplete." : "✅ Autonomous run finished."} ${passed}/${testCases.length} scenarios passed, ${flowGraph.nodes.length} screens, ${job.issues.length} issues.${ledgerStatus}${recordingUrl ? " Video attached in the Report tab." : ""} Review the Action Ledger and report before treating coverage as complete.`,
       "completed",
     )
     saveJob(job)
