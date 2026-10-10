@@ -707,6 +707,63 @@ function recordDomInventory(job: AutomationJob, snapshot: Awaited<ReturnType<typ
   saveJob(job)
 }
 
+function domGraphNodeId(snapshot: Awaited<ReturnType<typeof inspectPageDom>>): string {
+  const signature = JSON.stringify({
+    url: snapshot.url,
+    title: snapshot.title,
+    elements: snapshot.elements.map((element) => [element.selector, element.label, element.kind, element.risk, element.enabled, element.href]),
+    forms: snapshot.forms,
+    dialogs: snapshot.dialogs,
+  })
+  let hash = 2166136261
+  for (let i = 0; i < signature.length; i++) {
+    hash ^= signature.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return snapshot.url + "::dom-" + (hash >>> 0).toString(16)
+}
+
+function recordDomGraphNode(job: AutomationJob, snapshot: Awaited<ReturnType<typeof inspectPageDom>>): string {
+  const graph = job.domDiscoveryGraph || (job.domDiscoveryGraph = { nodes: [], edges: [], truncated: false })
+  const id = domGraphNodeId(snapshot)
+  if (!graph.nodes.some((node) => node.id === id)) {
+    if (graph.nodes.length >= 200) {
+      graph.truncated = true
+    } else {
+      graph.nodes.push({
+        id,
+        url: snapshot.url,
+        title: snapshot.title,
+        observedAt: new Date().toISOString(),
+        elementCount: snapshot.elements.length,
+      })
+    }
+  }
+  return id
+}
+
+function recordDomGraphEdge(
+  job: AutomationJob,
+  input: {
+    from: string
+    to: string
+    action: string
+    selector?: string
+    transition: "navigation" | "same_url_state"
+    status: "passed" | "failed" | "blocked"
+    evidence: string
+  },
+): void {
+  const graph = job.domDiscoveryGraph || (job.domDiscoveryGraph = { nodes: [], edges: [], truncated: false })
+  const id = [input.from, input.to, input.action, input.selector || ""].join("::")
+  if (graph.edges.some((edge) => edge.id === id)) return
+  if (graph.edges.length >= 400) {
+    graph.truncated = true
+    return
+  }
+  graph.edges.push({ id, ...input, observedAt: new Date().toISOString() })
+}
+
 export async function runHumanLikeDecisionLoop(
   job: AutomationJob,
   page: Page,
@@ -743,8 +800,10 @@ export async function runHumanLikeDecisionLoop(
     }
     const url = await page.url()
     const domInventory = await inspectPageDom(page).catch(() => null)
+    let sourceGraphNodeId = url
     if (domInventory) {
       recordDomInventory(job, domInventory)
+      sourceGraphNodeId = recordDomGraphNode(job, domInventory)
       if (step === 0) appendLog(job, "info", `[DOMDiscovery] Inventoried ${domInventory.elements.length} visible interactive elements on ${domInventory.url}; ${Object.entries(domInventory.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}; forms=${domInventory.forms}; dialogs=${domInventory.dialogs}. Navigation links are recorded, not followed during inventory.`)
     }
     const state = await readPatternState(page, url)
@@ -868,6 +927,18 @@ export async function runHumanLikeDecisionLoop(
       observation = { ok: Boolean(explored.destination && explored.restored && explored.stateChanged !== false), blocked: Boolean(explored.blocked) || !explored.restored, observation: explored.observation }
       if (explored.destination) {
         appendLog(job, "info", `[DOMDiscovery] ${explored.observation}`)
+        const destinationGraphNodeId = recordDomGraphNode(job, explored.destination)
+        if (explored.destination.url !== url || explored.stateChanged) {
+          recordDomGraphEdge(job, {
+            from: sourceGraphNodeId,
+            to: destinationGraphNodeId,
+            action: selected.title,
+            selector: selected.target.selector,
+            transition: explored.destination.url === url ? "same_url_state" : "navigation",
+            status: observation.ok ? "passed" : observation.blocked ? "blocked" : "failed",
+            evidence: explored.observation,
+          })
+        }
         if (explored.destination.url !== url && explored.restored && !queuedRoutes.has(explored.destination.url)) {
           queuedRoutes.add(explored.destination.url)
           routeQueue.push({ url: explored.destination.url, returnTo: url })
