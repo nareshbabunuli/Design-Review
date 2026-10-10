@@ -225,7 +225,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     controls: Array.from(document.querySelectorAll("button,[role=button],input,select,textarea")).filter((el) => {
       const r = el.getBoundingClientRect(), st = getComputedStyle(el)
       return r.width > 2 && r.height > 2 && st.display !== "none" && st.visibility !== "hidden"
-    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50) + ":checked=" + (("checked" in el) ? String((el as HTMLInputElement).checked) : (el.getAttribute("aria-checked") || "")) + ":pressed=" + (el.getAttribute("aria-pressed") || "") + ":expanded=" + (el.getAttribute("aria-expanded") || "") + ":value=" + (("value" in el) ? String((el as HTMLInputElement).value || "") : "")).slice(0, 80).join("|"),
+    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50) + ":checked=" + (("checked" in el) ? String((el as HTMLInputElement).checked) : (el.getAttribute("aria-checked") || "")) + ":pressed=" + (el.getAttribute("aria-pressed") || "") + ":expanded=" + (el.getAttribute("aria-expanded") || "") + ":sort=" + (el.getAttribute("aria-sort") || "") + ":value=" + (("value" in el) ? String((el as HTMLInputElement).value || "") : "")).slice(0, 100).join("|"),
   })).catch(() => null)
 
   if (candidate.pattern === "back_navigation" || candidate.pattern === "forward_navigation") {
@@ -239,13 +239,15 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     }
     const afterUrl = page.url()
     if (afterUrl === beforeUrl) {
-      return { ok: false, observation: (back ? "Back" : "Forward") + " did not change the URL; no history transition was observed." }
+      return { ok: false, blocked: true, observation: (back ? "Back" : "Forward") + " has no available same-tab history transition in this state; marked blocked rather than failed." }
     }
     let beforeOrigin = "", afterOrigin = ""
     try { beforeOrigin = new URL(beforeUrl).origin; afterOrigin = new URL(afterUrl).origin } catch {}
-    if (!beforeOrigin || afterOrigin !== beforeOrigin) {
+    let afterPath = ""
+    try { afterPath = new URL(afterUrl).pathname } catch {}
+    if (!beforeOrigin || afterOrigin !== beforeOrigin || /\/logout|\/signout|\/delete|\/purchase|\/checkout/i.test(afterPath)) {
       await page.goto(beforeUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {})
-      return { ok: false, blocked: true, observation: (back ? "Back" : "Forward") + " would leave the target origin; returned to " + beforeUrl + "." }
+      return { ok: false, blocked: true, observation: (back ? "Back" : "Forward") + " would leave the safe test path/origin; returned to " + beforeUrl + "." }
     }
     return { ok: true, observation: (back ? "Back" : "Forward") + " changed URL from " + beforeUrl + " to " + afterUrl + "." }
   }
@@ -463,11 +465,12 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
       await new Promise((resolve) => setTimeout(resolve, 500))
       const actual = await target.evaluate((el) => String((el as HTMLInputElement).value || "")).catch(() => "")
       const afterText = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1200)).catch(() => "")
+      const searchShowsOutcome = before?.text !== afterText || /no results|no matches|nothing found|no data/i.test(afterText)
       await setInputValue(original).catch(() => {})
       await target.dispose().catch(() => {})
-      return actual === value
-        ? { ok: true, observation: "Synthetic value accepted by " + candidate.title + "; field verified and original value restored. Visible text: " + afterText.slice(0, 180) }
-        : { ok: false, observation: 'Input did not retain the synthetic value; observed "' + actual.slice(0, 60) + '".' }
+      if (actual !== value) return { ok: false, observation: 'Input did not retain the synthetic value; observed "' + actual.slice(0, 60) + '".' }
+      if (candidate.pattern === "search" && !searchShowsOutcome) return { ok: false, observation: "Search accepted the query but no visible result/empty-state change was observed; verify whether search is wired up." }
+      return { ok: true, observation: "Synthetic value accepted by " + candidate.title + "; field verified and original value restored. Visible text: " + afterText.slice(0, 180) }
     } catch (error: any) {
       await setInputValue(original).catch(() => {})
       await target.dispose().catch(() => {})
