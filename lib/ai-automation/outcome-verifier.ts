@@ -1,5 +1,6 @@
 import type { Page, ElementHandle, HTTPRequest, HTTPResponse } from "puppeteer"
 import { humanClick } from "./human-actions"
+import { secretRedactor } from "./secure-credentials-manager"
 import type {
   ObservedEffect,
   AutomationVerdict,
@@ -254,13 +255,21 @@ export class NetworkRecorder {
       let headers: Record<string, string> | undefined = undefined
       let postData: string | undefined = undefined
       try {
-        headers = req.headers()
-        postData = req.postData()
+        const rawHeaders = req.headers()
+        headers = Object.fromEntries(
+          Object.entries(rawHeaders).map(([name, value]) => [
+            name,
+            /authorization|cookie|set-cookie|api[-_]?key|token|secret/i.test(name)
+              ? "[REDACTED_HEADER]"
+              : secretRedactor.redact(value),
+          ])
+        )
+        postData = secretRedactor.redact(req.postData())
       } catch {}
 
       this.calls.push({
         method,
-        url: req.url(),
+        url: secretRedactor.redact(req.url()),
         status: res.status(),
         isMutating,
         headers,
@@ -320,11 +329,11 @@ export class ConsoleRecorder {
   constructor(page: Page) {
     this.page = page
     this.errorHandler = (err: any) => {
-      this.errors.push(err?.message || String(err))
+      this.errors.push(secretRedactor.redact(err?.message || String(err)))
     }
     this.consoleHandler = (msg: any) => {
       if (msg.type?.() === "error") {
-        this.errors.push(msg.text?.() || "Console error")
+        this.errors.push(secretRedactor.redact(msg.text?.() || "Console error"))
       }
     }
     this.page.on("pageerror", this.errorHandler)
