@@ -410,6 +410,95 @@ export async function extractActionableInventory(page: Page): Promise<{
         isInteractive: true,
       })
     })
+    // 10. Semantic UI objects (media/cards/galleries) that may be interactive
+    // A UI object can be actionable without being a native button or anchor.
+    // Detect strong semantic signals, but do not click every image/div blindly.
+    const semanticObjectSelector =
+      'img, video, [class*="card" i], [class*="tile" i], [class*="gallery" i], [class*="thumbnail" i], [class*="avatar" i], [class*="carousel" i], [data-testid], [data-cy], [data-action]'
+    const semanticSeen = new Set<string>()
+    document.querySelectorAll(semanticObjectSelector).forEach((el: any) => {
+      const tag = (el.tagName || '').toLowerCase()
+      if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
+
+      const style = window.getComputedStyle(el)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+
+      const text = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("alt") || el.getAttribute("title") || "")
+        .trim().replace(/\\s+/g, " ").slice(0, 60)
+      const className = typeof el.className === "string" ? el.className : ""
+      const identity = [el.id || "", el.getAttribute("data-testid") || el.getAttribute("data-cy") || "", className].join("|")
+      const hasMedia = Boolean(el.matches("img, video") || el.querySelector("img, video, picture, source"))
+      const hasSemanticName = /(video|image|photo|gallery|avatar|profile|product|card|tile|thumbnail|carousel|media|preview|attachment)/i.test(identity + " " + text)
+      const hasActionSignal = Boolean(
+        el.hasAttribute("onclick") ||
+        el.hasAttribute("data-action") ||
+        el.hasAttribute("aria-controls") ||
+        el.getAttribute("role") === "button" ||
+        el.getAttribute("role") === "link" ||
+        style.cursor === "pointer" ||
+        el.tabIndex >= 0
+      )
+      const repeatedObject = Boolean(el.parentElement && Array.from(el.parentElement.children).filter((child: any) => {
+        const childClass = typeof child.className === "string" ? child.className : ""
+        return child !== el && childClass && className && childClass === className
+      }).length >= 1)
+
+      // Strong signals are enough; media/card semantics alone are only a candidate
+      // when combined with a second signal such as repetition or pointer behavior.
+      const reasons: string[] = []
+      if (hasMedia) reasons.push("contains media")
+      if (hasSemanticName) reasons.push("semantic media/card naming")
+      if (hasActionSignal) reasons.push("DOM interaction signal")
+      if (repeatedObject) reasons.push("repeated UI object")
+      if (!hasActionSignal && !(hasMedia && (hasSemanticName || repeatedObject))) return
+
+      const confidence = Math.min(0.99,
+        0.45 +
+        (hasMedia ? 0.15 : 0) +
+        (hasSemanticName ? 0.12 : 0) +
+        (hasActionSignal ? 0.20 : 0) +
+        (repeatedObject ? 0.08 : 0)
+      )
+      const type = /video/i.test(identity + " " + text) ? "clickable" :
+        /gallery|carousel/i.test(identity + " " + text) ? "clickable" :
+        /avatar|profile/i.test(identity + " " + text) ? "clickable" :
+        "clickable"
+      const name = text || (hasMedia ? (tag === "video" ? "Video" : "Image") : "Interactive Card")
+      const hrefAttr = el.getAttribute("href") || undefined
+      let href: string | undefined
+      try { href = hrefAttr ? new URL(hrefAttr, window.location.href).href : undefined } catch { href = hrefAttr }
+      const selector = el.id
+        ? "#" + el.id
+        : el.getAttribute("data-testid")
+        ? "[data-testid=\\\"" + el.getAttribute("data-testid") + "\\\"]"
+        : el.getAttribute("data-cy")
+        ? "[data-cy=\\\"" + el.getAttribute("data-cy") + "\\\"]"
+        : undefined
+      const actionKey = [
+        "semantic",
+        window.location.pathname,
+        type,
+        name.toLowerCase(),
+        href || "",
+        el.getAttribute("aria-controls") || "",
+        el.getAttribute("data-testid") || el.getAttribute("data-cy") || className,
+      ].join("|")
+      if (semanticSeen.has(actionKey)) return
+      semanticSeen.add(actionKey)
+
+      elements.push({
+        id: `elem-${elementCounter++}`,
+        name,
+        type,
+        selector,
+        href,
+        actionKey,
+        interactionConfidence: Number(confidence.toFixed(2)),
+        discoveryReason: reasons,
+        isInteractive: true,
+      })
+    })
+
     // 9. Links & Navigation
     document.querySelectorAll("a[href]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
