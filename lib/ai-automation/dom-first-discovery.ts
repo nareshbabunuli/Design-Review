@@ -154,9 +154,15 @@ export async function exploreInternalLinkAndReturn(
     await element.dispose().catch(() => {})
     return { destination: null, observation: "New-tab navigation was inventoried but not clicked in this pass.", restored: true }
   }
-  if (!liveHref || new URL(liveHref, sourceUrl).href !== target.href) {
+  let liveTargetMatches = false
+  try {
+    liveTargetMatches = Boolean(liveHref) && new URL(liveHref, sourceUrl).href === target.href
+  } catch {
+    liveTargetMatches = false
+  }
+  if (!liveTargetMatches) {
     await element.dispose().catch(() => {})
-    return { destination: null, observation: "Navigation target changed since discovery; refusing a stale click.", restored: true }
+    return { destination: null, observation: "Navigation target changed or became invalid since discovery; refusing a stale click.", restored: true }
   }
   try {
     await Promise.all([
