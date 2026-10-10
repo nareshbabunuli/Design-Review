@@ -185,6 +185,10 @@ export type AutomationReport = {
   domDiscoveryGraph?: DomDiscoveryGraph
   /** Autonomous runs: session recording (webm) URL. */
   recordingUrl?: string
+  /** Current recording control state for the live test session. */
+  recordingControl?: "recording" | "paused" | "stopped"
+  /** Uploaded recording clips when a paused run is split into segments. */
+  recordingSegments?: string[]
   /** Structured multi-step workflows executed during full app testing */
   workflows?: WorkflowRun[]
   /** Evidence-based failure report in Markdown format */
