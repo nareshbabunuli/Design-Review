@@ -866,7 +866,7 @@ export async function executeAutonomousJob(
       totalIssues: job.issues.length,
       backNavigationScore: passRate,
       responsiveScore: passRate,
-      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.actionLedger ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.` : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 ? ` DOM-first discovery left ${job.actionLedger?.untested || 0} inventory item(s) unresolved; see the Action Ledger.` : ""}`,
+      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.actionLedger ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.` : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 || job.domDiscoveryGraph?.truncated ? ` DOM-first discovery is incomplete${(job.actionLedger?.untested || 0) > 0 ? `: ${job.actionLedger?.untested || 0} inventory item(s) remain unresolved` : ""}${job.domDiscoveryGraph?.truncated ? "; route/state graph limit reached" : ""}; see the Action Ledger and discovery graph.` : ""}`,
       recommendations: [...recommendations, ...((job.error?.startsWith("[DOMDiscovery]")) ? ["DOM-first discovery failed; do not treat this run as full application coverage."] : (job.actionLedger?.untested || 0) > 0 ? [`${job.actionLedger?.untested || 0} DOM inventory item(s) remain untested or unresolved.`] : [])],
       issues: job.issues,
       testCases,
@@ -903,7 +903,7 @@ export async function executeAutonomousJob(
 
     job.progress = 100
     job.status = "completed"
-    const discoveryIncomplete = job.error?.startsWith("[DOMDiscovery]") || (job.actionLedger?.untested || 0) > 0
+    const discoveryIncomplete = job.error?.startsWith("[DOMDiscovery]") || (job.actionLedger?.untested || 0) > 0 || Boolean(job.domDiscoveryGraph?.truncated)
     const ledgerStatus = job.actionLedger
       ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.`
       : ""
