@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { setJobSecrets, getJobSecrets, clearJobSecrets } from "../lib/ai-automation/job-secret-vault"
+import { toPersistedJob } from "../lib/ai-automation/job-store"
 
 test("job secret vault isolates jobs and clears secrets", () => {
   setJobSecrets("job-a", { credentials: { username: "alice", password: "value-a" } })
@@ -23,11 +24,7 @@ test("persisted job projection removes interactive credential fields", () => {
     safe: "retained",
   } as Record<string, unknown>
 
-  const persisted = JSON.parse(JSON.stringify(job))
-  delete persisted.pendingCredentials
-  delete persisted.pendingSettingsCredentials
-  delete persisted.pendingPaymentCredentials
-  delete persisted.pendingVerification
+  const persisted = toPersistedJob(job as any)
 
   assert.deepEqual(persisted, { id: "persistence-test", safe: "retained" })
 })
