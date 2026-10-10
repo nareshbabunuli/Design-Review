@@ -783,7 +783,18 @@ export async function runHumanLikeDecisionLoop(
     const nonNavigation = candidates.filter((candidate) => !["link_navigation", "back_navigation", "forward_navigation", "external_link"].includes(candidate.pattern))
     const decisionCandidates = nonNavigation.length > 0 ? nonNavigation.slice(0, 18) : candidates.filter((candidate) => candidate.pattern === "link_navigation").slice(0, 18)
     if (decisionCandidates.length === 0) {
-      appendLog(job, "info", "[DOMDiscovery] Remaining candidates are navigation/history/external actions; external links and browser-history controls are recorded but not auto-clicked in this pass.")
+      // These candidates are intentionally not auto-executed by policy. Record
+      // them as blocked, not untested, so the ledger distinguishes a deliberate
+      // safety boundary from work the explorer accidentally missed.
+      for (const candidate of candidates) {
+        if (tested.has(candidate.id)) continue
+        const reason = candidate.pattern === "external_link"
+          ? "Blocked by safe-testing policy: external destinations are inventoried but never followed automatically."
+          : "Deferred by safe-testing policy: browser-history navigation is not auto-triggered by the discovery pass."
+        tested.add(candidate.id)
+        recordLedger(job, candidate, "blocked", reason, url)
+      }
+      appendLog(job, "info", "[DOMDiscovery] Remaining candidates are navigation/history/external actions; external links and browser-history controls are recorded as blocked rather than followed automatically.")
       if (activeRoute) {
         const routeToReturn = activeRoute.returnTo
         const restored = await page.goto(routeToReturn, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
