@@ -1712,6 +1712,22 @@ export default function AISimulatorPage() {
     }
   }
 
+  const handleRecordingControl = async (action: "pause_recording" | "resume_recording") => {
+    if (!currentJob?.id) return
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: currentJob.id, action }),
+      })
+      const data = await res.json()
+      if (data?.job) setCurrentJob(data.job)
+      else if (!res.ok) setBotError(data?.error || "Unable to change recording state")
+    } catch (err: any) {
+      setBotError(err?.message || "Unable to change recording state")
+    }
+  }
+
   // Stop Running Job
   const handleStopAutomation = async () => {
     if (!currentJob?.id) return
@@ -2112,10 +2128,21 @@ export default function AISimulatorPage() {
 
                 <div className="flex items-center gap-2">
                   {currentJob?.status === "running" && (
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                      <span>Live Testing In Flight</span>
-                    </div>
+                    <>
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                        <span>Live Testing In Flight</span>
+                      </div>
+                      {currentJob.recordingControl === "paused" ? (
+                        <button type="button" onClick={() => handleRecordingControl("resume_recording")} className="px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium">
+                          Resume Recording
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => handleRecordingControl("pause_recording")} className="px-2 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-medium">
+                          Pause Recording
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
