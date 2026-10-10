@@ -2114,23 +2114,55 @@ export async function executeStructuredTestPlan(
             actionType: "click",
           })
 
-          const newStep: TestPlanStep = {
-            id: `step-${testPlan.steps.length + 1}`,
-            screenId: newScreenId,
-            screenName: newScreenName,
-            stepIndex: testPlan.steps.length + 1,
-            actionType: "verify",
-            targetName: `${newScreenName} Content`,
-            expectedResult: `Verify new discovery screen "${newScreenName}" is interactive.`,
-            actualResult: `Discovered during test of ${step.targetName} with ${newInv.actionableElements.length} elements.`,
-            status: "pending",
-            isNewDiscovery: true,
-            screenshotUrl: step.screenshotUrl,
-            evidenceTimestamp: new Date().toISOString(),
-          }
-          testPlan.steps.push(newStep)
-          // Discovery itself is not a passing test outcome.
-          // The queued verification step will be executed by the same loop.
+          // Discovery is not verification. Add every actionable element from the
+          // newly exposed screen to the same execution queue.
+          const existingKeys = new Set(
+            testPlan.steps.map((queued) =>
+              `${queued.screenId}|${queued.actionType}|${queued.targetName.toLowerCase()}`
+            )
+          )
+          const queuedSteps = newInv.actionableElements.map((el, idx) => {
+            const actionType: TestPlanStep["actionType"] =
+              el.type === "input" ? "fill" :
+              el.type === "select" ? "select" :
+              el.type === "checkbox" || el.type === "toggle" ? "toggle" :
+              el.type === "file_upload" ? "upload" :
+              "click"
+            const key = `${newScreenId}|${actionType}|${el.name.toLowerCase()}`
+            if (existingKeys.has(key)) return null
+            existingKeys.add(key)
+
+            return {
+              id: `step-${testPlan.steps.length + idx + 1}`,
+              screenId: newScreenId,
+              screenName: newScreenName,
+              stepIndex: testPlan.steps.length + idx + 1,
+              actionType,
+              targetName: el.name,
+              targetSelector: el.selector,
+              syntheticValue:
+                actionType === "fill"
+                  ? SYNTHETIC_TEST_DATA.fullName
+                  : actionType === "select"
+                    ? (el.options?.[0] || "Option 1")
+                    : undefined,
+              expectedResult:
+                actionType === "click"
+                  ? `Clicking "${el.name}" produces an observable UI, navigation, modal, or network effect.`
+                  : `Interacting with "${el.name}" produces the expected state change without an error.`,
+              status: "pending",
+              isNewDiscovery: true,
+              screenshotUrl: step.screenshotUrl,
+              evidenceTimestamp: new Date().toISOString(),
+            } satisfies TestPlanStep
+          }).filter((queued): queued is TestPlanStep => Boolean(queued))
+
+          testPlan.steps.push(...queuedSteps)
+          appendLog(
+            job,
+            "info",
+            `[QUEUE] Added ${queuedSteps.length} newly discovered actions from "${newScreenName}".`
+          )
         }
       }
 
