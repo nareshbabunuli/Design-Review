@@ -268,6 +268,15 @@ export type ActionableElementType =
 
 export type ActionLedgerStatus = "untested" | "running" | "passed" | "failed" | "blocked" | "skipped"
 
+export type ActionLedgerAttempt = {
+  status: Exclude<ActionLedgerStatus, "untested" | "running">
+  timestamp: string
+  observedOutcome?: string
+  error?: string
+  beforeScreenshotUrl?: string
+  afterScreenshotUrl?: string
+}
+
 export type ActionLedgerEntry = {
   actionKey: string
   screenId: string
@@ -286,6 +295,8 @@ export type ActionLedgerEntry = {
   workflowId?: string
   error?: string
   evidence?: { beforeScreenshotUrl?: string; afterScreenshotUrl?: string; observedOutcome?: string }
+  /** Most recent resolved outcomes, retained when the same action is retried. */
+  history?: ActionLedgerAttempt[]
 }
 
 export type ActionLedger = {
