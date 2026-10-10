@@ -23,12 +23,12 @@
 - [x] Add guarded same-origin link exploration with destination DOM snapshot, optional screenshot, and source restoration.
 - [x] Call the DOM inventory before candidate selection.
 - [x] Defer navigation candidates while safe in-page candidates remain.
-- [ ] Persist every discovered destination and its element inventory as first-class ledger records.
-- [ ] Explicitly exclude `target="_blank"` links from click exploration and verify all destination URL parsing paths are exception-safe.
+- [x] Persist discovered destination element inventories as untested Action Ledger entries.
+- [x] Defer `target="_blank"` links rather than clicking them in this pass.
 
 ### Phase 2 — Route queue and recursive exploration
-- [ ] Maintain a run-level queue of discovered internal URLs and page-state fingerprints.
-- [ ] Visit each route deliberately, inventory its DOM, explore safe local state changes, then return/backtrack.
+- [x] Add a bounded in-memory queue of discovered internal URLs during the decision loop (persistent route-queue recovery remains future work).
+- [x] Visit queued same-origin routes, inventory their DOM, explore safe local state changes, and return to the recorded parent URL.
 - [ ] Record route graph edges (source page, triggering element, destination page).
 - [ ] Re-scan after modal/tab/dropdown/form-state changes and enqueue newly revealed controls/states.
 - [ ] Handle SPA route changes, hash navigation, same-URL state transitions, and multi-tab links explicitly.
@@ -36,9 +36,9 @@
 
 ### Phase 3 — Central runner integration
 - [ ] Make the discovery loop the primary MAP → PLAN → EXECUTE → VERIFY loop for full autonomous exploration.
-- [ ] Use one run-level action/time budget, not a fresh per-scenario budget.
+- [x] Budget calculation excludes merely discovered/untested inventory rows; a truly shared run-wide cap still needs central-runner ownership.
 - [ ] Keep Laya as candidate selector; deterministic engine defines candidates; browser only executes approved actions.
-- [ ] Remove silent fallback when the discovery loop throws. Preserve the error, evidence, and unresolved coverage.
+- [x] Discovery-loop exceptions are now surfaced as scenario errors instead of silently allowing a clean pass.
 - [ ] Retain scenario-based Stagehand testing as an explicitly separate optional verification layer, not as a silent replacement for failed discovery.
 - [ ] Connect route graph, destination screenshots, console/network evidence, Action Ledger and final report.
 
