@@ -774,6 +774,7 @@ export async function runHumanLikeDecisionLoop(
         activeRoute = null
         if (restored) continue
       }
+      if (routeQueue.length > 0) continue
       break
     }
     const nonNavigation = candidates.filter((candidate) => !["link_navigation", "back_navigation", "forward_navigation", "external_link"].includes(candidate.pattern))
@@ -787,6 +788,7 @@ export async function runHumanLikeDecisionLoop(
         activeRoute = null
         if (restored) continue
       }
+      if (routeQueue.length > 0) continue
       break
     }
     const criteria = chooseCriteria(decisionCandidates)
