@@ -2068,102 +2068,167 @@ export async function executeStructuredTestPlan(
         step.evidenceTimestamp = new Date().toISOString()
       } catch {}
 
-      // 5. Dynamic Check for NEW DISCOVERY
+      // 5. Dynamic Check: re-inventory the CURRENT DOM after every action.
+      // A screen can already be known while an interaction exposes new controls.
+      // Discovery is never verification: every unseen actionable element becomes
+      // a pending execution step and remains in the same queue.
       const currentUrl = page.url()
       const origin = new URL(testPlan.targetUrl).origin
       const currentNorm = normalizePath(currentUrl, origin)
 
-      const currentHeading = await page.evaluate(() => {
-        const h = document.querySelector("h1, h2, [role='heading'], [data-screen-title]")
-        return h ? (h.textContent || "").trim().slice(0, 40) : ""
-      })
-      const isKnown = testPlan.screens.some(
-        (s) => s.path === currentNorm && (!currentHeading || s.name.toLowerCase().includes(currentHeading.toLowerCase()))
+      const currentInv = await extractActionableInventory(page)
+      const currentScreenName = deriveScreenName(currentNorm, currentInv.heading, currentInv.modalTitle)
+      const hasActiveModal = Boolean(currentInv.modalTitle)
+
+      const elementIdentity = (el: ActionableElement) =>
+        el.actionKey || [
+          el.type,
+          (el.name || "").trim().toLowerCase(),
+          el.selector || "",
+          el.href || "",
+          el.formId || "",
+        ].join("|")
+
+      const stepIdentity = (queued: TestPlanStep) =>
+        [
+          queued.actionType,
+          (queued.targetName || "").trim().toLowerCase(),
+          queued.targetSelector || "",
+        ].join("|")
+
+      // Prefer an exact screen identity. For ordinary pages, path is stable.
+      // For modals, include the derived modal/page name so two dialogs on the
+      // same route do not collapse into one screen node.
+      let currentScreen = testPlan.screens.find((screen) =>
+        screen.path === currentNorm &&
+        screen.name.toLowerCase() === currentScreenName.toLowerCase()
       )
-      const hasNewModal = await page.evaluate(() => {
-        const d = document.querySelector('[role="dialog"], dialog[open]')
-        return Boolean(d && window.getComputedStyle(d).display !== "none")
+
+      if (!currentScreen && !hasActiveModal) {
+        currentScreen = testPlan.screens.find((screen) => screen.path === currentNorm)
+      }
+
+      if (!currentScreen) {
+        const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
+        appendLog(job, "success", `🌟 [NEW DISCOVERY] Found unmapped screen: ${newScreenId} "${currentScreenName}" during test!`)
+
+        currentScreen = {
+          id: newScreenId,
+          name: currentScreenName,
+          url: currentUrl,
+          path: currentNorm,
+          screenshotUrl: step.screenshotUrl,
+          actionableElements: [],
+          forms: [],
+          isNewDiscovery: true,
+          discoveredAt: new Date().toISOString(),
+        }
+        testPlan.screens.push(currentScreen)
+        testPlan.transitions.push({
+          id: `tr-${testPlan.transitions.length + 1}`,
+          fromScreenId: step.screenId,
+          toScreenId: newScreenId,
+          action: `[NEW DISCOVERY] Triggered by ${step.targetName}`,
+          actionType: "click",
+        })
+      }
+
+      // Merge the current DOM inventory into the screen, preserving previously
+      // discovered controls while refreshing details for controls still visible.
+      const knownElementKeys = new Set(
+        (currentScreen.actionableElements || []).map(elementIdentity)
+      )
+      const newlyDiscoveredElements: ActionableElement[] = []
+
+      for (const element of currentInv.actionableElements) {
+        const key = elementIdentity(element)
+        if (!knownElementKeys.has(key)) {
+          knownElementKeys.add(key)
+          currentScreen.actionableElements.push(element)
+          newlyDiscoveredElements.push(element)
+        }
+      }
+
+      // Merge forms too. This lets a form that appears after navigation/tab/modal
+      // interaction become part of the mapped screen rather than remaining invisible.
+      const knownFormKeys = new Set(
+        (currentScreen.forms || []).map((form) =>
+          [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()
+        )
+      )
+      for (const form of currentInv.forms) {
+        const formKey = [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()
+        if (!knownFormKeys.has(formKey)) {
+          knownFormKeys.add(formKey)
+          currentScreen.forms.push(form)
+        }
+      }
+
+      if (currentInv.actionableElements.length > 0) {
+        currentScreen.screenshotUrl = step.screenshotUrl || currentScreen.screenshotUrl
+        currentScreen.url = currentUrl
+      }
+
+      // Queue every newly exposed actionable element, including elements exposed
+      // on a screen that was already known before this action.
+      const queuedIdentitySet = new Set(
+        testPlan.steps.map((queued) => `${queued.screenId}|${stepIdentity(queued)}`)
+      )
+
+      const actionableToQueue = newlyDiscoveredElements.filter((el) => {
+        // Text-only inventory entries are observations, not executable actions.
+        return el.type !== "text" && el.type !== "form" && el.type !== "other"
       })
 
-      if (!isKnown || hasNewModal) {
-        const newInv = await extractActionableInventory(page)
-        const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
-        const newScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
+      const queuedSteps = actionableToQueue.map((el, idx) => {
+        const actionType: TestPlanStep["actionType"] =
+          el.type === "input" ? "fill" :
+          el.type === "select" ? "select" :
+          el.type === "checkbox" || el.type === "radio" || el.type === "toggle" ? "toggle" :
+          el.type === "file_upload" ? "upload" :
+          "click"
 
-        if (!testPlan.screens.some((s) => s.name === newScreenName && s.path === currentNorm)) {
-          appendLog(job, "success", `🌟 [NEW DISCOVERY] Found unmapped screen: ${newScreenId} "${newScreenName}" during test!`)
+        const candidate = {
+          actionType,
+          targetName: el.name,
+          targetSelector: el.selector,
+        } as TestPlanStep
+        const queueKey = `${currentScreen.id}|${stepIdentity(candidate)}`
+        if (queuedIdentitySet.has(queueKey)) return null
+        queuedIdentitySet.add(queueKey)
 
-          const newScreenNode: AppScreenNode = {
-            id: newScreenId,
-            name: newScreenName,
-            url: currentUrl,
-            path: currentNorm,
-            screenshotUrl: step.screenshotUrl,
-            actionableElements: newInv.actionableElements,
-            forms: newInv.forms,
-            isNewDiscovery: true,
-            discoveredAt: new Date().toISOString(),
-          }
+        return {
+          id: `step-${testPlan.steps.length + idx + 1}`,
+          screenId: currentScreen.id,
+          screenName: currentScreen.name,
+          stepIndex: testPlan.steps.length + idx + 1,
+          actionType,
+          targetName: el.name,
+          targetSelector: el.selector,
+          syntheticValue:
+            actionType === "fill"
+              ? SYNTHETIC_TEST_DATA.fullName
+              : actionType === "select"
+                ? (el.options?.[0] || "Option 1")
+                : undefined,
+          expectedResult:
+            actionType === "click"
+              ? `Clicking "${el.name}" produces an observable UI, navigation, modal, or network effect.`
+              : `Interacting with "${el.name}" produces the expected state change without an error.`,
+          status: "pending",
+          isNewDiscovery: true,
+          screenshotUrl: step.screenshotUrl,
+          evidenceTimestamp: new Date().toISOString(),
+        } satisfies TestPlanStep
+      }).filter((queued): queued is TestPlanStep => Boolean(queued))
 
-          testPlan.screens.push(newScreenNode)
-          testPlan.transitions.push({
-            id: `tr-${testPlan.transitions.length + 1}`,
-            fromScreenId: step.screenId,
-            toScreenId: newScreenId,
-            action: `[NEW DISCOVERY] Triggered by ${step.targetName}`,
-            actionType: "click",
-          })
-
-          // Discovery is not verification. Add every actionable element from the
-          // newly exposed screen to the same execution queue.
-          const existingKeys = new Set(
-            testPlan.steps.map((queued) =>
-              `${queued.screenId}|${queued.actionType}|${queued.targetName.toLowerCase()}`
-            )
-          )
-          const queuedSteps = newInv.actionableElements.map((el, idx) => {
-            const actionType: TestPlanStep["actionType"] =
-              el.type === "input" ? "fill" :
-              el.type === "select" ? "select" :
-              el.type === "checkbox" || el.type === "toggle" ? "toggle" :
-              el.type === "file_upload" ? "upload" :
-              "click"
-            const key = `${newScreenId}|${actionType}|${el.name.toLowerCase()}`
-            if (existingKeys.has(key)) return null
-            existingKeys.add(key)
-
-            return {
-              id: `step-${testPlan.steps.length + idx + 1}`,
-              screenId: newScreenId,
-              screenName: newScreenName,
-              stepIndex: testPlan.steps.length + idx + 1,
-              actionType,
-              targetName: el.name,
-              targetSelector: el.selector,
-              syntheticValue:
-                actionType === "fill"
-                  ? SYNTHETIC_TEST_DATA.fullName
-                  : actionType === "select"
-                    ? (el.options?.[0] || "Option 1")
-                    : undefined,
-              expectedResult:
-                actionType === "click"
-                  ? `Clicking "${el.name}" produces an observable UI, navigation, modal, or network effect.`
-                  : `Interacting with "${el.name}" produces the expected state change without an error.`,
-              status: "pending",
-              isNewDiscovery: true,
-              screenshotUrl: step.screenshotUrl,
-              evidenceTimestamp: new Date().toISOString(),
-            } satisfies TestPlanStep
-          }).filter((queued): queued is TestPlanStep => Boolean(queued))
-
-          testPlan.steps.push(...queuedSteps)
-          appendLog(
-            job,
-            "info",
-            `[QUEUE] Added ${queuedSteps.length} newly discovered actions from "${newScreenName}".`
-          )
-        }
+      if (newlyDiscoveredElements.length > 0) {
+        testPlan.steps.push(...queuedSteps)
+        appendLog(
+          job,
+          "info",
+          `[QUEUE] Current DOM inventory exposed ${newlyDiscoveredElements.length} new actionable element(s); queued ${queuedSteps.length} for verification on "${currentScreen.name}".`
+        )
       }
 
       // 6. Update Coverage
