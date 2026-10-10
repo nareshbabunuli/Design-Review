@@ -324,7 +324,9 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     const requiredTargets = form.fields
       .filter((f) => f.required && (f.type === "textarea" || ["text", "email", "search", "tel", "url", "password"].includes(norm(f.type))))
       .map(targetForField)
-    const invalidTargets = form.fields.filter((f) => f.invalid || f.type === "email").map(targetForField)
+    const invalidTargets = form.fields
+      .filter((f) => ["email", "url"].includes(norm(f.type)))
+      .map(targetForField)
     const confirmationTargets = form.fields.filter((f) => f.confirmationFor).map(targetForField)
     if (requiredTargets.length) {
       add(out, "required_validation", requiredTargets, "Form contains required fields.", 0.99)
