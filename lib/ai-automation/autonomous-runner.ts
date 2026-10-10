@@ -569,8 +569,9 @@ export async function executeAutonomousJob(
   let browser: Browser | null = null
   let recorder: any = null
   const recordingPath = path.join(dir, "recording.webm")
-  let recordingControl: "recording" | "paused" = "recording"
+  let recordingControl: "recording" | "paused" | "stopped" = "recording"
   let recordingMonitor: ReturnType<typeof setInterval> | null = null
+  let recordingTransition: Promise<void> = Promise.resolve()
   const recordingFiles: string[] = []
 
   try {
@@ -652,32 +653,52 @@ export async function executeAutonomousJob(
         saveJob(job)
         appendLog(job, "info", "Session video recording started.")
         recordingMonitor = setInterval(() => {
-          const requested = (job as any).recordingControl === "paused" ? "paused" : "recording"
+          const requested = (job as any).recordingControl === "paused"
+            ? "paused"
+            : (job as any).recordingControl === "stopped"
+              ? "stopped"
+              : "recording"
           if (requested === recordingControl) return
-          if (requested === "paused") {
-            recordingControl = "paused"
-            if (recorder) {
-              void recorder.stop().then(() => {
-                recorder = null
-                appendLog(job, "info", "Session video recording paused.")
-              }).catch((err: any) => appendLog(job, "warn", `Recording pause failed: ${err?.message || String(err)}`))
-            }
-          } else {
-            recordingControl = "recording"
-            void (async () => {
+
+          recordingTransition = recordingTransition.then(async () => {
+            if (requested === recordingControl) return
+
+            if (requested === "paused" || requested === "stopped") {
+              recordingControl = requested
+              if (recorder) {
+                try {
+                  await recorder.stop()
+                } catch (err: any) {
+                  appendLog(job, "warn", `Recording stop failed: ${err?.message || String(err)}`)
+                } finally {
+                  recorder = null
+                }
+              }
+              appendLog(
+                job,
+                "info",
+                requested === "paused"
+                  ? "Session video recording paused."
+                  : "Session video recording stopped by user.",
+              )
+            } else {
               try {
                 const segmentPath = path.join(dir, `recording-${Date.now()}.webm`)
-                recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
-                await recorder.start(segmentPath)
+                const nextRecorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
+                await nextRecorder.start(segmentPath)
+                recorder = nextRecorder
                 recordingFiles.push(segmentPath)
+                recordingControl = "recording"
                 appendLog(job, "info", "Session video recording resumed.")
               } catch (err: any) {
                 recorder = null
                 appendLog(job, "warn", `Recording resume failed: ${err?.message || String(err)}`)
               }
-            })()
-          }
-          saveJob(job)
+            }
+            saveJob(job)
+          }).catch((err: any) => {
+            appendLog(job, "warn", `Recording transition failed: ${err?.message || String(err)}`)
+          })
         }, 500)
       } catch (err: any) {
         appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
@@ -883,6 +904,12 @@ export async function executeAutonomousJob(
       }
     }
     job.recordingUrl = recordingUrl || undefined
+    job.recordingSegments = recordingFiles
+      .map((filePath) => {
+        const index = recordingFiles.indexOf(filePath)
+        return filePath && index >= 0 && filePath === recordingFiles[index] ? undefined : undefined
+      })
+      .filter(Boolean) as string[]
     ;(job as any).recordingControl = "stopped"
 
     // ---- Flow graph ----
