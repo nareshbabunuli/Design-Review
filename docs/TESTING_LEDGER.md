@@ -131,3 +131,16 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 
 **How to resume:** Send the label (for example, `USER-CHECK-VIS-02`) with screenshots or observed results. Record each result and any defect here before changing its status to passed.
 
+## DOM-first discovery work — 2026-10-10
+
+- [x] Added `lib/ai-automation/dom-first-discovery.ts`: observational DOM inventory for visible interactive controls, links/destinations, forms, dialogs, likely behaviour and risk.
+- [x] Wired an initial DOM inventory before candidate selection in the human-like decision loop.
+- [x] Safe in-page candidates are prioritized before recorded internal-link navigation candidates.
+- [x] Added a same-origin navigation probe that records destination DOM summary/screenshot and attempts to restore the source URL.
+- [x] Added implementation phases and remaining work in [DOM-first discovery plan](DOM_FIRST_DISCOVERY_PLAN.md).
+- [ ] Persist destination DOM inventory as individual ledger entries and add a run-level route queue.
+- [ ] Harden new-tab and unusual URL handling; test SPA transitions and failed restoration.
+- [ ] Complete central-runner integration; current autonomous runner still has the older scenario-first orchestration and silent Stagehand fallback.
+- [ ] Browser fixture and end-to-end tests remain outstanding.
+
+**CI status:** TypeScript validation was triggered for commit `43709eab378c21cec6913fa0ba16dd789ee6e786` (run [#42](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078416648)). The run was still in progress when checked; no pass is claimed yet. A later docs commit may trigger another run.
