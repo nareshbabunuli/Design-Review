@@ -10,19 +10,19 @@ test("revealed controls are present after modal, tab, SPA and hash transitions",
   try {
     const page = await browser.newPage();
     await page.setContent(html);
-    assert.equal(await page.$("#revealed-modal"), null);
+    assert.equal(await page.$eval("#revealed-modal", el => el.offsetParent === null), true);
     await page.click("#open-modal");
-    assert.ok(await page.$("#revealed-modal"));
+    assert.equal(await page.$eval("#revealed-modal", el => el.offsetParent !== null), true);
     await page.click("#close-modal");
-    assert.equal(await page.$("#revealed-modal"), null);
+    assert.equal(await page.$eval("#revealed-modal", el => el.offsetParent === null), true);
     await page.click("#show-tab");
-    assert.ok(await page.$("#revealed-tab"));
+    assert.equal(await page.$eval("#revealed-tab", el => el.offsetParent !== null), true);
     await page.click("#spa-link");
     assert.match(page.url(), /#route-dashboard$/);
-    assert.ok(await page.$("#revealed-spa"));
+    assert.equal(await page.$eval("#revealed-spa", el => el.offsetParent !== null), true);
     await page.click("#hash-link");
     await page.waitForFunction(() => location.hash === "#details");
-    assert.ok(await page.$("#revealed-hash"));
+    assert.equal(await page.$eval("#revealed-hash", el => el.offsetParent !== null), true);
   } finally { await browser.close(); }
 });
 
