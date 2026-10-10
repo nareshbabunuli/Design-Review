@@ -96,7 +96,7 @@ export default function FeatureWorkflowView({
   job,
   isRunning,
   targetUrl,
-  projectId = "default",
+  projectId = targetUrl || "default",
   activeSubTab = "plan",
   onSubTabChange,
   onStartWorkflowTest,
