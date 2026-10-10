@@ -316,11 +316,15 @@ async function runScenarioWithStagehand(
 
     // Closed-loop human-like pass: deterministic pattern discovery -> Laya decision
     // -> safe browser execution -> Action Ledger -> missed-coverage queue.
-    // Stagehand remains the broader exploration layer after this bounded pass.
+    // The ledger is the run-wide de-duplication source, so later scenarios continue
+    // into newly discovered UI states instead of repeating already-tested actions.
+    const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
     try {
+      const remainingLedgerBudget = Math.max(0, 24 - (job.actionLedger?.entries.length || 0))
       const humanLoop = await runHumanLikeDecisionLoop(job, stagePage, {
-        maxSteps: 24,
+        maxSteps: remainingLedgerBudget,
         layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
+        captureScreenshot: takeShot,
       })
       out.actionsTaken += humanLoop.actions.length
       out.issues.push(...humanLoop.issues)
@@ -350,7 +354,6 @@ async function runScenarioWithStagehand(
 
     // Track every URL the agent actually visits, with a masked screenshot each.
     // Screenshots come from the Stagehand page itself — the agent's real view.
-    const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
     const seen = new Map<string, string>()
     let prevUrl = ""
     const tracker = (async () => {
@@ -492,7 +495,7 @@ async function runScenarioWithStagehand(
           actionList.push({ ...action, action: `RECOVERY: ${description}` })
           if (RISKY_ACTION.test(description)) out.riskyHit = description
         }
-        out.actionsTaken += actionList.length
+        out.actionsTaken += recoveryActions.length
         if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
         const recoveryScreenshotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-recovery`)
         addEvidence(out, "OBSERVE", "Captured the browser state after the evidence-driven recovery action.", {
