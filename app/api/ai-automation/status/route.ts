@@ -121,6 +121,8 @@ export async function POST(req: NextRequest) {
       setJobSecrets(jobId, {
         credentials: { username: String(username), password: String(password) },
       })
+      // Keep a runtime-only copy for legacy runner paths; job-store strips it from disk.
+      ;(job as any).pendingCredentials = { username: String(username), password: String(password) }
       ;(job as any).authState = "logged_in"
       ;(job as any).authPrompt = undefined
       saveJob(job)
@@ -132,6 +134,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "skip_auth") {
       setJobSecrets(jobId, { credentials: { username: "", password: "" } })
+      ;(job as any).pendingCredentials = { skip: true }
       ;(job as any).authState = "skipped"
       ;(job as any).authPrompt = undefined
       saveJob(job)
@@ -143,13 +146,13 @@ export async function POST(req: NextRequest) {
 
     if (action === "confirm_verification") {
       const { verificationUrl, verificationCode } = body
-      setJobSecrets(jobId, {
-        verification: {
-          completed: true,
-          verificationUrl: verificationUrl ? String(verificationUrl) : undefined,
-          verificationCode: verificationCode ? String(verificationCode) : undefined,
-        },
-      })
+      const verification = {
+        completed: true,
+        verificationUrl: verificationUrl ? String(verificationUrl) : undefined,
+        verificationCode: verificationCode ? String(verificationCode) : undefined,
+      }
+      setJobSecrets(jobId, { verification })
+      ;(job as any).pendingVerification = verification
       ;(job as any).verificationState = "verified"
       ;(job as any).verificationPrompt = undefined
       saveJob(job)
@@ -162,6 +165,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "skip_verification") {
       setJobSecrets(jobId, { verification: { skip: true } })
+      ;(job as any).pendingVerification = { skip: true }
       ;(job as any).verificationState = "skipped"
       ;(job as any).verificationPrompt = undefined
       saveJob(job)
@@ -185,6 +189,7 @@ export async function POST(req: NextRequest) {
         if (typeof value === "string") secretValues[key] = value
       }
       setJobSecrets(jobId, { settingsCredentials: secretValues })
+      ;(job as any).pendingSettingsCredentials = secretValues
       ;(job as any).settingsState = "configured"
       ;(job as any).settingsPrompt = undefined
       saveJob(job)
@@ -197,6 +202,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "skip_settings_credentials") {
       setJobSecrets(jobId, { settingsCredentials: { __skip: "true" } })
+      ;(job as any).pendingSettingsCredentials = { skip: true }
       ;(job as any).settingsState = "skipped"
       ;(job as any).settingsPrompt = undefined
       saveJob(job)
