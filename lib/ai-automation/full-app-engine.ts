@@ -871,8 +871,8 @@ function queueUnplannedLedgerActions(
   const candidates = ledger.entries
     .filter((entry) => entry.status === "untested" && (!onlyScreenId || entry.screenId === onlyScreenId))
     .sort((a, b) => {
-      const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(a.name.trim())
-      const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(b.name.trim())
+      const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(a.name.trim())
+      const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(b.name.trim())
       return Number(aDismiss) - Number(bDismiss)
     })
 
