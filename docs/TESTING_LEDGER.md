@@ -84,3 +84,45 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 ## Update log
 
 - **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, consequential-action risk classification, and browser fixture test requirements. Browser tests have not yet been run.
+
+## User-run visual/manual checks (labelled for later)
+
+**Status for every check below:** `NEEDS USER VISUAL CHECK — NOT RUN`. These are intentionally deferred until the user can open the app. Do not mark them passed based on TypeScript CI.
+
+### USER-CHECK-VIS-01 — AI Simulator UI and Action Ledger layout
+- **Goal:** Check the simulator is understandable, responsive, and does not duplicate or hide important actions/evidence.
+- **Steps:** Open the AI Simulator; start or open a test run; inspect the main controls, plan, current action, Action Ledger, evidence, and coverage/status areas. Check a narrow phone viewport and a desktop viewport when available.
+- **Evidence to capture:** One screenshot of the initial screen and one screenshot of a run showing the Action Ledger and coverage/status.
+- **Pass criteria:** Clear primary action; no overlapping, clipped, or unreachable controls; ledger entries and statuses are readable; blocked, passed, failed, and untested states are distinguishable.
+- **Result:** Pending user evidence.
+
+### USER-CHECK-VIS-02 — Real form input classification
+- **Goal:** Verify controls are classified by semantics rather than treating every field as generic text input.
+- **Steps:** Use a disposable test page/form with text, email, URL, search, telephone, password, checkbox, radio, select, and submit controls. Start analysis and inspect the generated candidates. Do not submit the form or use real credentials.
+- **Evidence to capture:** Screenshot of the form and screenshot of the candidate list/classifications.
+- **Pass criteria:** Text-like fields get type-appropriate tests; email/URL invalid-input tests target only supported types; checkbox/radio/select are not classified as text entry; submit remains blocked unless isolated safe test data and cleanup are configured.
+- **Result:** Pending user evidence.
+
+### USER-CHECK-VIS-03 — Destructive/consequential-action safety
+- **Goal:** Ensure risky actions are identified and not executed by default.
+- **Steps:** On a disposable fixture, inspect controls labelled with examples such as Delete, Pay, Purchase, Refund, Transfer, Send, Publish, Deploy, Invite, Change password, and Change access. Review the plan/ledger; do not confirm any real action.
+- **Evidence to capture:** Screenshot showing the candidate and its risk/blocked status.
+- **Pass criteria:** Destructive or consequential actions are blocked by default and clearly recorded; no external side effect occurs.
+- **Result:** Pending user evidence.
+
+### USER-CHECK-VIS-04 — Internal vs external link classification
+- **Goal:** Check URL origin handling, including deceptive prefix cases.
+- **Steps:** In a disposable fixture, inspect a same-origin link, a genuine external link, a malformed URL, and a prefix-confusion URL such as `https://trusted.example.attacker.invalid/`. Review candidate classification without following external links.
+- **Evidence to capture:** Screenshot of fixture links and the resulting classifications.
+- **Pass criteria:** Only true same-origin URLs are internal; external, malformed, and prefix-confusion destinations are treated conservatively as external.
+- **Result:** Pending user evidence.
+
+### USER-CHECK-VIS-05 — Coverage counts and completion status
+- **Goal:** Ensure a run does not claim completion while discovered work remains untested.
+- **Steps:** Start a disposable run with multiple safe candidates; leave at least one candidate untested or blocked. Inspect progress, remaining coverage, final status, and Action Ledger.
+- **Evidence to capture:** Screenshot showing total candidates, tested/blocked/untested counts, and final status.
+- **Pass criteria:** Counts reconcile; blocked and untested work remains visible; run is not labelled fully complete while unresolved applicable coverage remains.
+- **Result:** Pending user evidence.
+
+**How to resume:** Send the label (for example, `USER-CHECK-VIS-02`) with screenshots or observed results. Record each result and any defect here before changing its status to passed.
+
