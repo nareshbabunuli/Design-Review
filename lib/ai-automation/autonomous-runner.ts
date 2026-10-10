@@ -871,6 +871,7 @@ export async function executeAutonomousJob(
       issues: job.issues,
       testCases,
       flowGraph,
+      domDiscoveryGraph: job.domDiscoveryGraph,
       recordingUrl: recordingUrl || undefined,
       evidenceTrace: testCases.flatMap((t) => (t as TestCaseResult & { evidenceTrace?: EvidenceTrace[] }).evidenceTrace || []),
     } as AutomationJob["report"]
