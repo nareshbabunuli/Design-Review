@@ -186,5 +186,13 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 
 - [x] Disabled visible controls are retained as `blocked` inventory entries rather than permanently remaining `untested` (commit `04d2199ea8bca2a70b43663a38f5a49fd6a2c51a`).
 - [x] External-link and browser-history candidates that the policy intentionally does not auto-execute are recorded as `blocked` when they are the only remaining candidates (commit `d63ab3ef8b6bd09bdad7139e547a2849b219f8d2`).
-- [ ] TypeScript CI for commits #68 and #69 is still being checked; no pass is claimed for these two latest code changes yet.
+- [x] TypeScript validation passed for commits #68 (`04d2199ea8bca2a70b43663a38f5a49fd6a2c51a`, [run #69](https://github.com/nareshbabunuli/Design-Review/actions/runs/38081487980)), #69 (`d63ab3ef8b6bd09bdad7139e547a2849b219f8d2`, [run #70](https://github.com/nareshbabunuli/Design-Review/actions/runs/38081509181)), and documentation commit #70 (`7999f7f4351c0b2a3355c75fca0f14e4d39cf32e`, [run #71](https://github.com/nareshbabunuli/Design-Review/actions/runs/38081520068)).
 - [ ] These are code-review fixes, not proof from a live browser run. SPA state changes, actual interaction outcomes, route restoration, and full ledger reconciliation still require browser fixtures.
+
+
+### Follow-up code review — deferred navigation and honest completion
+
+- [x] Fixed a classification mismatch where same-origin links opened in a new tab, malformed/stale links, external URLs, and consequential navigation paths were intentionally not clicked but could be recorded as failed instead of blocked. The DOM probe now returns an explicit policy-blocked signal, and the decision loop records that distinction.
+- [x] Final autonomous-run messaging now distinguishes scenario execution finishing from DOM discovery coverage being incomplete, and includes Action Ledger tested/blocked/untested counts when available.
+- [ ] TypeScript CI for these follow-up code commits is running; record the result once complete.
+- [ ] Route graph edges, stronger same-URL/SPA state evidence, and automated browser fixtures remain the next code phases. No live-browser result is claimed.
