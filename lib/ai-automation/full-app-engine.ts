@@ -1577,11 +1577,46 @@ export async function executeStructuredTestPlan(
     page.once("dialog", dialogHandler)
 
     try {
-      // 1. Target Screen Navigation Check
+      // 1. Restore the target screen before executing its action.
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
-      if (targetScreen && !page.url().includes(targetScreen.path.split("#")[0])) {
-        await page.goto(targetScreen.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
-        await new Promise((r) => setTimeout(r, 400))
+      if (targetScreen) {
+        const targetBasePath = targetScreen.path.split("#")[0]
+        if (!page.url().includes(targetBasePath)) {
+          await page.goto(targetScreen.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+          await new Promise((r) => setTimeout(r, 400))
+        }
+
+        // Discovery assigns a synthetic #tab-name path to SPA views. The URL
+        // alone cannot restore those views, so reactivate the matching tab before
+        // testing its child controls. Modal states are kept open by queue priority.
+        const stateMarker = targetScreen.path.split("#")[1]
+        if (stateMarker && !stateMarker.startsWith("modal-")) {
+          let tabLabel = stateMarker
+          try { tabLabel = decodeURIComponent(stateMarker) } catch {}
+          tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
+          const activatedTab = await page.evaluate((name) => {
+            const candidates = Array.from(document.querySelectorAll(
+              '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
+            )) as HTMLElement[]
+            const normalize = (value: string) => value.trim().replace(/\\s+/g, " ").toLowerCase()
+            const tab = candidates.find((candidate) => {
+              const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
+              return label === name || label.includes(name)
+            })
+            if (!tab) return false
+            const isAlreadyActive =
+              tab.getAttribute("aria-selected") === "true" ||
+              tab.getAttribute("data-state") === "active" ||
+              tab.classList.contains("active")
+            if (!isAlreadyActive) tab.click()
+            return true
+          }, tabLabel).catch(() => false)
+          if (!activatedTab) {
+            appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
+          } else {
+            await new Promise((r) => setTimeout(r, 250))
+          }
+        }
       }
 
       // 2. Perform Action & Verify
