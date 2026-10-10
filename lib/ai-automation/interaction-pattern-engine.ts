@@ -334,7 +334,7 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
           : "Table is empty without an explicit empty state; investigate it.",
         0.99)
     }
-    const paginationTargets = elements.filter((el) => /\b(next|previous|prev|first page|last page|page \d+)\b/i.test(norm([el.label, el.text, el.role].filter(Boolean).join(" "))).map(target)
+    const paginationTargets = elements.filter((el) => /\b(next|previous|prev|first page|last page|page \d+)\b/i.test(norm([el.label, el.text, el.role].filter(Boolean).join(" ")))).map(target)
     const sortingTargets = elements.filter((el) => el.sortable || /\bsort\b/i.test(norm([el.label, el.text].filter(Boolean).join(" ")))).map(target)
     const filteringTargets = elements.filter((el) => /\bfilter\b/i.test(norm([el.label, el.text, el.placeholder].filter(Boolean).join(" ")))).map(target)
     if (table.hasPagination && paginationTargets.length) add(out, "pagination", paginationTargets.slice(0, 4), "Pagination controls are available.", 0.97)
