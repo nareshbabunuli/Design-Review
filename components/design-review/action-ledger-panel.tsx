@@ -6,11 +6,12 @@ import type { ActionLedger, ActionLedgerEntry } from "@/lib/ai-automation/types"
 
 type Props = {
   actionLedger?: ActionLedger
+  onViewEvidence?: (url: string) => void
 }
 
 type LedgerView = "live" | "queue" | "history"
 
-export default function ActionLedgerPanel({ actionLedger }: Props) {
+export default function ActionLedgerPanel({ actionLedger, onViewEvidence }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [activeView, setActiveView] = useState<LedgerView>("queue")
 
@@ -152,6 +153,15 @@ export default function ActionLedgerPanel({ actionLedger }: Props) {
                       )}
                       {entry.evidence?.observedOutcome && (
                         <div className="text-[10px] text-slate-500 mt-1 break-words">{entry.evidence.observedOutcome}</div>
+                      )}
+                      {entry.evidence?.afterScreenshotUrl && (
+                        <button
+                          type="button"
+                          onClick={() => onViewEvidence?.(entry.evidence!.afterScreenshotUrl!)}
+                          className="text-[10px] text-indigo-300 hover:text-indigo-200 underline underline-offset-2 mt-1"
+                        >
+                          View screenshot evidence
+                        </button>
                       )}
                       {(entry.history?.length || 0) > 1 && (
                         <div className="text-[9px] text-slate-600 mt-1 break-words" aria-label="Recent action attempts">
