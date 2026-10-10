@@ -289,7 +289,7 @@ export async function runHumanLikeDecisionLoop(
 
   for (let step = 0; step < maxSteps; step++) {
     const url = await page.url()
-    const stateKey = `${url}#${step > 0 ? lastStateKey : "initial"}`
+    const stateKey = url
     const state = await readPatternState(page, stateKey)
     const candidates = generateCandidateTests(state, { alreadyTestedIds: tested, maxCandidates: 18, allowMutating: true, allowDestructive: false })
     queueMissedCoverage(job, candidates)
