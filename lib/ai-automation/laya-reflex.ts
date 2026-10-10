@@ -11,7 +11,10 @@
 
 import type { Page } from "puppeteer"
 import { layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
-import type { AICommandInterpretation } from "./openrouter"
+type AICommandInterpretation = {
+  planSummary: string
+  actions: Array<{ type: "click" | "type"; target: string; value?: string; description: string; thought?: string }>
+}
 
 export type ReflexCandidate = {
   id: number
