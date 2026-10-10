@@ -3532,69 +3532,11 @@ export default function AISimulatorPage() {
             )}
 
             {bottomPanelTab === "actions" && (
-              <div className="space-y-1.5">
-                {(!activePlan?.steps || activePlan.steps.length === 0) ? (
-                  <div className="text-slate-500 text-center py-6">
-                    No action steps captured yet. Start a test to record chronological execution steps.
-                  </div>
-                ) : (
-                  activePlan.steps.map((step, idx) => (
-                    <div
-                      key={step.id || idx}
-                      className="flex items-center justify-between text-[11px] p-2 rounded bg-slate-900/70 border border-slate-800/60 hover:border-slate-700 transition"
-                    >
-                      <div className="flex items-center gap-2.5 overflow-hidden">
-                        <span className="text-slate-500 shrink-0 font-bold">#{step.stepIndex}</span>
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase shrink-0 ${
-                            step.actionType === "click"
-                              ? "bg-amber-950 text-amber-300 border border-amber-800/60"
-                              : step.actionType === "fill"
-                              ? "bg-indigo-950 text-indigo-300 border border-indigo-800/60"
-                              : "bg-emerald-950 text-emerald-300 border border-emerald-800/60"
-                          }`}
-                        >
-                          {step.actionType}
-                        </span>
-                        <span className="text-slate-200 font-medium truncate">{step.targetName}</span>
-                        {step.syntheticValue && (
-                          <span className="text-slate-400 text-[10px] truncate max-w-[140px] bg-slate-950 px-1 rounded border border-slate-800">
-                            &quot;{step.syntheticValue}&quot;
-                          </span>
-                        )}
-                        <span className="text-slate-500 text-[10px] hidden sm:inline truncate">
-                          ({step.screenName})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold capitalize ${
-                            step.status === "passed"
-                              ? "text-emerald-400"
-                              : step.status === "failed"
-                              ? "text-rose-400"
-                              : step.status === "running"
-                              ? "text-amber-400 animate-pulse"
-                              : "text-slate-500"
-                          }`}
-                        >
-                          {step.status}
-                        </span>
-                        {step.screenshotUrl && (
-                          <button
-                            type="button"
-                            onClick={() => setImagePreviewModal(step.screenshotUrl || null)}
-                            className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
-                            title="View screenshot"
-                          >
-                            <ImageIcon className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+              <ActionLedger
+                live={actionLedgerLive}
+                queue={actionLedgerQueue}
+                history={actionLedgerHistory}
+              />
             )}
           </div>
         </div>
