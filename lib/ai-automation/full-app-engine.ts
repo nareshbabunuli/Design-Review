@@ -733,6 +733,19 @@ function rebuildActionLedger(job: AutomationJob, entries: ActionLedgerEntry[]): 
   }
 }
 
+function stableActionKeyForScreen(screen: AppScreenNode, element: ActionableElement): string {
+  const rawKey = element.actionKey || [
+    "dom",
+    element.type,
+    element.name.trim().toLowerCase(),
+    element.selector || "",
+    element.href || "",
+    element.formId || "",
+  ].join("|")
+  const prefix = `screen|${screen.path}|`
+  return rawKey.startsWith(prefix) ? rawKey : `${prefix}${rawKey}`
+}
+
 function mergeScreenActionsIntoLedger(job: AutomationJob, screen: AppScreenNode): void {
   const existing = new Map<string, ActionLedgerEntry>(
     (job.actionLedger?.entries || []).map((entry) => [entry.actionKey, entry])
@@ -740,15 +753,7 @@ function mergeScreenActionsIntoLedger(job: AutomationJob, screen: AppScreenNode)
   const now = new Date().toISOString()
 
   for (const element of screen.actionableElements) {
-    const actionKey = element.actionKey || [
-      "dom",
-      screen.path,
-      element.type,
-      element.name.trim().toLowerCase(),
-      element.selector || "",
-      element.href || "",
-      element.formId || "",
-    ].join("|")
+    const actionKey = stableActionKeyForScreen(screen, element)
 
     element.actionKey = actionKey
     const previous = existing.get(actionKey)
@@ -2379,18 +2384,15 @@ export async function executeStructuredTestPlan(
 
       // Merge inventory into the existing screen instead of replacing it.
       // Stable keys preserve history and allow the queue to distinguish new actions.
-      const screenPathForKeys = currentScreen.path
       const knownElementKeys = new Set(
-        currentScreen.actionableElements.map((element) => element.actionKey || [
-          "dom", screenPathForKeys, element.type, element.name.trim().toLowerCase(),
-          element.selector || "", element.href || "", element.formId || "",
-        ].join("|"))
+        currentScreen.actionableElements.map((element) => {
+          const key = stableActionKeyForScreen(currentScreen, element)
+          element.actionKey = key
+          return key
+        })
       )
       for (const element of newInv.actionableElements) {
-        const key = element.actionKey || [
-          "dom", screenPathForKeys, element.type, element.name.trim().toLowerCase(),
-          element.selector || "", element.href || "", element.formId || "",
-        ].join("|")
+        const key = stableActionKeyForScreen(currentScreen, element)
         element.actionKey = key
         if (!knownElementKeys.has(key)) {
           currentScreen.actionableElements.push(element)
