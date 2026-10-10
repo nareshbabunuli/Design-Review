@@ -1,19 +1,24 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { ChevronDown, Layers } from "lucide-react"
 import type { ActionLedger, ActionLedgerEntry } from "@/lib/ai-automation/types"
 
 type Props = {
   actionLedger?: ActionLedger
   onViewEvidence?: (url: string) => void
+  autoExpand?: boolean
 }
 
 type LedgerView = "live" | "queue" | "history"
 
-export default function ActionLedgerPanel({ actionLedger, onViewEvidence }: Props) {
+export default function ActionLedgerPanel({ actionLedger, onViewEvidence, autoExpand = false }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [activeView, setActiveView] = useState<LedgerView>("queue")
+
+  useEffect(() => {
+    if (autoExpand) setExpanded(true)
+  }, [autoExpand])
 
   const entries = useMemo(() => {
     if (!actionLedger) return []
@@ -67,7 +72,7 @@ export default function ActionLedgerPanel({ actionLedger, onViewEvidence }: Prop
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="w-full px-3.5 py-3 flex items-center justify-between gap-3 hover:bg-slate-900 transition"
+        className="w-full px-3.5 py-3 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-900 transition"
       >
         <div className="flex items-center gap-2 min-w-0">
           <Layers className="h-4 w-4 text-indigo-400 shrink-0" />
@@ -78,7 +83,7 @@ export default function ActionLedgerPanel({ actionLedger, onViewEvidence }: Prop
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
           <span className="px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-[10px] font-bold text-amber-300">
             {actionLedger.untested} queued
           </span>
