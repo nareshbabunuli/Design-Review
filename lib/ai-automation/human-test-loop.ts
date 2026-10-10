@@ -42,17 +42,38 @@ function visibleSelector(el: Element): string {
 async function readPatternState(page: Page, stateKey: string): Promise<PatternState> {
   return page.evaluate((key) => {
     const visibleSelector = (el: Element): string => {
+      const unique = (selector: string) => {
+        try { return document.querySelectorAll(selector).length === 1 } catch { return false }
+      }
       const html = el as HTMLElement
-      if (html.id) return "#" + CSS.escape(html.id)
+      if (html.id) {
+        const byId = "#" + CSS.escape(html.id)
+        if (unique(byId)) return byId
+      }
       const aria = html.getAttribute("aria-label")
-      if (aria) return '[aria-label="' + CSS.escape(aria) + '"]'
+      if (aria) {
+        const byAria = html.tagName.toLowerCase() + "[aria-label=" + JSON.stringify(aria) + "]"
+        if (unique(byAria)) return byAria
+      }
       const name = html.getAttribute("name")
-      if (name) return '[name="' + CSS.escape(name) + '"]'
-      const tag = html.tagName.toLowerCase()
-      const parent = html.parentElement
-      if (!parent) return tag
-      const siblings = Array.from(parent.children).filter((x) => x.tagName === html.tagName)
-      return tag + ":nth-of-type(" + (siblings.indexOf(html) + 1) + ")"
+      if (name) {
+        const byName = html.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]"
+        if (unique(byName)) return byName
+      }
+      const parts: string[] = []
+      let current: Element | null = el
+      while (current && current !== document.documentElement) {
+        const tag = current.tagName.toLowerCase()
+        const parent: Element | null = current.parentElement
+        if (!parent) { parts.unshift(tag); break }
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
+        const segment = siblings.length > 1 ? tag + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tag
+        parts.unshift(segment)
+        const candidate = parts.join(" > ")
+        if (unique(candidate)) return candidate
+        current = parent
+      }
+      return parts.join(" > ") || el.tagName.toLowerCase()
     }
     const visible = (el: Element) => {
       const h = el as HTMLElement
@@ -67,7 +88,7 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         .replace(/\s+/g, " ").trim().slice(0, 100)
     }
     const elements = Array.from(document.querySelectorAll(
-      'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"]'
+      'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[role="tab"],[role="menuitem"],[role="option"],[onclick],[tabindex]:not([tabindex="-1"])'
     )).filter(visible).slice(0, 120).map((el) => {
       const input = el as HTMLInputElement
       return {
@@ -86,7 +107,8 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         expanded: el.getAttribute("aria-expanded") === null ? undefined : el.getAttribute("aria-expanded") === "true",
         pressed: el.getAttribute("aria-pressed") === null ? undefined : el.getAttribute("aria-pressed") === "true",
         sortable: !!el.closest("th")?.hasAttribute("aria-sort") || !!el.closest('[role="columnheader"]')?.hasAttribute("aria-sort"),
-        accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("title") || (el as HTMLElement).innerText?.trim() || input.placeholder || input.labels?.length),
+        accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title") || (el as HTMLElement).innerText?.trim() || input.placeholder || input.labels?.length),
+        clickHandler: el.hasAttribute("onclick") || (el as HTMLElement).tabIndex >= 0,
 
       }
     })
@@ -465,7 +487,7 @@ function ensureLedger(job: AutomationJob) {
   return job.actionLedger
 }
 
-function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "passed" | "failed" | "blocked", observation: string, screenUrl: string) {
+function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "passed" | "failed" | "blocked", observation: string, screenUrl: string, screenshots?: { before?: string; after?: string }) {
   const ledger = ensureLedger(job)
   const now = new Date().toISOString()
   const actionKey = candidate.id
@@ -475,8 +497,8 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
     existing.attempts += 1
     existing.lastTestedAt = now
     existing.error = status === "failed" || status === "blocked" ? observation : undefined
-    existing.evidence = { ...(existing.evidence || {}), observedOutcome: observation }
-    existing.history = [...(existing.history || []), { status, timestamp: now, observedOutcome: observation, error: existing.error }]
+    existing.evidence = { ...(existing.evidence || {}), observedOutcome: observation, beforeScreenshotUrl: screenshots?.before || existing.evidence?.beforeScreenshotUrl, afterScreenshotUrl: screenshots?.after || existing.evidence?.afterScreenshotUrl }
+    existing.history = [...(existing.history || []), { status, timestamp: now, observedOutcome: observation, error: existing.error, beforeScreenshotUrl: screenshots?.before, afterScreenshotUrl: screenshots?.after }]
   } else {
     ledger.entries.push({
       actionKey,
@@ -493,8 +515,8 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
       attempts: 1,
       discoveredAt: candidate.generatedAt,
       lastTestedAt: now,
-      evidence: { observedOutcome: observation },
-      history: [{ status, timestamp: now, observedOutcome: observation, error: status === "failed" || status === "blocked" ? observation : undefined }],
+      evidence: { observedOutcome: observation, beforeScreenshotUrl: screenshots?.before, afterScreenshotUrl: screenshots?.after },
+      history: [{ status, timestamp: now, observedOutcome: observation, error: status === "failed" || status === "blocked" ? observation : undefined, beforeScreenshotUrl: screenshots?.before, afterScreenshotUrl: screenshots?.after }],
     })
   }
   ledger.untestedQueue = ledger.untestedQueue.filter((id) => id !== actionKey)
@@ -521,7 +543,7 @@ function queueMissedCoverage(job: AutomationJob, candidates: CandidateTest[]) {
 export async function runHumanLikeDecisionLoop(
   job: AutomationJob,
   page: Page,
-  options?: { maxSteps?: number; layaBaseUrl?: string },
+  options?: { maxSteps?: number; layaBaseUrl?: string; captureScreenshot?: (label: string) => Promise<string> },
 ): Promise<{ actions: AgentAction[]; issues: AutomationIssue[]; completed: boolean; missedCoverage: string[] }> {
   const actions: AgentAction[] = []
   const issues: AutomationIssue[] = []
@@ -534,9 +556,9 @@ export async function runHumanLikeDecisionLoop(
   page.on("pageerror", onPageError)
   page.on("requestfailed", onRequestFailed)
   page.on("response", onResponse)
-  const maxSteps = Math.max(1, Math.min(options?.maxSteps ?? MAX_LOOP_STEPS, 50))
+  const maxSteps = Math.max(0, Math.min(options?.maxSteps ?? MAX_LOOP_STEPS, 50))
   const layaUrl = (options?.layaBaseUrl || job.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL).replace(/\/$/, "")
-  const tested = new Set<string>()
+  const tested = new Set<string>((job.actionLedger?.entries || []).map((entry) => entry.actionKey))
   let lastStateKey = ""
 
   for (let step = 0; step < maxSteps; step++) {
@@ -609,11 +631,13 @@ export async function runHumanLikeDecisionLoop(
     }
 
     const started = Date.now()
-    job.currentStep = `Laya selected: ${selected.title}`
+    job.currentStep = "Laya selected: " + selected.title
+    const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
     const observation = await executeCandidate(page, selected)
+    const afterScreenshotUrl = await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
     tested.add(selected.id)
     const status = observation.ok ? "passed" : (observation.blocked || isDestructive(selected) ? "blocked" : "failed")
-    recordLedger(job, selected, status, observation.observation, url)
+    recordLedger(job, selected, status, observation.observation, url, { before: beforeScreenshotUrl, after: afterScreenshotUrl })
 
     const action: AgentAction = {
       id: `human-loop-${Date.now()}-${step}`,
@@ -622,6 +646,7 @@ export async function runHumanLikeDecisionLoop(
       thought: `Laya-selected candidate: ${selected.goal}`,
       target: selected.target?.selector || selected.target?.href,
       observation: observation.observation,
+      screenshotUrl: afterScreenshotUrl || undefined,
       status: status === "blocked" ? "blocked" : status,
       durationMs: Date.now() - started,
       timestamp: new Date().toISOString(),
