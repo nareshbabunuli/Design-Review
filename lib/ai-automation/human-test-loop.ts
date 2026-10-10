@@ -188,7 +188,8 @@ function chooseCriteria(candidates: CandidateTest[]): Record<string, string> {
 
 function readChoice(answer: any): { index: number; confidence: number } | null {
   const raw = String(answer?.choice ?? answer?.label ?? answer?.value ?? "")
-  const match = raw.match(/test_(\d+)/i)
+  if (/^\\s*(escalate|stop|none)\\b/i.test(raw)) return { index: -1, confidence: 1 }
+  const match = raw.match(/test_(\\d+)/i)
   if (!match) return null
   const scoreValue = answer?.confidence ?? answer?.probability ?? answer?.score
   // Laya often omits confidence for choice answers. A valid listed choice is still a decision.
@@ -506,7 +507,7 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
       screenUrl,
       screenPath: (() => { try { return new URL(screenUrl).pathname } catch { return screenUrl } })(),
       name: candidate.title,
-      type: (() => { const v = (candidate.target?.elementType || "").toLowerCase(); return (["button","clickable","link","input","select","checkbox","radio","toggle","tab","menu","form","file_upload","other"].includes(v) ? v : candidate.target?.href ? "link" : "other") as import("./types").ActionableElementType })(),
+      type: (() => { const role = (candidate.target?.role || "").toLowerCase(); const v = (candidate.target?.elementType || "").toLowerCase(); if (role === "tab") return "tab" as const; if (role === "menuitem") return "menu" as const; if (role === "switch") return "toggle" as const; if (role === "checkbox" || v === "checkbox") return "checkbox" as const; if (role === "radio" || v === "radio") return "radio" as const; if (role === "button" || v === "button") return "button" as const; if (role === "link" || candidate.target?.href || v === "a") return "link" as const; if (["input","select","textarea"].includes(v)) return (v === "select" ? "select" : "input") as const; return "other" as const })(),
       selector: candidate.target?.selector,
       href: candidate.target?.href,
       interactionConfidence: candidate.priority / 100,
@@ -551,7 +552,7 @@ export async function runHumanLikeDecisionLoop(
   const onConsole = (message: any) => { if (message.type?.() === "error") runtimeEvidence.consoleErrors.push(String(message.text?.() || "Console error").slice(0, 300)) }
   const onPageError = (error: Error) => runtimeEvidence.pageErrors.push(String(error?.message || error).slice(0, 300))
   const onRequestFailed = (request: any) => runtimeEvidence.failedRequests.push((String(request.method?.() || "GET") + " " + String(request.url?.() || "") + ": " + String(request.failure?.()?.errorText || "request failed")).slice(0, 400))
-  const onResponse = (response: any) => { if (response.status?.() >= 400) runtimeEvidence.badResponses.push((String(response.status()) + " " + String(response.request?.()?.method?.() || "GET") + " " + String(response.url?.() || "")).slice(0, 400)) }
+  const onResponse = (response: any) => { if (response.status?.() >= 400) runtimeEvidence.badResponses.push((String(response.request?.()?.resourceType?.() || "other") + " " + String(response.status()) + " " + String(response.request?.()?.method?.() || "GET") + " " + String(response.url?.() || "")).slice(0, 400)) }
   page.on("console", onConsole)
   page.on("pageerror", onPageError)
   page.on("requestfailed", onRequestFailed)
@@ -572,7 +573,7 @@ export async function runHumanLikeDecisionLoop(
       resource404Count: runtimeEvidence.badResponses.filter((entry) => /^404\s/.test(entry)).length,
     }
     const stateSignature = JSON.stringify({
-      elements: state.elements.map((el) => [el.selector, el.label, el.type, el.disabled]),
+      elements: state.elements.map((el) => [el.selector, el.label, el.type, el.disabled, el.expanded, el.pressed, el.accessibleName]),
       forms: state.forms.map((form) => [form.name, form.fields.map((field) => [field.name, field.type, field.required])]),
       tables: state.tables.map((table) => [table.name, table.rowCount, table.hasExplicitEmptyState]),
       dialogs: state.dialogs.map((dialog) => dialog.label),
@@ -650,7 +651,8 @@ export async function runHumanLikeDecisionLoop(
     ]
     const stepFailedRequests = runtimeEvidence.failedRequests.slice(evidenceBaseline.failedRequests)
     const stepBadResponses = runtimeEvidence.badResponses.slice(evidenceBaseline.badResponses)
-    const unexplainedEmptyTables = state.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
+    const observedPostState = await readPatternState(page, await page.url()).catch(() => state)
+    const unexplainedEmptyTables = observedPostState.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
     if (unexplainedEmptyTables.length && (stepConsoleErrors.length || stepFailedRequests.length || stepBadResponses.length)) {
       const networkFailures = [
         ...stepFailedRequests.map((entry) => ({
@@ -666,7 +668,7 @@ export async function runHumanLikeDecisionLoop(
       issues.push({
         id: "correlated-ui-data-" + Date.now() + "-" + step,
         screenUrl: url,
-        screenTitle: state.title || url,
+        screenTitle: observedPostState.title || state.title || url,
         type: "correlated_ui_data_failure",
         severity: hasServerFailure ? "high" : "medium",
         description: "A data table has no rows or explicit empty state while new console/network failures occurred during the same action.",
@@ -732,7 +734,7 @@ export async function runHumanLikeDecisionLoop(
   ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
   ledger.updatedAt = new Date().toISOString()
   const missedCoverage = [...new Set(ledger.untestedQueue)]
-  const completed = missedCoverage.length === 0
+  const completed = maxSteps > 0 && missedCoverage.length === 0
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
   if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
   return { actions, issues, completed, missedCoverage }
