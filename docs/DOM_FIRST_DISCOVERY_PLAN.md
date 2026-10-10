@@ -30,8 +30,8 @@
 - [x] Add a bounded in-memory queue of discovered internal URLs during the decision loop (persistent route-queue recovery remains future work).
 - [x] Visit queued same-origin routes, inventory their DOM, explore safe local state changes, and return to the recorded parent URL.
 - [x] Record bounded DOM route/state graph edges with source/destination state IDs, triggering action/selector, observed outcome, and transition type; expose it separately from the Stagehand scenario graph in the report.
-- [ ] Re-scan after modal/tab/dropdown/form-state changes and enqueue newly revealed controls/states.
-- [ ] Fully handle SPA route changes, hash navigation, and multi-tab links explicitly. Same-URL transitions are recorded when the DOM inventory changes; unchanged same-URL clicks remain unverified.
+- [x] Re-scan after successful safe interactions; newly revealed controls are persisted as untested ledger entries and state changes are added to the graph.
+- [ ] Fully handle SPA route changes, hash navigation, and multi-tab links explicitly. URL changes after safe interactions are now detected and graphed; event-level navigation observation and multi-tab exploration remain outstanding.
 - [ ] Bound total routes/actions/time, but report remaining work as incomplete rather than silently dropping it.
 
 ### Phase 3 — Central runner integration
@@ -43,8 +43,9 @@
 - [x] Destination screenshots/DOM inventories and unresolved counts are recorded in the Action Ledger and final report; route graph/report enrichment remains.
 
 ### Phase 4 — Tests and release evidence
-- [ ] Add isolated DOM fixture tests for internal links, external/prefix-confusion links, SPA routes, popups, tabs, forms, target=_blank, navigation loops, and restoration failure.
-- [ ] Run TypeScript CI and automated fixture tests.
+- [x] Add an isolated browser fixture for modal/tab/SPA/hash-revealed controls and a restoration-failure contract check. The restoration check is a unit-level simulation, not a live failure in the production navigation helper.
+- [ ] Extend fixtures to real navigation restoration failures, external/prefix-confusion links, popups, forms, target=_blank, and navigation loops.
+- [ ] Confirm TypeScript CI and automated browser fixture workflow pass on the latest branch tip.
 - [ ] Run a browser end-to-end test against a disposable sample app.
 - [ ] Confirm unresolved/blocked counts prevent a false “complete” result.
 - [ ] Record actual evidence in `docs/TESTING_LEDGER.md`; do not infer browser correctness from typecheck success.
@@ -70,3 +71,15 @@ This is **not yet a proven complete recursive explorer**. Remaining work include
 - [x] Record observed source/destination nodes and transition edges with action label, selector, transition kind, outcome status, timestamp, and bounded evidence text.
 - [x] Bound graph growth at 200 nodes and 400 edges; exceeding either cap sets truncated: true rather than silently implying complete graph coverage.
 - [ ] TypeScript CI and browser fixture/E2E validation for this change are pending.
+
+
+### Follow-up implementation — 2026-10-10
+
+- [x] Successful safe non-link interactions trigger a fresh DOM inventory; newly revealed controls are queued as untested and observed state transitions are added to the bounded graph.
+- [x] A truncated route/state graph prevents the discovery loop from reporting `completed: true`.
+- [x] Restoration failures are no longer automatically classified as policy-blocked; they remain failures. (The final report/ledger should be checked for a dedicated unresolved restoration marker.)
+- [x] Added `tests/fixtures/dom-discovery.html` and `tests/dom-discovery.test.mjs` covering revealed controls across modal, tab, SPA and hash changes plus a simulated restoration-failure contract.
+- [x] Added `test:dom-discovery` and a GitHub Actions step to install Chrome and run the fixture tests.
+- [ ] CI for these latest commits is running; do not claim fixture success until it completes.
+- [ ] The restoration fixture currently simulates a failed restore contract; it does not yet induce a failure inside `exploreInternalLinkAndReturn` itself.
+- [ ] Event-level tracking of `pushState`/`replaceState`/`popstate`/`hashchange` and real browser restoration failure remain to be implemented and validated.
