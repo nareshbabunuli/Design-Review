@@ -290,6 +290,8 @@ export type ActionLedgerEntry = {
 
 export type ActionLedger = {
   entries: ActionLedgerEntry[]
+  /** Stable queue of actions that still need execution. */
+  untestedQueue: string[]
   updatedAt: string
   total: number
   untested: number
@@ -449,6 +451,8 @@ export type TestPlanStep = {
     | "modal_close"
   targetName: string
   targetSelector?: string
+  /** Stable Action Ledger identity for the DOM action this step executes. */
+  actionKey?: string
   syntheticValue?: string
   fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
   expectedResult: string
