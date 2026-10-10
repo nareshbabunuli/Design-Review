@@ -2382,42 +2382,44 @@ export async function executeStructuredTestPlan(
         appendLog(job, "success", `🌟 [NEW DISCOVERY] Found ${hasActiveModal ? "modal/view" : "screen"} ${newScreenId}: "${currentScreenName}" during test.`)
       }
 
+      const resolvedScreen = currentScreen as AppScreenNode
+
       // Merge inventory into the existing screen instead of replacing it.
       // Stable keys preserve history and allow the queue to distinguish new actions.
       const knownElementKeys = new Set(
-        currentScreen.actionableElements.map((element) => {
-          const key = stableActionKeyForScreen(currentScreen, element)
+        resolvedScreen.actionableElements.map((element) => {
+          const key = stableActionKeyForScreen(resolvedScreen, element)
           element.actionKey = key
           return key
         })
       )
       for (const element of newInv.actionableElements) {
-        const key = stableActionKeyForScreen(currentScreen, element)
+        const key = stableActionKeyForScreen(resolvedScreen, element)
         element.actionKey = key
         if (!knownElementKeys.has(key)) {
-          currentScreen.actionableElements.push(element)
+          resolvedScreen.actionableElements.push(element)
           knownElementKeys.add(key)
         }
       }
 
       const knownFormKeys = new Set(
-        currentScreen.forms.map((form) => [form.id, form.selector || "", form.name || ""].join("|").toLowerCase())
+        resolvedScreen.forms.map((form) => [form.id, form.selector || "", form.name || ""].join("|").toLowerCase())
       )
       for (const form of newInv.forms) {
         const key = [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()
         if (!knownFormKeys.has(key)) {
-          currentScreen.forms.push(form)
+          resolvedScreen.forms.push(form)
           knownFormKeys.add(key)
         }
       }
 
-      currentScreen.url = currentUrl
-      if (step.screenshotUrl) currentScreen.screenshotUrl = step.screenshotUrl
-      mergeScreenActionsIntoLedger(job, currentScreen)
+      resolvedScreen.url = currentUrl
+      if (step.screenshotUrl) resolvedScreen.screenshotUrl = step.screenshotUrl
+      mergeScreenActionsIntoLedger(job, resolvedScreen)
       linkTestPlanStepsToLedger(job, testPlan)
-      const queuedNow = queueUnplannedLedgerActions(job, testPlan, currentScreen.id, i)
+      const queuedNow = queueUnplannedLedgerActions(job, testPlan, resolvedScreen.id, i)
       if (queuedNow > 0) {
-        appendLog(job, "info", `[COVERAGE] "${currentScreen.name}" now has ${currentScreen.actionableElements.length} known controls; ${queuedNow} new/unplanned action(s) queued for execution.`)
+        appendLog(job, "info", `[COVERAGE] "${resolvedScreen.name}" now has ${resolvedScreen.actionableElements.length} known controls; ${queuedNow} new/unplanned action(s) queued for execution.`)
       }
       saveJob(job)
 
