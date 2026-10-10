@@ -209,6 +209,8 @@ function generateMarkdownReportText(params: {
     suspectedSteps,
     failedSteps,
     skippedUnsafe,
+    blockedSteps,
+    pendingSteps,
     totalScreens,
     totalIssues,
     summary,
