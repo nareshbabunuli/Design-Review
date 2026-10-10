@@ -2190,6 +2190,21 @@ export async function executeStructuredTestPlan(
     }
   }
 
+  // Do not finish while executable work remains in the queue. Newly discovered
+  // actions are appended during execution, so this final guard catches any
+  // pending items that were not consumed by the main loop.
+  const remainingQueued = testPlan.steps.filter((queued) => queued.status === "pending" || queued.status === "running")
+  if (remainingQueued.length > 0) {
+    appendLog(job, "warn", `Coverage queue still contains ${remainingQueued.length} unverified action(s); run remains incomplete.`)
+    testPlan.status = "error"
+    job.testingPhase = "executing"
+    job.status = "failed"
+    job.progress = Math.min(job.progress, 99)
+    job.currentStep = `Execution stopped with ${remainingQueued.length} unverified queued action(s).`
+    saveJob(job)
+    return
+  }
+
   // PHASE 4: Chained Multi-Step Workflows ("go next next" & state persistence)
   if (!options?.skipWorkflows) {
     appendLog(job, "info", `Starting Phase 4: Chained Workflow Execution & State Persistence...`)
