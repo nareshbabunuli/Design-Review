@@ -456,32 +456,87 @@ export async function runWithLadder(
   let observedEffect: ObservedEffect = "no_effect"
   let settleDurationMs = 0
 
-  // Locate element handle
-  const findHandle = async (): Promise<ElementHandle<Element> | null> => {
-    if (targetSelector) {
+  // Resolve the target using stable DOM semantics before falling back to coordinates.
+  const resolveTarget = async (): Promise<ElementHandle<Element> | null> => {
+    const selectors = [
+      targetSelector,
+      targetSelector?.startsWith("#") ? targetSelector : undefined,
+      targetName ? `[aria-label="${targetName.replace(/"/g, '\\\"')}"]` : undefined,
+      targetName ? `[name="${targetName.replace(/"/g, '\\\"')}"]` : undefined,
+    ].filter(Boolean) as string[]
+
+    for (const selector of selectors) {
       try {
-        const h = await page.$(targetSelector)
-        if (h) return h
+        const handle = await page.$(selector)
+        if (handle) {
+          const usable = await page.evaluate((el) => {
+            const e = el as HTMLElement
+            const r = e.getBoundingClientRect()
+            const s = getComputedStyle(e)
+            return r.width > 1 && r.height > 1 &&
+              s.display !== "none" &&
+              s.visibility !== "hidden" &&
+              s.opacity !== "0" &&
+              !(e as HTMLButtonElement).disabled &&
+              e.getAttribute("aria-disabled") !== "true"
+          }, handle)
+          if (usable) return handle
+        }
       } catch {}
     }
-    // Fallback: evaluate element search
-    const handles = await page.$$("button, a, [role='button'], input[type='button'], input[type='submit']")
-    for (const h of handles) {
-      const match = await page.evaluate(
-        (el, name) => {
-          const txt = (el.textContent || (el as HTMLInputElement).value || el.getAttribute("aria-label") || "").trim().toLowerCase()
-          const target = name.toLowerCase()
-          return txt === target || txt.includes(target) || target.includes(txt)
-        },
-        h,
-        targetName
-      )
-      if (match) return h
+
+    const handles = await page.$$("button, a, [role='button'], input[type='button'], input[type='submit'], [role='link'], [role='tab'], [role='menuitem']")
+    let best: ElementHandle<Element> | null = null
+    let bestScore = 0
+
+    for (const handle of handles) {
+      const score = await page.evaluate((el, name) => {
+        const e = el as HTMLElement
+        const r = e.getBoundingClientRect()
+        const s = getComputedStyle(e)
+        if (r.width <= 1 || r.height <= 1 || s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return 0
+        if ((e as HTMLButtonElement).disabled || e.getAttribute("aria-disabled") === "true") return 0
+
+        const norm = (v: string) => v.replace(/\\s+/g, " ").trim().toLowerCase()
+        const wanted = norm(name)
+        const text = norm(e.innerText || e.textContent || "")
+        const aria = norm(e.getAttribute("aria-label") || "")
+        const title = norm(e.getAttribute("title") || "")
+        const id = norm(e.id || "")
+        const testId = norm(e.getAttribute("data-testid") || e.getAttribute("data-test-id") || "")
+
+        if (!wanted) return 0
+        if (aria === wanted || text === wanted || title === wanted || id === wanted || testId === wanted) return 100
+        if (aria.includes(wanted) || text.includes(wanted)) return 70
+        if (wanted.includes(text) && text.length > 2) return 55
+        return 0
+      }, handle, targetName)
+
+      if (score > bestScore) {
+        bestScore = score
+        best = handle
+      }
     }
-    return null
+    return best
   }
 
-  const handle = await findHandle()
+  const getBlockingElement = async (handle: ElementHandle<Element>) => {
+    return await page.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      if (r.width <= 1 || r.height <= 1) return { blocked: false, reason: "not-visible" }
+      const x = r.left + r.width / 2
+      const y = r.top + r.height / 2
+      const top = document.elementFromPoint(x, y)
+      if (!top || top === el || el.contains(top)) return { blocked: false }
+      const blocking = top.closest("[role='dialog'], dialog[open], [aria-modal='true'], .modal, [data-modal], button, [role='button'], [aria-label]")
+      return {
+        blocked: Boolean(blocking && blocking !== el && !el.contains(blocking)),
+        reason: blocking ? ((blocking as HTMLElement).innerText || blocking.getAttribute("aria-label") || blocking.tagName).trim().slice(0, 120) : "unknown-overlay"
+      }
+    }, handle)
+  }
+
+  const handle = await resolveTarget()
   if (!handle) {
     return {
       verdict: "blocked",
@@ -495,12 +550,31 @@ export async function runWithLadder(
     }
   }
 
-  // --- Attempt 1: Real ElementHandle click ---
+  await page.evaluate((el) => (el as HTMLElement).scrollIntoView?.({ block: "center", inline: "center" }), handle).catch(() => {})
+
+  // Never blindly click through an overlay. Record the blocker and let the caller's
+  // existing modal/human-action flow handle it first.
+  const blocker = await getBlockingElement(handle)
+  if (blocker.blocked) {
+    coveredElementDetected = true
+    return {
+      verdict: "blocked",
+      observedEffect: "no_effect",
+      reason: `Target "${targetName}" is blocked by an overlay/modal (${blocker.reason}). Overlay must be handled before the underlying action.`,
+      retriesUsed: 0,
+      isWeakPass: false,
+      settleDurationMs: 0,
+      coveredElementDetected,
+      beforeSnapshot: before,
+      afterSnapshot: before,
+    }
+  }
+
+  // Primary path: real DOM click. This remains the safest and most deterministic path.
   try {
-    await page.evaluate((el) => (el as HTMLElement).scrollIntoView?.({ block: "center" }), handle).catch(() => {})
     await handle.click({ delay: 20 })
   } catch (err: any) {
-    console.warn("[outcome-verifier] handle.click error:", err?.message)
+    console.warn("[outcome-verifier] DOM click failed:", err?.message)
   }
 
   settleDurationMs = await settle(page, netRecorder, options.maxSettleMs || 3000)
@@ -513,55 +587,22 @@ export async function runWithLadder(
     options.dialogShownRef.value
   )
 
-  // --- Attempt 2: Bounding box hover + center click ---
+  // Secondary path: re-resolve the element in case the DOM changed after the first attempt.
   if (observedEffect === "no_effect" && !options.dialogShownRef.value) {
     retriesUsed = 1
-    const box = await handle.boundingBox()
-    if (box) {
-      const centerX = box.x + box.width / 2
-      const centerY = box.y + box.height / 2
-
-      // Check if element is partially covered
-      const covered = await page.evaluate(
-        (x, y, el) => {
-          const topEl = document.elementFromPoint(x, y)
-          return topEl !== null && topEl !== el && !el.contains(topEl)
-        },
-        centerX,
-        centerY,
-        handle
-      )
-
-      if (covered) {
+    const freshHandle = await resolveTarget()
+    if (freshHandle) {
+      const freshBlocker = await getBlockingElement(freshHandle)
+      if (freshBlocker.blocked) {
         coveredElementDetected = true
+      } else {
+        try {
+          await freshHandle.click({ delay: 20 })
+        } catch {
+          // Coordinate fallback below is intentionally last resort.
+        }
       }
-
-      await page.mouse.move(centerX, centerY)
-      await page.mouse.down()
-      await new Promise((r) => setTimeout(r, 40))
-      await page.mouse.up()
-
-      settleDurationMs += await settle(page, netRecorder, 2000)
-      after = await captureState(page)
-      observedEffect = classifyEffect(
-        before,
-        after,
-        netRecorder.getCapturedCalls(),
-        consoleRecorder.getErrors(),
-        options.dialogShownRef.value
-      )
     }
-  }
-
-  // --- Attempt 3: Focus + Keyboard Enter / Space ---
-  if (observedEffect === "no_effect" && !options.dialogShownRef.value) {
-    retriesUsed = 2
-    try {
-      await handle.focus()
-      await page.keyboard.press("Enter")
-      await new Promise((r) => setTimeout(r, 100))
-      await page.keyboard.press("Space")
-    } catch {}
 
     settleDurationMs += await settle(page, netRecorder, 2000)
     after = await captureState(page)
@@ -574,7 +615,39 @@ export async function runWithLadder(
     )
   }
 
-  // Evaluate final verdict
+  // Last-resort physical click. Only use coordinates after DOM resolution/clicking failed.
+  if (observedEffect === "no_effect" && !options.dialogShownRef.value) {
+    retriesUsed = 2
+    const fallbackHandle = await resolveTarget()
+    if (fallbackHandle) {
+      const box = await fallbackHandle.boundingBox()
+      if (box) {
+        const centerX = box.x + box.width / 2
+        const centerY = box.y + box.height / 2
+        const top = await page.evaluate((x, y) => document.elementFromPoint(x, y), centerX, centerY).catch(() => null)
+        if (top) {
+          const sameTarget = await page.evaluate((point, el) => point === el || el.contains(point), top, fallbackHandle).catch(() => false)
+          if (!sameTarget) {
+            coveredElementDetected = true
+          } else {
+            await page.mouse.move(centerX, centerY)
+            await page.mouse.click(centerX, centerY)
+          }
+        }
+      }
+    }
+
+    settleDurationMs += await settle(page, netRecorder, 2000)
+    after = await captureState(page)
+    observedEffect = classifyEffect(
+      before,
+      after,
+      netRecorder.getCapturedCalls(),
+      consoleRecorder.getErrors(),
+      options.dialogShownRef.value
+    )
+  }
+
   let verdict: AutomationVerdict = "suspected_non_functional"
   let reason = ""
 
@@ -585,15 +658,14 @@ export async function runWithLadder(
     verdict = "passed"
     if (retriesUsed > 0) {
       isWeakPass = true
-      reason = `Passed on fallback ladder attempt ${retriesUsed + 1} (${observedEffect}). ${coveredElementDetected ? "Note: Element appears partially covered." : ""}`
+      reason = `Passed after DOM-resolution retry ${retriesUsed + 1} (${observedEffect}).${coveredElementDetected ? " Element coverage was also checked." : ""}`
     } else {
       reason = `Observed expected effect: ${observedEffect}.`
     }
   } else if (observedEffect === "no_effect") {
     verdict = "suspected_non_functional"
-    reason = `Element was clicked through all 3 ladder stages (real pointer, center coordinate, keyboard) but produced zero observable UI, navigation, media or network change. Suspected non-functional or placeholder control.`
+    reason = `Target was resolved and attempted through DOM-first interaction, with coordinate fallback only as the final stage, but produced no observable UI, navigation, media or network change.`
   } else {
-    // Some effect happened, but wasn't in explicit expected set
     verdict = "passed"
     reason = `Observed effect "${observedEffect}" (expected: ${expectedEffects.join(", ")}).`
   }
