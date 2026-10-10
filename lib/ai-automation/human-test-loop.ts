@@ -109,10 +109,6 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         sortable: el.getAttribute("aria-sort") != null || el.hasAttribute("data-sortable"),
         accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || (el as HTMLInputElement).labels?.length || el.textContent?.trim() || input.placeholder || input.title),
 
-        expanded: el.getAttribute("aria-expanded") === null ? undefined : el.getAttribute("aria-expanded") === "true",
-        pressed: el.getAttribute("aria-pressed") === null ? undefined : el.getAttribute("aria-pressed") === "true",
-        sortable: !!el.closest("th")?.hasAttribute("aria-sort") || !!el.closest('[role="columnheader"]')?.hasAttribute("aria-sort"),
-        accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title") || (el as HTMLElement).innerText?.trim() || input.placeholder || input.labels?.length),
         clickHandler: el.hasAttribute("onclick"),
 
       }
