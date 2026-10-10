@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "setup-storage": "node scripts/setup-storage.js",
-    "apply-rls": "node scripts/apply-rls-policies.js"
+    "apply-rls": "node scripts/apply-rls-policies.js",
+    "test:dom-discovery": "node --test tests/dom-discovery.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
