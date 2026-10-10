@@ -2986,7 +2986,7 @@ export async function executeFullAppTestingJob(
     }
 
     // Preserve an explicit incomplete-coverage failure from the execution phase.
-    if (job.status === "failed" || job.fullAppTestPlan?.status === "error") {
+    if ((job.status as string) === "failed" || job.fullAppTestPlan?.status === "error") {
       job.status = "failed"
       job.testingPhase = "reporting"
       job.finishedAt = new Date().toISOString()
