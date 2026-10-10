@@ -226,6 +226,17 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   }
 
   const beforeUrl = page.url()
+  const beforeTargetState = candidate.target?.selector ? await page.evaluate((selector) => {
+    const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null
+    if (!el) return null
+    return {
+      checked: "checked" in el ? Boolean((el as HTMLInputElement).checked) : el.getAttribute("aria-checked"),
+      pressed: el.getAttribute("aria-pressed"),
+      expanded: el.getAttribute("aria-expanded"),
+      selected: el.getAttribute("aria-selected"),
+      value: "value" in el ? String((el as HTMLInputElement).value || "") : null,
+    }
+  }, candidate.target.selector).catch(() => null) : null
   const before = await page.evaluate(() => ({
     title: document.title,
     text: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1200),
@@ -526,8 +537,35 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   if (!after) return { ok: false, observation: "Click executed but post-action DOM could not be inspected." }
   const changed = afterUrl !== beforeUrl || before?.title !== after.title || before?.text !== after.text ||
     before?.dialogs !== after.dialogs || before?.forms !== after.forms || before?.tables !== after.tables || before?.controls !== after.controls
+  const afterTargetState = candidate.target?.selector ? await page.evaluate((selector) => {
+    const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null
+    if (!el) return null
+    return {
+      checked: "checked" in el ? Boolean((el as HTMLInputElement).checked) : el.getAttribute("aria-checked"),
+      pressed: el.getAttribute("aria-pressed"),
+      expanded: el.getAttribute("aria-expanded"),
+      selected: el.getAttribute("aria-selected"),
+      value: "value" in el ? String((el as HTMLInputElement).value || "") : null,
+    }
+  }, candidate.target.selector).catch(() => null) : null
+  const stateChanged = !!beforeTargetState && !!afterTargetState &&
+    (beforeTargetState.checked !== afterTargetState.checked ||
+      beforeTargetState.pressed !== afterTargetState.pressed ||
+      beforeTargetState.expanded !== afterTargetState.expanded ||
+      beforeTargetState.selected !== afterTargetState.selected ||
+      beforeTargetState.value !== afterTargetState.value)
+  if (["checkbox", "radio", "toggle"].includes(candidate.pattern)) {
+    return stateChanged
+      ? { ok: true, observation: 'Verified ' + candidate.pattern + ' state transition for "' + candidate.title + '".' }
+      : { ok: false, observation: 'Clicked "' + candidate.title + '" but its checked/pressed/selected state did not change; a generic page change is not sufficient evidence.' }
+  }
+  if (candidate.pattern === "expand_collapse") {
+    return stateChanged
+      ? { ok: true, observation: 'Verified expanded/collapsed state changed for "' + candidate.title + '".' }
+      : { ok: false, observation: 'Clicked "' + candidate.title + '" but aria-expanded state did not change; expected outcome is unverified.' }
+  }
   return changed
-    ? { ok: true, observation: 'Activated "' + candidate.title + '"; an observable UI transition occurred. URL: ' + beforeUrl + " → " + afterUrl + '; title: "' + after.title + '".' }
+    ? { ok: true, observation: 'Activated "' + candidate.title + '"; observable UI transition occurred. URL: ' + beforeUrl + " → " + afterUrl + '; title: "' + after.title + '". This confirms a transition, not necessarily the full business outcome.' }
     : { ok: false, observation: 'Clicked "' + candidate.title + '" but no URL/content/dialog/form/table/control change was observed; possible non-functional control.' }
 }
 
