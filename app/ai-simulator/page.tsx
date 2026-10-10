@@ -414,7 +414,7 @@ export default function AISimulatorPage() {
     id: s.id,
     title: s.targetName || "Completed action",
     detail: s.actualResult || s.expectedResult,
-    status: s.status === "passed" ? "passed" as const : s.status === "failed" ? "failed" as const : "skipped" as const,
+    status: s.status === "passed" ? "passed" as const : s.status === "failed" ? "failed" as const : s.status === "blocked" ? "blocked" as const : "skipped" as const,
   })) || []
 
   const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
