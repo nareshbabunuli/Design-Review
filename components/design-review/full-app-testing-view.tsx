@@ -972,7 +972,7 @@ export default function FullAppTestingView({
             </div>
 
             {/* Reusable Action Queue: stays inside the existing execution view */}
-            <ActionLedgerPanel actionLedger={actionLedger} />
+            <ActionLedgerPanel actionLedger={actionLedger} onViewEvidence={setScreenshotModal} />
 
             {/* Current Active Step Banner */}
             {isRunning && job?.currentStep && (
