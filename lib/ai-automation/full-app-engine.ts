@@ -2521,6 +2521,43 @@ export async function executeStructuredTestPlan(
       }
 
       const emptySurfaces = await detectEmptyDataSurfaces(page)
+      const correlatedConsoleErrors = consoleRecorder.getErrors().map((message) => secretRedactor.redact(message))
+      const correlatedNetworkFailures = netRecorder.getResourceIssues()
+        .filter((item) => (item.status !== undefined && item.status >= 400) || Boolean(item.errorText))
+        .map((item) => ({
+          url: secretRedactor.redact(item.url),
+          status: item.status,
+          errorText: item.errorText ? secretRedactor.redact(item.errorText) : undefined,
+          resourceType: item.resourceType,
+        }))
+
+      // An empty table alone may be valid. Correlate it with same-step browser
+      // or network errors to raise a more actionable issue.
+      if (emptySurfaces.length > 0 && (correlatedConsoleErrors.length > 0 || correlatedNetworkFailures.length > 0)) {
+        const serverFailure = correlatedNetworkFailures.some((item) => typeof item.status === "number" && item.status >= 500)
+        const description = `Correlated UI/data failure: ${emptySurfaces.length} empty table/grid(s), ${correlatedConsoleErrors.length} console error(s), ${correlatedNetworkFailures.length} failed request(s).`
+        pushDiagnostic({
+          id: `issue-correlated-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenUrl: diagnosticUrl,
+          screenTitle: step.screenName,
+          type: "correlated_ui_data_failure",
+          severity: serverFailure ? "high" : "medium",
+          description,
+          expected: "Tables should show data or a clear empty state, without related console or request failures.",
+          actual: [
+            `Empty surfaces: ${emptySurfaces.map((item) => item.name).join(", ")}`,
+            ...correlatedConsoleErrors.slice(0, 3).map((item) => `Console: ${item}`),
+            ...correlatedNetworkFailures.slice(0, 4).map((item) => `Network: ${item.status ?? item.errorText ?? "failed"} ${item.url}`),
+          ].join("\\n"),
+          correlatedEvidence: {
+            consoleErrors: correlatedConsoleErrors,
+            networkFailures: correlatedNetworkFailures,
+            emptyDataSurfaces: emptySurfaces.map((item) => item.name),
+          },
+          timestamp: diagnosticTimestamp,
+        })
+      }
+
       for (const surface of emptySurfaces) {
         const description = `Visible data table/grid "${surface.name}" has column headers but no data rows and no explicit empty-state message.`
         pushDiagnostic({
