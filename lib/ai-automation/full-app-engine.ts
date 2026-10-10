@@ -1014,8 +1014,8 @@ function prioritizePendingStepsForScreen(
   const sameScreenIds = new Set(sameScreen.map((step) => step.id))
   const otherSteps = remaining.filter((step) => !sameScreenIds.has(step.id))
   sameScreen.sort((a, b) => {
-    const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(a.targetName.trim())
-    const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\\b|$)/i.test(b.targetName.trim())
+    const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(a.targetName.trim())
+    const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(b.targetName.trim())
     return Number(aDismiss) - Number(bDismiss)
   })
 
