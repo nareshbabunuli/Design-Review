@@ -181,3 +181,10 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [ ] Keep manual UI checks USER-CHECK-VIS-01..05 pending until actual visual evidence is provided.
 
 **Honesty rule:** The central discovery flow is wired, but no browser E2E result has been produced yet. Do not claim the explorer is fully validated or that every control is verified based on TypeScript CI alone.
+
+### Code-review findings — coverage ledger semantics
+
+- [x] Disabled visible controls are retained as `blocked` inventory entries rather than permanently remaining `untested` (commit `04d2199ea8bca2a70b43663a38f5a49fd6a2c51a`).
+- [x] External-link and browser-history candidates that the policy intentionally does not auto-execute are recorded as `blocked` when they are the only remaining candidates (commit `d63ab3ef8b6bd09bdad7139e547a2849b219f8d2`).
+- [ ] TypeScript CI for commits #68 and #69 is still being checked; no pass is claimed for these two latest code changes yet.
+- [ ] These are code-review fixes, not proof from a live browser run. SPA state changes, actual interaction outcomes, route restoration, and full ledger reconciliation still require browser fixtures.
