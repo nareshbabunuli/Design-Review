@@ -595,6 +595,8 @@ export type AutomationJob = {
   /** DOM-first route/state graph; distinct from the Stagehand scenario graph. */
   domDiscoveryGraph?: DomDiscoveryGraph
   recordingUrl?: string
+  recordingControl?: "recording" | "paused" | "stopped"
+  recordingSegments?: string[]
   /** Vision-driven thinking model & interactive UI checklist */
   thinkingModel?: AIThinkingModel
   checklist?: ChecklistTestItem[]
