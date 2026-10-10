@@ -978,7 +978,7 @@ export async function runHumanLikeDecisionLoop(
     const navigationEvents = await drainDomNavigationEvents(page)
     for (const event of navigationEvents) {
       appendLog(job, "info", "[DOMDiscovery] Observed " + event.kind + ": " + event.from + " → " + event.to + ".")
-      try { if (event.to !== url && new URL(event.to).origin === new URL(url).origin) queuedRoutes.add(event.to) } catch {}
+      
     }
     const afterScreenshotUrl = destinationScreenshotUrl || await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
 
