@@ -72,6 +72,10 @@ export type PatternElement = {
   disabled?: boolean
   required?: boolean
   placeholder?: string
+  expanded?: boolean
+  pressed?: boolean
+  sortable?: boolean
+  accessibleName?: boolean
 }
 
 export type PatternFormField = {
@@ -202,7 +206,7 @@ function target(el: PatternElement): PatternTarget {
     label: el.label || el.text || el.placeholder || el.role || el.tag,
     role: el.role,
     href: el.href,
-    elementType: el.type || el.tag,
+    elementType: el.tag || el.type,
   }
 }
 
@@ -273,6 +277,15 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     if (type === "radio" || role === "radio") {
       add(out, "radio", [t], "Radio control can change selection state.", 0.99)
     }
+    if (role === "switch" || (el.pressed !== undefined && (tag === "button" || role === "button"))) {
+      add(out, "toggle", [t], "Toggle/switch exposes a stateful control.", 0.96)
+    }
+    if ((tag === "select" || role === "combobox") && type !== "hidden") {
+      add(out, "dropdown", [t], "Dropdown/combobox can change selected options.", 0.96)
+    }
+    if ((tag === "button" || role === "button") && (el.expanded !== undefined || containsAny(text, ["expand", "collapse", "show more", "show less"]))) {
+      add(out, "expand_collapse", [t], "Expandable/collapsible control detected.", 0.94)
+    }
     if (type === "search" || role === "searchbox" || text.includes("search")) {
       add(out, "search", [t], "Search control detected.", 0.98)
     }
@@ -280,6 +293,9 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
       add(out, "valid_input", [t], "Editable form control detected.", 0.9)
       if (el.required) add(out, "required_validation", [t], "Required field can be tested empty.", 0.98)
       if (type === "email") add(out, "invalid_input", [t], "Email field supports malformed-input validation.", 0.96)
+    }
+    if (el.accessibleName === false && ["button", "a", "input", "select", "textarea"].includes(tag)) {
+      add(out, "accessible_name", [t], "Interactive element appears to lack an accessible name.", 0.96)
     }
   }
 
@@ -314,9 +330,12 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
           : "Table is empty without an explicit empty state; investigate it.",
         0.99)
     }
-    if (table.hasPagination) add(out, "pagination", [t], "Pagination is available.", 0.97)
-    if (table.hasSorting) add(out, "sorting", [t], "Sortable data is available.", 0.95)
-    if (table.hasFiltering) add(out, "filtering", [t], "Filtering is available.", 0.95)
+    const paginationTargets = elements.filter((el) => /\b(next|previous|prev|first page|last page|page \d+)\b/i.test(norm([el.label, el.text, el.role].filter(Boolean).join(" "))).map(target)
+    const sortingTargets = elements.filter((el) => el.sortable || /\bsort\b/i.test(norm([el.label, el.text].filter(Boolean).join(" ")))).map(target)
+    const filteringTargets = elements.filter((el) => /\bfilter\b/i.test(norm([el.label, el.text, el.placeholder].filter(Boolean).join(" ")))).map(target)
+    if (table.hasPagination && paginationTargets.length) add(out, "pagination", paginationTargets.slice(0, 4), "Pagination controls are available.", 0.97)
+    if (table.hasSorting && sortingTargets.length) add(out, "sorting", sortingTargets.slice(0, 4), "Sortable controls are available.", 0.95)
+    if (table.hasFiltering && filteringTargets.length) add(out, "filtering", filteringTargets.slice(0, 4), "Filtering controls are available.", 0.95)
   }
 
   for (const dialog of state.dialogs.filter((d) => d.modal !== false)) {
@@ -336,6 +355,9 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
 
   // These are state-transition tests, not DOM targets.
   add(out, "back_navigation", [], "Safe browser-history test is applicable.", 0.8)
+  add(out, "forward_navigation", [], "Safe browser Forward test is applicable when same-origin history exists.", 0.6)
+  add(out, "keyboard_navigation", [], "Keyboard focus traversal can be inspected safely.", 0.58)
+  add(out, "responsive_layout", [], "A mobile viewport can be checked for overflow and clipping.", 0.56)
   add(out, "refresh", [], "Safe reload test is applicable.", 0.75)
 
   return dedupe(out)
