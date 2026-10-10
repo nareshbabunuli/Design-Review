@@ -56,3 +56,9 @@ The first central DOM-first discovery pass is wired into the autonomous runner b
 The most recent confirmed TypeScript validation before the latest coverage-reconciliation fix passed on commit `9174acd89eaaaa3308b1c1260ffed2b563871fc2` (run [#64](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078951528)). The new coverage fix is commit `1e3758282eb90e4928dea53fdfa5d890fa9ba3de`; its CI result must be checked separately.
 
 This is **not yet a proven complete recursive explorer**. Remaining work includes a truly shared run-wide budget, route graph edges, rescanning newly revealed states after tabs/modals/dropdowns, explicit SPA/hash/same-URL handling, automated browser fixtures, and a disposable-app end-to-end run. TypeScript success alone does not prove browser behavior.
+
+
+### Follow-up code review — same-URL transitions
+
+- [x] Same-URL link clicks now compare the pre-click and post-click DOM inventory signature; a click with no observed URL or inventory-state change is not marked passed.
+- [ ] This is inventory-level evidence only. Route graph edges, app-specific assertions, automated fixtures, and browser E2E verification remain open.
