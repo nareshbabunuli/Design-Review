@@ -786,6 +786,12 @@ export async function runHumanLikeDecisionLoop(
   const routeQueue: Array<{ url: string; returnTo: string }> = []
   const queuedRoutes = new Set<string>([page.url()])
   let activeRoute: { url: string; returnTo: string } | null = null
+  let restorationFailed = false
+  const markDiscoveryIncomplete = (reason: string) => {
+    restorationFailed = true
+    job.error = "[DOMDiscovery] " + reason + (job.error ? " Existing error: " + job.error : "")
+    appendLog(job, "error", "[DOMDiscovery] " + reason)
+  }
 
   for (let step = 0; step < maxSteps; step++) {
     if (!activeRoute && routeQueue.length > 0) {
@@ -795,7 +801,7 @@ export async function runHumanLikeDecisionLoop(
         activeRoute = nextRoute
         appendLog(job, "info", `[DOMDiscovery] Exploring queued route ${nextRoute.url}; return target ${nextRoute.returnTo}.`)
       } else {
-        appendLog(job, "warn", `[DOMDiscovery] Could not open queued route ${nextRoute.url}; route remains unresolved.`)
+        markDiscoveryIncomplete("Could not open queued route " + nextRoute.url + "; route remains unresolved.")
       }
     }
     const url = await page.url()
@@ -858,7 +864,8 @@ export async function runHumanLikeDecisionLoop(
       if (activeRoute) {
         const routeToReturn = activeRoute.returnTo
         const restored = await page.goto(routeToReturn, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
-        appendLog(job, restored ? "info" : "error", `[DOMDiscovery] ${restored ? "Returned to" : "Could not return to"} ${routeToReturn} after route exploration.`)
+        if (!restored) markDiscoveryIncomplete("Could not return to " + routeToReturn + " after route exploration.")
+        else appendLog(job, "info", "[DOMDiscovery] Returned to " + routeToReturn + " after route exploration.")
         activeRoute = null
         if (restored) continue
       }
@@ -946,7 +953,7 @@ export async function runHumanLikeDecisionLoop(
           appendLog(job, "info", `[DOMDiscovery] Queued destination for full DOM exploration: ${explored.destination.url}.`)
         }
         recordDomInventory(job, explored.destination)
-        if (!explored.restored) appendLog(job, "error", `[DOMDiscovery] Could not restore source after visiting ${explored.destination.url}; coverage remains incomplete.`)
+        if (!explored.restored) markDiscoveryIncomplete("Could not restore source after visiting " + explored.destination.url + "; coverage remains incomplete.")
       }
     } else {
       observation = await executeCandidate(page, selected)
@@ -1086,7 +1093,7 @@ export async function runHumanLikeDecisionLoop(
     ...ledger.entries.filter((entry) => entry.status === "untested").map((entry) => entry.actionKey),
   ])]
   const graphTruncated = Boolean(job.domDiscoveryGraph?.truncated)
-  const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated
+  const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated && !restorationFailed
   if (graphTruncated) appendLog(job, "warn", "[DOMDiscovery] Route/state graph reached its node or edge limit; discovery is incomplete.")
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
   if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
