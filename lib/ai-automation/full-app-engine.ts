@@ -37,6 +37,7 @@ import {
   classifyEffect,
   runWithLadder,
   verifyModalCloseAndFocus,
+  detectEmptyDataSurfaces,
   NetworkRecorder,
   ConsoleRecorder,
 } from "./outcome-verifier"
@@ -2430,6 +2431,89 @@ export async function executeStructuredTestPlan(
           }
         }
       } catch {}
+
+      // Runtime diagnostics are collected alongside each action's outcome.
+      // They do not silently turn a legitimate empty state into a failed action.
+      const diagnosticUrl = page.url()
+      const diagnosticTimestamp = new Date().toISOString()
+      const pushDiagnostic = (issue: AutomationIssue) => {
+        const duplicate = job.issues.some((existing) =>
+          existing.type === issue.type &&
+          existing.screenUrl === issue.screenUrl &&
+          existing.description === issue.description
+        )
+        if (!duplicate) {
+          job.issues.push(issue)
+          appendLog(
+            job,
+            issue.severity === "high" || issue.severity === "blocker" ? "warn" : "info",
+            `[DIAGNOSTIC] ${issue.type}: ${issue.description}`
+          )
+        }
+      }
+
+      for (const resourceIssue of netRecorder.getResourceIssues()) {
+        const isAsset = /^(image|media|font)$/.test(resourceIssue.resourceType)
+        const issueType: AutomationIssue["type"] = isAsset
+          ? "broken_asset"
+          : resourceIssue.status !== undefined
+            ? "http_error"
+            : "request_failed"
+        const statusText = resourceIssue.status !== undefined
+          ? `HTTP ${resourceIssue.status}`
+          : "Request failed"
+        const detail = resourceIssue.errorText ? ` (${resourceIssue.errorText})` : ""
+        const description = `${statusText} for ${resourceIssue.resourceType} resource: ${resourceIssue.url}${detail}`
+        const severity: AutomationIssue["severity"] =
+          (resourceIssue.status !== undefined && resourceIssue.status >= 500) ||
+          /document|script|media/.test(resourceIssue.resourceType)
+            ? "high"
+            : resourceIssue.status === 404 && isAsset
+              ? "medium"
+              : "medium"
+
+        pushDiagnostic({
+          id: `issue-resource-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenUrl: diagnosticUrl,
+          screenTitle: step.screenName,
+          type: issueType,
+          severity,
+          description,
+          expected: "Resource should load successfully (HTTP 2xx/3xx) without a network failure.",
+          actual: `${statusText}; resource type: ${resourceIssue.resourceType}; method: ${resourceIssue.method}.`,
+          timestamp: resourceIssue.timestamp || diagnosticTimestamp,
+        })
+      }
+
+      for (const consoleError of consoleRecorder.getErrors()) {
+        pushDiagnostic({
+          id: `issue-js-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenUrl: diagnosticUrl,
+          screenTitle: step.screenName,
+          type: "js_error",
+          severity: "high",
+          description: `Browser JavaScript/console error: ${secretRedactor.redact(consoleError)}`,
+          expected: "No uncaught JavaScript exceptions or console errors during the tested action.",
+          actual: secretRedactor.redact(consoleError),
+          timestamp: diagnosticTimestamp,
+        })
+      }
+
+      const emptySurfaces = await detectEmptyDataSurfaces(page)
+      for (const surface of emptySurfaces) {
+        const description = `Visible data table/grid "${surface.name}" has column headers but no data rows and no explicit empty-state message.`
+        pushDiagnostic({
+          id: `issue-empty-data-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenUrl: diagnosticUrl,
+          screenTitle: step.screenName,
+          type: "empty_data_surface",
+          severity: "low",
+          description,
+          expected: "The table contains expected data rows or presents a clear, intentional empty-state message.",
+          actual: `No data rows found. Detected columns: ${surface.headers.join(", ")}.`,
+          timestamp: diagnosticTimestamp,
+        })
+      }
 
       if (actionVerdict === "passed") {
         passedCount++
