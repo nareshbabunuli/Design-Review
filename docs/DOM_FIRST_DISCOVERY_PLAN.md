@@ -49,6 +49,10 @@
 - [ ] Confirm unresolved/blocked counts prevent a false “complete” result.
 - [ ] Record actual evidence in `docs/TESTING_LEDGER.md`; do not infer browser correctness from typecheck success.
 
-## Current honest status
+## Current honest status — 2026-10-10
 
-Phase 1 has a first implementation committed. This is **not yet a complete recursive explorer**: destination inventory persistence, route queue/backtracking, central-runner ownership, and browser end-to-end verification remain outstanding. TypeScript CI is being checked for the current commit; do not describe it as passed until the run concludes successfully.
+The first central DOM-first discovery pass is wired into the autonomous runner before AI scenario planning. It inventories visible controls, prioritizes safe in-page candidates, records destination inventories, queues same-origin routes for bounded exploration, and attempts to return to parent routes. Stagehand scenario verification remains a separate subsequent layer.
+
+The most recent confirmed TypeScript validation before the latest coverage-reconciliation fix passed on commit `9174acd89eaaaa3308b1c1260ffed2b563871fc2` (run [#64](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078951528)). The new coverage fix is commit `1e3758282eb90e4928dea53fdfa5d890fa9ba3de`; its CI result must be checked separately.
+
+This is **not yet a proven complete recursive explorer**. Remaining work includes a truly shared run-wide budget, route graph edges, rescanning newly revealed states after tabs/modals/dropdowns, explicit SPA/hash/same-URL handling, automated browser fixtures, and a disposable-app end-to-end run. TypeScript success alone does not prove browser behavior.
