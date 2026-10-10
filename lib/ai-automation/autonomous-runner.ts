@@ -290,10 +290,14 @@ async function runScenarioWithStagehand(
   } as any)
 
   const stopTracker = { done: false }
-  const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
+  let stagePage: any = null
+  const takeShot = (suffix: string) => {
+    if (!stagePage) return Promise.resolve("")
+    return captureMasked(stagePage, job.projectId, suffix)
+  }
   try {
     await stagehand.init()
-    const stagePage: any = stagehand.context.activePage()
+    stagePage = stagehand.context.activePage()
     if (!stagePage) throw new Error("Stagehand attached but found no active page.")
 
     await stagePage.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {})
