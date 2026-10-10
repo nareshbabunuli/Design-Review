@@ -233,6 +233,24 @@ function containsAny(text: string, values: string[]): boolean {
   return values.some((v) => text.includes(v))
 }
 
+/**
+ * Compare parsed origins, never URL string prefixes. A hostile URL such as
+ * https://trusted.example.attacker.test must not be treated as same-origin.
+ * Relative URLs are resolved against the known origin; malformed/unknown
+ * destinations are conservatively treated as external by the caller.
+ */
+function isSameOriginUrl(href: string, origin: string): boolean {
+  try {
+    const base = new URL(origin)
+    const destination = new URL(href, base)
+    return /^https?:$/.test(destination.protocol) &&
+      /^https?:$/.test(base.protocol) &&
+      destination.origin === base.origin
+  } catch {
+    return false
+  }
+}
+
 function visible(el: PatternElement): boolean {
   return el.visible !== false && el.disabled !== true && el.enabled !== false
 }
@@ -249,10 +267,10 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     const text = norm([el.label, el.text, el.placeholder, el.type].filter(Boolean).join(" "))
 
     if (el.href) {
-      if (state.origin && /^https?:\/\//i.test(el.href) && !el.href.startsWith(state.origin)) {
-        add(out, "external_link", [t], "Visible link leaves the target origin.", 0.98)
+      if (!state.origin || !isSameOriginUrl(el.href, state.origin)) {
+        add(out, "external_link", [t], "Link destination is external or cannot be proven same-origin; execution is blocked by default.", 0.99)
       } else {
-        add(out, "link_navigation", [t], "Visible in-app navigation link.", 0.99)
+        add(out, "link_navigation", [t], "Visible same-origin navigation link.", 0.99)
       }
     }
 
