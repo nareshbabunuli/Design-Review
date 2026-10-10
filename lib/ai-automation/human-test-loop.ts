@@ -865,7 +865,7 @@ export async function runHumanLikeDecisionLoop(
       const explored = await exploreInternalLinkAndReturn(page, selected.target.selector, selected.target.href,
         options?.captureScreenshot ? (label) => options.captureScreenshot ? options.captureScreenshot(label + "-" + step) : Promise.resolve("") : undefined)
       destinationScreenshotUrl = explored.screenshotUrl || ""
-      observation = { ok: Boolean(explored.destination && explored.restored), blocked: !explored.restored, observation: explored.observation }
+      observation = { ok: Boolean(explored.destination && explored.restored), blocked: Boolean(explored.blocked) || !explored.restored, observation: explored.observation }
       if (explored.destination) {
         appendLog(job, "info", `[DOMDiscovery] ${explored.observation}`)
         if (explored.destination.url !== url && explored.restored && !queuedRoutes.has(explored.destination.url)) {
