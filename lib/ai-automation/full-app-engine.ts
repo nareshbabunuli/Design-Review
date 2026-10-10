@@ -1814,7 +1814,25 @@ export async function executeStructuredTestPlan(
             )
           }
 
-          // Fill all fields with valid synthetic data (or payload override or test card)
+          // Reuse valid values already present in the app where safe; explicit
+          // Postman mappings and supplied sandbox credentials take precedence.
+          const existingValuesReused = await page.evaluate((sel) => {
+            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            if (!form) return 0
+            return Array.from(form.querySelectorAll("input, textarea, select")).filter((field: any) => {
+              const type = (field.type || "").toLowerCase()
+              const name = (field.name || field.id || "").toLowerCase()
+              const placeholder = (field.placeholder || "").toLowerCase()
+              const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder)
+              return !sensitive && typeof field.value === "string" && field.value.trim().length > 0 && field.checkValidity()
+            }).length
+          }, formSel)
+
+          if (existingValuesReused > 0) {
+            appendLog(job, "info", `[DATA] Reusing ${existingValuesReused} existing valid field value(s); sensitive fields are excluded.`)
+          }
+
+          // Fill missing/invalid fields with synthetic data (or use explicit API payload/test card).
           await page.evaluate(
             (sel, testData, payload, paymentCreds) => {
               const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
@@ -1824,6 +1842,8 @@ export async function executeStructuredTestPlan(
                 const type = (field.type || "").toLowerCase()
                 const name = (field.name || field.id || "").toLowerCase()
                 const placeholder = (field.placeholder || "").toLowerCase()
+                const existingValue = typeof field.value === "string" ? field.value.trim() : ""
+                const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder)
 
                 if (payload && payload[field.name || field.id]) {
                   field.value = payload[field.name || field.id]
@@ -1833,6 +1853,9 @@ export async function executeStructuredTestPlan(
                 }
 
                 if (field.tagName.toLowerCase() === "select") {
+                  // Keep a valid, already-selected option. Otherwise move off a
+                  // placeholder option when a real option is available.
+                  if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
                   if (field.options && field.options.length > 1) {
                     field.selectedIndex = 1
                   } else if (field.options && field.options.length > 0) {
@@ -1849,6 +1872,10 @@ export async function executeStructuredTestPlan(
                 }
 
                 if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
+
+                // Preserve existing valid non-sensitive app data instead of
+                // overwriting it with synthetic values on every submission.
+                if (!sensitive && existingValue && field.checkValidity()) return
 
                 // Payment card field auto-filling
                 if (paymentCreds) {
@@ -1953,7 +1980,7 @@ export async function executeStructuredTestPlan(
             if (modalClosed) details.push("closed modal dialog")
             if (mutating2xx) details.push("server returned 2xx mutating response")
             if (successFeedback) details.push(`success feedback: "${successFeedback}"`)
-            observation = `Form submitted successfully with valid data (${details.join(", ")}).`
+            observation = `Form submitted successfully with valid data (${details.join(", ")})${existingValuesReused > 0 ? `; reused ${existingValuesReused} existing valid field value(s)` : ""}.`
 
             if (step.postmanEndpoint && step.postmanMappings) {
               const wireCheck = confirmMappingOnWire(
