@@ -469,7 +469,17 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
 
   if (candidate.pattern === "search" || candidate.pattern === "valid_input") {
     const original = targetInfo.value
-    const value = targetInfo.type === "email" ? "qa-test+" + Date.now() + "@example.com" : "QA test input"
+    const value = targetInfo.type === "email"
+      ? "qa-test+" + Date.now() + "@example.com"
+      : targetInfo.type === "url"
+        ? "https://example.com/qa-test"
+        : targetInfo.type === "tel"
+          ? "2025550100"
+          : targetInfo.type === "password"
+            ? "Qa-test-Only-123!"
+            : targetInfo.type === "search"
+              ? "qa-test-search"
+              : "QA test input"
     try {
       await setInputValue(value)
       await new Promise((resolve) => setTimeout(resolve, 500))
