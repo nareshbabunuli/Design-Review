@@ -390,9 +390,9 @@ export default function AISimulatorPage() {
         const idx = currentJob.screens.findIndex((s) => {
           const sTitle = (s.title || "").toLowerCase()
           const nTitle = screenNode.name.toLowerCase()
-          const actionLedgerLive = currentJob?.steps?.filter((s: any) => s.status === "running").map((s: any) => ({ id: s.id, title: s.title || s.name || "Running action", detail: s.description, status: "running" as const })) || []
-  const actionLedgerQueue = currentJob?.steps?.filter((s: any) => ["pending", "queued"].includes(s.status)).map((s: any) => ({ id: s.id, title: s.title || s.name || "Pending action", detail: s.description, status: "queued" as const })) || []
-  const actionLedgerHistory = currentJob?.steps?.filter((s: any) => ["passed", "failed", "skipped"].includes(s.status)).slice(-30).reverse().map((s: any) => ({ id: s.id, title: s.title || s.name || "Completed action", detail: s.description, status: s.status as "passed" | "failed" | "skipped" })) || []
+          const actionLedgerLive = activePlan?.steps?.filter((s) => s.status === "running").map((s: any) => ({ id: s.id, title: s.targetName || "Running action", detail: s.expectedResult, status: "running" as const })) || []
+  const actionLedgerQueue = activePlan?.steps?.filter((s) => ["pending", "queued"].includes(s.status)).map((s: any) => ({ id: s.id, title: s.targetName || "Pending action", detail: s.expectedResult, status: "queued" as const })) || []
+  const actionLedgerHistory = activePlan?.steps?.filter((s) => ["passed", "failed", "skipped"].includes(s.status)).slice(-30).reverse().map((s: any) => ({ id: s.id, title: s.targetName || "Completed action", detail: s.actualResult || s.expectedResult, status: s.status as "passed" | "failed" | "skipped" })) || []
 
   return (
             sTitle.includes(nTitle) ||
