@@ -367,11 +367,29 @@ export async function extractActionableInventory(page: Page): Promise<{
       const text = (el.textContent || el.getAttribute("title") || href).trim().replace(/\s+/g, " ").slice(0, 40)
       if (!text) return
 
+      const absoluteHref = (() => {
+        try {
+          return new URL(href, window.location.href).href
+        } catch {
+          return href
+        }
+      })()
+      const normalizedHref = absoluteHref.split("#")[0]
+      const actionKey = [
+        "link",
+        window.location.pathname,
+        text.toLowerCase(),
+        normalizedHref,
+      ].join("|")
+
       elements.push({
         id: `elem-${elementCounter++}`,
         name: text,
         type: "link",
         selector: el.id ? `#${el.id}` : `a[href="${href}"]`,
+        href: absoluteHref,
+        actionKey,
+        isInteractive: true,
       })
     })
 
