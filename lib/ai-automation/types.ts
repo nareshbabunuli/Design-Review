@@ -275,6 +275,10 @@ export type ActionableElement = {
   href?: string
   /** Stable semantic identity used by the Action Ledger across rediscovery. */
   actionKey?: string
+  /** Confidence that a non-native DOM object represents a user action. */
+  interactionConfidence?: number
+  /** Why the semantic detector considered this object actionable. */
+  discoveryReason?: string[]
   inputType?: string
   accept?: string
   placeholder?: string
