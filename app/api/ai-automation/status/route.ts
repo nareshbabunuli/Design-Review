@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "skip_auth") {
-      ;(job as any).pendingCredentials = { skip: true }
+      setJobSecrets(jobId, { credentials: { username: "", password: "" } })
       ;(job as any).authState = "skipped"
       ;(job as any).authPrompt = undefined
       saveJob(job)
