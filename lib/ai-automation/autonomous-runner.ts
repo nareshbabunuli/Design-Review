@@ -569,6 +569,8 @@ export async function executeAutonomousJob(
   let browser: Browser | null = null
   let recorder: any = null
   const recordingPath = path.join(dir, "recording.webm")
+  let recordingControl: "recording" | "paused" = "recording"
+  let recordingMonitor: ReturnType<typeof setInterval> | null = null
 
   try {
     const count = scenarioCountFromCommand(params.userInstruction || "", params.scenarioCount || 15)
@@ -638,13 +640,43 @@ export async function executeAutonomousJob(
       appendLog(job, "warn", `Initial navigation note: ${e?.message}`)
     })
 
-    // ---- Optional session video ----
+    // ---- Optional session video; pause/resume is implemented as recorder segments ----
     if (params.recordVideo !== false) {
       try {
         const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
         recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
         await recorder.start(recordingPath)
+        ;(job as any).recordingControl = "recording"
+        saveJob(job)
         appendLog(job, "info", "Session video recording started.")
+        recordingMonitor = setInterval(() => {
+          const requested = (job as any).recordingControl === "paused" ? "paused" : "recording"
+          if (requested === recordingControl) return
+          if (requested === "paused") {
+            recordingControl = "paused"
+            if (recorder) {
+              void recorder.stop().then(() => {
+                recorder = null
+                appendLog(job, "info", "Session video recording paused.")
+              }).catch((err: any) => appendLog(job, "warn", `Recording pause failed: ${err?.message || String(err)}`))
+            }
+          } else {
+            recordingControl = "recording"
+            void (async () => {
+              try {
+                const segmentPath = path.join(dir, `recording-${Date.now()}.webm`)
+                recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
+                await recorder.start(segmentPath)
+                ;(job as any).recordingSegmentPath = segmentPath
+                appendLog(job, "info", "Session video recording resumed.")
+              } catch (err: any) {
+                recorder = null
+                appendLog(job, "warn", `Recording resume failed: ${err?.message || String(err)}`)
+              }
+            })()
+          }
+          saveJob(job)
+        }, 500)
       } catch (err: any) {
         appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
         recorder = null
@@ -821,28 +853,36 @@ export async function executeAutonomousJob(
       saveJob(job)
     }
 
-    // ---- Stop video, upload ----
-    let recordingUrl = ""
+    // ---- Stop video, upload recording clips ----
+    if (recordingMonitor) clearInterval(recordingMonitor)
     if (recorder) {
       try {
         await recorder.stop()
-        appendLog(job, "info", "Session recording stopped.")
-        if (fs.existsSync(recordingPath) && fs.statSync(recordingPath).size > 1024) {
-          recordingUrl = await uploadArtifact(
-            fs.readFileSync(recordingPath),
-            job.projectId,
-            "recording",
-            "video/webm",
-            "webm",
-          )
-          if (recordingUrl) appendLog(job, "success", "Session video uploaded.")
-          else appendLog(job, "warn", "Video upload failed — recording kept locally only.")
-        }
+        recorder = null
       } catch (err: any) {
         appendLog(job, "warn", `Recording finalization note: ${err?.message}`)
       }
     }
+    let recordingUrl = ""
+    const recordingFiles = [recordingPath, (job as any).recordingSegmentPath].filter(Boolean) as string[]
+    for (let i = 0; i < recordingFiles.length; i++) {
+      const filePath = recordingFiles[i]
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).size <= 1024) continue
+      try {
+        const url = await uploadArtifact(
+          fs.readFileSync(filePath),
+          job.projectId,
+          `recording-${i + 1}`,
+          "video/webm",
+          "webm",
+        )
+        if (url && !recordingUrl) recordingUrl = url
+      } catch (err: any) {
+        appendLog(job, "warn", `Recording upload failed: ${err?.message || String(err)}`)
+      }
+    }
     job.recordingUrl = recordingUrl || undefined
+    ;(job as any).recordingControl = "stopped"
 
     // ---- Flow graph ----
     const flowGraph: FlowGraph = {
