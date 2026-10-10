@@ -122,11 +122,17 @@ export async function promptPaymentCredentialsIfNeeded(
   initialCreds?: TestPaymentCredentials
 ): Promise<TestPaymentCredentials> {
   if (initialCreds && (initialCreds.cardNumber || initialCreds.skip || initialCreds.useDefaultSandbox)) {
+    secretRedactor.registerMultiple([
+      initialCreds.cardNumber, initialCreds.cardHolder, initialCreds.expiryDate, initialCreds.cvv, initialCreds.zipCode,
+    ])
     return initialCreds
   }
 
   if (job.pendingPaymentCredentials) {
     const creds = job.pendingPaymentCredentials
+    secretRedactor.registerMultiple([
+      creds.cardNumber, creds.cardHolder, creds.expiryDate, creds.cvv, creds.zipCode,
+    ])
     job.pendingPaymentCredentials = undefined
     return creds
   }
@@ -670,7 +676,7 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
     }
 
     secretRedactor.registerMultiple([active.username, active.password])
-    appendLog(job, "info", `[AUTH] Typing credentials for "${active.username}" and submitting login form...`)
+    appendLog(job, "info", "[AUTH] Typing provided test credentials and submitting the login form...")
     job.authPrompt = undefined
     job.currentStep = "Logging in with provided credentials..."
     saveJob(job)
@@ -679,7 +685,7 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
       if (creds) Object.assign(creds, { username: active.username, password: active.password })
       job.authState = "logged_in"
       job.authPrompt = undefined
-      appendLog(job, "success", `[AUTH] Logged in. Now at ${page.url()}`)
+      appendLog(job, "success", `[AUTH] Logged in. Now at ${secretRedactor.redact(page.url())}`)
       saveJob(job)
       return true
     }
@@ -1096,7 +1102,7 @@ export async function discoverAndMapApp(
     visitedHrefs.add(candPath)
 
     try {
-      appendLog(job, "info", `[DISCOVERY] Navigating to: ${cand.href}...`)
+      appendLog(job, "info", `[DISCOVERY] Navigating to: ${secretRedactor.redact(cand.href)}...`)
       await page.goto(cand.href, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
       await new Promise((r) => setTimeout(r, 600))
 
