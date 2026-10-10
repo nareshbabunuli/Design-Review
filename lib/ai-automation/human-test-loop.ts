@@ -20,7 +20,7 @@ import {
 } from "./interaction-pattern-engine"
 import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
-import { inspectPageDom, exploreInternalLinkAndReturn } from "./dom-first-discovery"
+import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -799,6 +799,7 @@ export async function runHumanLikeDecisionLoop(
       }
     }
     const url = await page.url()
+    await installDomNavigationObserver(page).catch(() => {})
     const domInventory = await inspectPageDom(page).catch(() => null)
     let sourceGraphNodeId = url
     if (domInventory) {
@@ -973,6 +974,11 @@ export async function runHumanLikeDecisionLoop(
           appendLog(job, "warn", "[DOMDiscovery] Post-interaction DOM rescan failed; newly revealed controls may remain undiscovered.")
         }
       }
+    }
+    const navigationEvents = await drainDomNavigationEvents(page)
+    for (const event of navigationEvents) {
+      appendLog(job, "info", "[DOMDiscovery] Observed " + event.kind + ": " + event.from + " → " + event.to + ".")
+      try { if (event.to !== url && new URL(event.to).origin === new URL(url).origin) queuedRoutes.add(event.to) } catch {}
     }
     const afterScreenshotUrl = destinationScreenshotUrl || await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
 
