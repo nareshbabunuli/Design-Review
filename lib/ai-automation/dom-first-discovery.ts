@@ -15,25 +15,27 @@ export async function installDomNavigationObserver(page: Page): Promise<void> {
     if (target.__domDiscoveryObserverInstalled) return
     target.__domDiscoveryObserverInstalled = true
     target.__domDiscoveryNavigationEvents = []
+    let lastHref = location.href
     const record = (kind: DomNavigationEvent["kind"], from: string) => {
       target.__domDiscoveryNavigationEvents!.push({ kind, from, to: location.href, observedAt: new Date().toISOString() })
+      lastHref = location.href
       if (target.__domDiscoveryNavigationEvents!.length > 100) target.__domDiscoveryNavigationEvents!.splice(0, target.__domDiscoveryNavigationEvents!.length - 100)
     }
     const originalPushState = history.pushState.bind(history)
     const originalReplaceState = history.replaceState.bind(history)
     history.pushState = function (...args: Parameters<History["pushState"]>) {
-      const from = location.href
+      const from = lastHref
       const result = originalPushState(...args)
       if (location.href !== from) record("pushState", from)
       return result
     }
     history.replaceState = function (...args: Parameters<History["replaceState"]>) {
-      const from = location.href
+      const from = lastHref
       const result = originalReplaceState(...args)
       if (location.href !== from) record("replaceState", from)
       return result
     }
-    addEventListener("popstate", () => record("popstate", location.href))
+    addEventListener("popstate", () => record("popstate", lastHref))
     addEventListener("hashchange", (event) => record("hashchange", (event as HashChangeEvent).oldURL))
   })
 }
