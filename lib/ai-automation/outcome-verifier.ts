@@ -612,6 +612,7 @@ export async function runWithLadder(
           await humanClick(page, freshHandle)
         } catch {
           // Physical mouse fallback below is intentionally last resort.
+        }
       }
     }
 
