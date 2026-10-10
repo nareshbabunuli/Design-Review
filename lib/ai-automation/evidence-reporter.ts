@@ -194,6 +194,7 @@ function generateMarkdownReportText(params: {
   recommendations: string[]
   postmanSummary?: PostmanCollectionSummary
   endpointMappings?: PostmanEndpointMapping[]
+  postmanCoverage?: PostmanCoverageReport
 }): string {
   const {
     job,
@@ -209,6 +210,7 @@ function generateMarkdownReportText(params: {
     recommendations,
     postmanSummary,
     endpointMappings,
+    postmanCoverage,
   } = params
 
   const dateStr = new Date().toLocaleString()
