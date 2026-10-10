@@ -223,7 +223,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     controls: Array.from(document.querySelectorAll("button,[role=button],input,select,textarea")).filter((el) => {
       const r = el.getBoundingClientRect(), st = getComputedStyle(el)
       return r.width > 2 && r.height > 2 && st.display !== "none" && st.visibility !== "hidden"
-    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50)).slice(0, 80).join("|"),
+    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50) + ":checked=" + (("checked" in el) ? String((el as HTMLInputElement).checked) : (el.getAttribute("aria-checked") || "")) + ":pressed=" + (el.getAttribute("aria-pressed") || "") + ":expanded=" + (el.getAttribute("aria-expanded") || "") + ":value=" + (("value" in el) ? String((el as HTMLInputElement).value || "") : "")).slice(0, 80).join("|"),
   })).catch(() => null)
 
   if (candidate.pattern === "back_navigation" || candidate.pattern === "forward_navigation") {
@@ -357,6 +357,18 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     return { ok: true, observation: "Inspected " + candidate.pattern + " state. Runtime console/network evidence is captured separately for correlation. Context: " + evidence.bodyText.slice(0, 180) }
   }
 
+  if (candidate.target?.href) {
+    try {
+      const targetUrl = new URL(candidate.target.href, beforeUrl)
+      const currentOrigin = new URL(beforeUrl).origin
+      if (targetUrl.origin !== currentOrigin || /\/logout|\/signout|\/delete|\/purchase|\/checkout/i.test(targetUrl.pathname)) {
+        return { ok: false, blocked: true, observation: "Blocked navigation target outside the safe same-origin test policy: " + targetUrl.href }
+      }
+    } catch {
+      return { ok: false, blocked: true, observation: "Blocked navigation target that could not be resolved safely." }
+    }
+  }
+
   const selector = candidate.target?.selector
   if (!selector) return { ok: false, observation: "Candidate has no executable target; it cannot be marked passed." }
   const target = await page.$(selector).catch(() => null)
@@ -386,6 +398,17 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     input.dispatchEvent(new Event("input", { bubbles: true }))
     input.dispatchEvent(new Event("change", { bubbles: true }))
   }, value)
+
+  if (candidate.pattern === "dropdown" && (await target.evaluate((el) => el.tagName.toLowerCase() === "select").catch(() => false))) {
+    const info = await target.evaluate((el) => {
+      const select = el as HTMLSelectElement
+      return { count: select.options.length, value: select.value, hasSelectedOption: select.selectedIndex >= 0 }
+    }).catch(() => null)
+    await target.dispose().catch(() => {})
+    return info && info.count > 0 && info.hasSelectedOption
+      ? { ok: true, observation: "Native dropdown exposes " + info.count + " option(s) and a valid selected option; no form submission or persistent mutation performed." }
+      : { ok: false, observation: "Native dropdown has no selectable options or no valid selected option." }
+  }
 
   if (candidate.pattern === "required_validation") {
     const required = await target.evaluate((el) => {
@@ -462,7 +485,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     controls: Array.from(document.querySelectorAll("button,[role=button],input,select,textarea")).filter((el) => {
       const r = el.getBoundingClientRect(), st = getComputedStyle(el)
       return r.width > 2 && r.height > 2 && st.display !== "none" && st.visibility !== "hidden"
-    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50)).slice(0, 80).join("|"),
+    }).map((el) => el.tagName + ":" + (el.getAttribute("aria-label") || el.textContent || (el as HTMLInputElement).placeholder || "").trim().slice(0, 50) + ":checked=" + (("checked" in el) ? String((el as HTMLInputElement).checked) : (el.getAttribute("aria-checked") || "")) + ":pressed=" + (el.getAttribute("aria-pressed") || "") + ":expanded=" + (el.getAttribute("aria-expanded") || "") + ":value=" + (("value" in el) ? String((el as HTMLInputElement).value || "") : "")).slice(0, 80).join("|"),
   })).catch(() => null)
   if (!after) return { ok: false, observation: "Click executed but post-action DOM could not be inspected." }
   const changed = afterUrl !== beforeUrl || before?.title !== after.title || before?.text !== after.text ||
@@ -654,14 +677,16 @@ export async function runHumanLikeDecisionLoop(
     const observedPostState = await readPatternState(page, await page.url()).catch(() => state)
     const unexplainedEmptyTables = observedPostState.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
     if (unexplainedEmptyTables.length && (stepConsoleErrors.length || stepFailedRequests.length || stepBadResponses.length)) {
-      const networkFailures = [
-        ...stepFailedRequests.map((entry) => ({
+      const isDataRequest = (entry: string) => /^(xhr|fetch)\s/i.test(entry) || /\/api(?:\/|[?#])|graphql|rpc|\.json(?:[?#]|$)/i.test(entry)
+    const networkFailures = [
+        ...stepFailedRequests.filter(isDataRequest).map((entry) => ({
           url: entry.match(/https?:\/\/\S+/)?.[0] || entry.slice(0, 180),
+          resourceType: /^(xhr|fetch)\s/i.test(entry) ? entry.split(/\s+/)[0] : undefined,
           errorText: entry.slice(0, 300),
         })),
-        ...stepBadResponses.map((entry) => {
+        ...stepBadResponses.filter(isDataRequest).map((entry) => {
           const match = entry.match(/(?:^|\s)(\d{3})\s+\w+\s+(https?:\/\/\S+)/)
-          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, resourceType: /^(xhr|fetch)\\s/i.test(entry) ? entry.split(/\\s+/)[0] : undefined, errorText: entry.slice(0, 300) }
+          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, resourceType: /^(xhr|fetch)\s/i.test(entry) ? entry.split(/\s+/)[0] : undefined, errorText: entry.slice(0, 300) }
         }),
       ]
       const hasServerFailure = networkFailures.some((failure) => (failure.status || 0) >= 500)
