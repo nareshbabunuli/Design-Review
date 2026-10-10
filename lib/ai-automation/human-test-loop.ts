@@ -632,9 +632,55 @@ export async function runHumanLikeDecisionLoop(
 
     const started = Date.now()
     job.currentStep = "Laya selected: " + selected.title
+    const evidenceBaseline = {
+      consoleErrors: runtimeEvidence.consoleErrors.length,
+      pageErrors: runtimeEvidence.pageErrors.length,
+      failedRequests: runtimeEvidence.failedRequests.length,
+      badResponses: runtimeEvidence.badResponses.length,
+    }
     const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
     const observation = await executeCandidate(page, selected)
     const afterScreenshotUrl = await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
+
+    // Correlate only evidence that appeared during this action with unexplained empty tables
+    // on the same observed screen; unrelated old errors are not attached to this issue.
+    const stepConsoleErrors = [
+      ...runtimeEvidence.consoleErrors.slice(evidenceBaseline.consoleErrors),
+      ...runtimeEvidence.pageErrors.slice(evidenceBaseline.pageErrors),
+    ]
+    const stepFailedRequests = runtimeEvidence.failedRequests.slice(evidenceBaseline.failedRequests)
+    const stepBadResponses = runtimeEvidence.badResponses.slice(evidenceBaseline.badResponses)
+    const unexplainedEmptyTables = state.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
+    if (unexplainedEmptyTables.length && (stepConsoleErrors.length || stepFailedRequests.length || stepBadResponses.length)) {
+      const networkFailures = [
+        ...stepFailedRequests.map((entry) => ({
+          url: entry.match(/https?:\/\/\S+/)?.[0] || entry.slice(0, 180),
+          errorText: entry.slice(0, 300),
+        })),
+        ...stepBadResponses.map((entry) => {
+          const match = entry.match(/^(\d{3})\s+\w+\s+(https?:\/\/\S+)/)
+          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, errorText: entry.slice(0, 300) }
+        }),
+      ]
+      const hasServerFailure = networkFailures.some((failure) => (failure.status || 0) >= 500)
+      issues.push({
+        id: "correlated-ui-data-" + Date.now() + "-" + step,
+        screenUrl: url,
+        screenTitle: state.title || url,
+        type: "correlated_ui_data_failure",
+        severity: hasServerFailure ? "high" : "medium",
+        description: "A data table has no rows or explicit empty state while new console/network failures occurred during the same action.",
+        expected: "The table should render data or explain a valid empty/error state; related requests should succeed.",
+        actual: "Empty surfaces: " + unexplainedEmptyTables.map((table) => table.name || table.selector || "table").join(", ") +
+          "; console errors: " + stepConsoleErrors.length + "; failed requests/status errors: " + networkFailures.length + ".",
+        correlatedEvidence: {
+          consoleErrors: stepConsoleErrors.slice(0, 8),
+          networkFailures: networkFailures.slice(0, 8),
+          emptyDataSurfaces: unexplainedEmptyTables.map((table) => table.name || table.selector || "table"),
+        },
+        timestamp: new Date().toISOString(),
+      })
+    }
     tested.add(selected.id)
     const status = observation.ok ? "passed" : (observation.blocked || isDestructive(selected) ? "blocked" : "failed")
     recordLedger(job, selected, status, observation.observation, url, { before: beforeScreenshotUrl, after: afterScreenshotUrl })
