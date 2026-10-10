@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { detectInteractionPatterns, generateCandidateTests, type PatternState } from "../lib/ai-automation/interaction-pattern-engine"
 import { classifyAction } from "../lib/ai-automation/safety-guard"
+import { expectFor } from "../lib/ai-automation/outcome-verifier"
 
 const baseState: PatternState = {
   stateKey: "fixture-home",
@@ -57,4 +58,21 @@ test("payment actions are hard-blocked in production by default", () => {
 test("outbound messaging is skipped unless explicitly allowlisted", () => {
   assert.equal(classifyAction("Send invitation email", [], { isProduction: true }).tier, "soft_skip")
   assert.equal(classifyAction("Send invitation email", ["send"], { isProduction: true }).tier, "allow")
+})
+
+
+test("absolute same-document hash links expect a content change, not navigation", () => {
+  assert.deepEqual(expectFor({
+    tagName: "a",
+    href: "https://app.example.test/#settings",
+    currentUrl: "https://app.example.test/",
+  }), ["content_changed", "modal_opened"])
+})
+
+test("hash links to a different route still expect navigation", () => {
+  assert.deepEqual(expectFor({
+    tagName: "a",
+    href: "https://app.example.test/settings#profile",
+    currentUrl: "https://app.example.test/",
+  }), ["navigated"])
 })
