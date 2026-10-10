@@ -320,7 +320,8 @@ async function runScenarioWithStagehand(
     // into newly discovered UI states instead of repeating already-tested actions.
     const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
     try {
-      const remainingLedgerBudget = Math.max(0, 24 - (job.actionLedger?.entries.length || 0))
+      const completedLedgerActions = (job.actionLedger?.entries || []).filter((entry) => entry.status !== "untested" && entry.status !== "running").length
+      const remainingLedgerBudget = Math.max(0, 24 - completedLedgerActions)
       const humanLoop = await runHumanLikeDecisionLoop(job, stagePage, {
         maxSteps: remainingLedgerBudget,
         layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
@@ -346,8 +347,11 @@ async function runScenarioWithStagehand(
         `[HumanLoop] ${humanLoop.actions.length} actions executed; ${humanLoop.missedCoverage.length} missed-coverage item(s) queued.`,
       )
     } catch (loopError: any) {
-      appendLog(job, "warn", `[HumanLoop] Loop unavailable; continuing with Stagehand: ${loopError?.message || String(loopError)}`)
-      addEvidence(out, "DECIDE", "Human-like decision loop could not complete; broader autonomous exploration continued.", {
+      const message = `[HumanLoop] Discovery/decision loop failed; this scenario cannot be considered fully verified: ${loopError?.message || String(loopError)}`
+      out.error = message
+      out.agentSuccess = false
+      appendLog(job, "error", message)
+      addEvidence(out, "DECIDE", "Human-like discovery loop failed. Stagehand observations may continue, but the overall scenario remains incomplete and cannot receive a clean pass.", {
         url: await stagePage.url().catch(() => job.targetUrl),
       })
     }
@@ -934,4 +938,3 @@ export async function executeAutonomousJob(
     }
   }
 }
-
