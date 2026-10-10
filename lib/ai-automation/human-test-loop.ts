@@ -924,7 +924,7 @@ export async function runHumanLikeDecisionLoop(
       const explored = await exploreInternalLinkAndReturn(page, selected.target.selector, selected.target.href,
         options?.captureScreenshot ? (label) => options.captureScreenshot ? options.captureScreenshot(label + "-" + step) : Promise.resolve("") : undefined)
       destinationScreenshotUrl = explored.screenshotUrl || ""
-      observation = { ok: Boolean(explored.destination && explored.restored && explored.stateChanged !== false), blocked: Boolean(explored.blocked) || !explored.restored, observation: explored.observation }
+      observation = { ok: Boolean(explored.destination && explored.restored && explored.stateChanged !== false), blocked: Boolean(explored.blocked), observation: explored.observation }
       if (explored.destination) {
         appendLog(job, "info", `[DOMDiscovery] ${explored.observation}`)
         const destinationGraphNodeId = recordDomGraphNode(job, explored.destination)
@@ -1079,7 +1079,9 @@ export async function runHumanLikeDecisionLoop(
     ...ledger.untestedQueue,
     ...ledger.entries.filter((entry) => entry.status === "untested").map((entry) => entry.actionKey),
   ])]
-  const completed = maxSteps > 0 && missedCoverage.length === 0
+  const graphTruncated = Boolean(job.domDiscoveryGraph?.truncated)
+  const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated
+  if (graphTruncated) appendLog(job, "warn", "[DOMDiscovery] Route/state graph reached its node or edge limit; discovery is incomplete.")
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
   if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
   return { actions, issues, completed, missedCoverage }
