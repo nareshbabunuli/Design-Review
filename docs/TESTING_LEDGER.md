@@ -156,3 +156,15 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [x] Budget calculation no longer counts untested inventory rows as already executed actions.
 - [ ] A single central run-level budget and central-runner ownership are still required; the existing autonomous runner still starts from AI-planned scenarios.
 - [ ] Automated browser fixtures and end-to-end route/backtracking verification remain outstanding.
+
+### Central runner integration follow-up
+
+- [x] Autonomous runner now runs the DOM-first decision loop once before AI scenario planning, using a single bounded 24-step discovery pass.
+- [x] Removed repeated per-scenario execution of the discovery loop; Stagehand scenario verification remains a separate subsequent layer.
+- [x] Stagehand action counts now include observed agent actions.
+- [x] Final report adds a warning/recommendation when the discovery loop fails or the Action Ledger still has unresolved inventory.
+- [x] Fixed strict TypeScript annotations in the DOM traversal helper.
+- [x] Restored the full human-test-loop source after an intermediate edit truncated its tail; current file is complete and the latest CI run is being checked.
+- [ ] Confirm TypeScript validation passes on the latest commit.
+- [ ] Add automated browser fixtures and verify route recursion/backtracking against a disposable app.
+- [ ] Verify that the report UI displays DOM inventory entries and unresolved coverage as intended.
