@@ -670,8 +670,21 @@ export async function runHumanLikeDecisionLoop(
   const maxSteps = Math.max(0, Math.min(options?.maxSteps ?? MAX_LOOP_STEPS, 50))
   const layaUrl = (options?.layaBaseUrl || job.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL).replace(/\/$/, "")
   const tested = new Set<string>((job.actionLedger?.entries || []).map((entry) => entry.actionKey))
+  const routeQueue: Array<{ url: string; returnTo: string }> = []
+  const queuedRoutes = new Set<string>([page.url()])
+  let activeRoute: { url: string; returnTo: string } | null = null
 
   for (let step = 0; step < maxSteps; step++) {
+    if (!activeRoute && routeQueue.length > 0) {
+      const nextRoute = routeQueue.shift()!
+      const navigated = await page.goto(nextRoute.url, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
+      if (navigated) {
+        activeRoute = nextRoute
+        appendLog(job, "info", `[DOMDiscovery] Exploring queued route ${nextRoute.url}; return target ${nextRoute.returnTo}.`)
+      } else {
+        appendLog(job, "warn", `[DOMDiscovery] Could not open queued route ${nextRoute.url}; route remains unresolved.`)
+      }
+    }
     const url = await page.url()
     // DOM-first inventory is observational only: navigation is catalogued before it is explored.
     const domInventory = await inspectPageDom(page).catch(() => null)
@@ -700,7 +713,16 @@ export async function runHumanLikeDecisionLoop(
     const candidates = generateCandidateTests(state, { alreadyTestedIds: tested, maxCandidates: 40, allowMutating: true, allowDestructive: false })
     queueMissedCoverage(job, candidates)
 
-    if (candidates.length === 0) break
+    if (candidates.length === 0) {
+      if (activeRoute) {
+        const routeToReturn = activeRoute.returnTo
+        const restored = await page.goto(routeToReturn, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
+        appendLog(job, restored ? "info" : "error", `[DOMDiscovery] ${restored ? "Finished route and returned to" : "Failed to return from route to"} ${routeToReturn}.`)
+        activeRoute = null
+        if (restored) continue
+      }
+      break
+    }
 
     // Exhaust safe current-state interactions before traversing recorded navigation.
     // This avoids losing the source page state by clicking links too early.
@@ -708,6 +730,13 @@ export async function runHumanLikeDecisionLoop(
     const decisionCandidates = nonNavigation.length > 0 ? nonNavigation.slice(0, 18) : candidates.filter((candidate) => candidate.pattern === "link_navigation").slice(0, 18)
     if (decisionCandidates.length === 0) {
       appendLog(job, "info", "[DOMDiscovery] Remaining candidates are navigation/history/external actions; external links and browser-history controls are recorded but not auto-clicked in this pass.")
+      if (activeRoute) {
+        const routeToReturn = activeRoute.returnTo
+        const restored = await page.goto(routeToReturn, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
+        appendLog(job, restored ? "info" : "error", `[DOMDiscovery] ${restored ? "Returned to" : "Could not return to"} ${routeToReturn} after route exploration.`)
+        activeRoute = null
+        if (restored) continue
+      }
       break
     }
     const criteria = chooseCriteria(decisionCandidates)
@@ -773,6 +802,26 @@ export async function runHumanLikeDecisionLoop(
       observation = { ok: Boolean(explored.destination && explored.restored), blocked: !explored.restored, observation: explored.observation }
       if (explored.destination) {
         appendLog(job, "info", `[DOMDiscovery] ${explored.observation}`)
+        if (explored.destination.url !== url && explored.restored && !queuedRoutes.has(explored.destination.url)) {
+          queuedRoutes.add(explored.destination.url)
+          routeQueue.push({ url: explored.destination.url, returnTo: url })
+          appendLog(job, "info", `[DOMDiscovery] Queued destination for full DOM exploration: ${explored.destination.url}.`)
+        }
+        const ledger = ensureLedger(job)
+        for (const element of explored.destination.elements) {
+          const actionKey = `dom-inventory:${explored.destination.url}::${element.selector}`
+          if (ledger.entries.some((entry) => entry.actionKey === actionKey)) continue
+          const type: ActionableElementType = element.role === "tab" ? "tab" : element.role === "menuitem" ? "menu" : element.role === "switch" ? "toggle" : element.role === "checkbox" ? "checkbox" : element.role === "radio" ? "radio" : element.href ? "link" : /^(input|textarea)$/.test(element.tag) ? "input" : element.tag === "select" ? "select" : element.tag === "button" || element.role === "button" ? "button" : "other"
+          ledger.entries.push({ actionKey, screenId: explored.destination.url, screenUrl: explored.destination.url, screenPath: (() => { try { return new URL(explored.destination!.url).pathname } catch { return explored.destination!.url } })(), name: element.label, type, selector: element.selector, href: element.href, interactionConfidence: element.risk === "safe" ? 0.8 : 0.3, discoveryReason: ["DOM-first inventory", `kind:${element.kind}`, `risk:${element.risk}`], status: "untested", attempts: 0, discoveredAt: new Date().toISOString() })
+          ledger.untestedQueue.push(actionKey)
+        }
+        ledger.total = ledger.entries.length
+        ledger.untested = ledger.entries.filter((entry) => entry.status === "untested").length
+        ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
+        ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
+        ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
+        ledger.updatedAt = new Date().toISOString()
+        saveJob(job)
         if (!explored.restored) appendLog(job, "error", `[DOMDiscovery] Could not restore source after visiting ${explored.destination.url}; coverage remains incomplete.`)
       }
     } else {
