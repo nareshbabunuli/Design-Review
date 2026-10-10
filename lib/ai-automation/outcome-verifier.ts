@@ -1,4 +1,5 @@
 import type { Page, ElementHandle, HTTPRequest, HTTPResponse } from "puppeteer"
+import { humanClick } from "./human-actions"
 import type {
   ObservedEffect,
   AutomationVerdict,
@@ -570,11 +571,13 @@ export async function runWithLadder(
     }
   }
 
-  // Primary path: real DOM click. This remains the safest and most deterministic path.
+  // Primary path: DOM identifies the exact target; humanClick performs the physical
+  // interaction using the target's fresh bounding box and humanized mouse movement.
+  // This keeps DOM as the source of truth while avoiding direct element.click().
   try {
-    await handle.click({ delay: 20 })
+    await humanClick(page, handle)
   } catch (err: any) {
-    console.warn("[outcome-verifier] DOM click failed:", err?.message)
+    console.warn("[outcome-verifier] humanized DOM-target click failed:", err?.message)
   }
 
   settleDurationMs = await settle(page, netRecorder, options.maxSettleMs || 3000)
@@ -597,10 +600,9 @@ export async function runWithLadder(
         coveredElementDetected = true
       } else {
         try {
-          await freshHandle.click({ delay: 20 })
+          await humanClick(page, freshHandle)
         } catch {
-          // Coordinate fallback below is intentionally last resort.
-        }
+          // Physical mouse fallback below is intentionally last resort.
       }
     }
 
@@ -615,7 +617,8 @@ export async function runWithLadder(
     )
   }
 
-  // Last-resort physical click. Only use coordinates after DOM resolution/clicking failed.
+  // Last-resort physical click. The target is still resolved from the DOM; this
+  // stage only retries the physical click with a fresh bounding box.
   if (observedEffect === "no_effect" && !options.dialogShownRef.value) {
     retriesUsed = 2
     const fallbackHandle = await resolveTarget()
@@ -664,7 +667,7 @@ export async function runWithLadder(
     }
   } else if (observedEffect === "no_effect") {
     verdict = "suspected_non_functional"
-    reason = `Target was resolved and attempted through DOM-first interaction, with coordinate fallback only as the final stage, but produced no observable UI, navigation, media or network change.`
+    reason = `Target was resolved from the DOM and attempted with humanized mouse movement; the final physical retry also produced no observable UI, navigation, media or network change.`
   } else {
     verdict = "passed"
     reason = `Observed effect "${observedEffect}" (expected: ${expectedEffects.join(", ")}).`
