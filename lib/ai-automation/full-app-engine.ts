@@ -2341,20 +2341,6 @@ export async function executeStructuredTestPlan(
       step.status = actionVerdict
       step.actualResult = observation
 
-      const ledgerStatus: ActionLedgerEntry["status"] =
-        actionVerdict === "suspected_non_functional" ? "failed" :
-        actionVerdict === "skipped_unsafe" ? "skipped" :
-        actionVerdict
-      updateActionLedgerForStep(
-        job,
-        step,
-        ledgerStatus,
-        observation,
-        actionVerdict === "failed" || actionVerdict === "suspected_non_functional" || actionVerdict === "blocked"
-          ? observation
-          : undefined
-      )
-
       // Check for email confirmation / external verification requirements
       try {
         const verifyCheck = await detectVerificationScreen(page)
@@ -2403,6 +2389,23 @@ export async function executeStructuredTestPlan(
         step.screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
         step.evidenceTimestamp = new Date().toISOString()
       } catch {}
+
+      // Commit the final ledger outcome only after checkpoints and the evidence
+      // screenshot have completed, so the history reflects the actual result.
+      const ledgerStatus: ActionLedgerEntry["status"] =
+        actionVerdict === "suspected_non_functional" ? "failed" :
+        actionVerdict === "skipped_unsafe" ? "skipped" :
+        actionVerdict
+      updateActionLedgerForStep(
+        job,
+        step,
+        ledgerStatus,
+        observation,
+        actionVerdict === "failed" || actionVerdict === "suspected_non_functional" || actionVerdict === "blocked"
+          ? observation
+          : undefined,
+        { afterScreenshotUrl: step.screenshotUrl }
+      )
 
       // 5. Dynamic inventory: rescan after EVERY action, even if the route
       // already exists. A modal, tab or expanded section can reveal new controls
