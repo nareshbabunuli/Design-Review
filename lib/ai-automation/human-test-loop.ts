@@ -104,6 +104,11 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         disabled: (el as HTMLButtonElement).disabled,
         required: input.required,
         placeholder: input.placeholder || undefined,
+        expanded: el.getAttribute("aria-expanded") == null ? undefined : el.getAttribute("aria-expanded") === "true",
+        pressed: el.getAttribute("aria-pressed") == null ? undefined : el.getAttribute("aria-pressed") === "true",
+        sortable: el.getAttribute("aria-sort") != null || el.hasAttribute("data-sortable"),
+        accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || (el as HTMLInputElement).labels?.length || el.textContent?.trim() || input.placeholder || input.title),
+
         expanded: el.getAttribute("aria-expanded") === null ? undefined : el.getAttribute("aria-expanded") === "true",
         pressed: el.getAttribute("aria-pressed") === null ? undefined : el.getAttribute("aria-pressed") === "true",
         sortable: !!el.closest("th")?.hasAttribute("aria-sort") || !!el.closest('[role="columnheader"]')?.hasAttribute("aria-sort"),
@@ -188,15 +193,24 @@ function chooseCriteria(candidates: CandidateTest[]): Record<string, string> {
   return criteria
 }
 
-function readChoice(answer: any): { index: number; confidence: number } | null {
-  const raw = String(answer?.choice ?? answer?.label ?? answer?.value ?? "")
+function readChoice(answer: any, candidates: CandidateTest[]): { index: number; confidence: number } | null {
+  const raw = String(answer?.choice ?? answer?.label ?? answer?.value ?? answer?.answer ?? "")
   if (/^\s*(escalate|stop|none)\b/i.test(raw)) return { index: -1, confidence: 1 }
-  const match = raw.match(/test_(\d+)/i)
-  if (!match) return null
+  const indexed = raw.match(/(?:test|opt|option)[_\s-]*(\d+)/i)
+  let index = indexed ? Number(indexed[1]) : -1
+  if (index < 0 || index >= candidates.length) {
+    const normalized = raw.trim().toLowerCase()
+    index = candidates.findIndex((candidate) =>
+      normalized === candidate.title.toLowerCase() ||
+      normalized.startsWith(candidate.title.toLowerCase() + " |") ||
+      normalized.includes(candidate.title.toLowerCase())
+    )
+  }
+  if (index < 0 || index >= candidates.length) return null
   const scoreValue = answer?.confidence ?? answer?.probability ?? answer?.score
   // Laya often omits confidence for choice answers. A valid listed choice is still a decision.
   const confidence = scoreValue == null ? 1 : Number(scoreValue)
-  return { index: Number(match[1]), confidence: Number.isFinite(confidence) ? confidence : 0 }
+  return { index, confidence: Number.isFinite(confidence) ? confidence : 0 }
 }
 
 function isDestructive(candidate: CandidateTest): boolean {
@@ -653,7 +667,7 @@ export async function runHumanLikeDecisionLoop(
           },
         },
       })
-      const choice = readChoice(result?.answers?.next_test)
+      const choice = readChoice(result?.answers?.next_test, candidates)
       if (choice?.index === -1) {
         appendLog(job, "info", "[HumanLoop] Laya escalated: no safe candidate selected; remaining coverage stays queued.")
         break
