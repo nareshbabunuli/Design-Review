@@ -887,6 +887,7 @@ export async function executeAutonomousJob(
       }
     }
     let recordingUrl = ""
+    const recordingUrls: string[] = []
     for (let i = 0; i < recordingFiles.length; i++) {
       const filePath = recordingFiles[i]
       if (!fs.existsSync(filePath) || fs.statSync(filePath).size <= 1024) continue
@@ -898,18 +899,16 @@ export async function executeAutonomousJob(
           "video/webm",
           "webm",
         )
-        if (url && !recordingUrl) recordingUrl = url
+        if (url) {
+          recordingUrls.push(url)
+          if (!recordingUrl) recordingUrl = url
+        }
       } catch (err: any) {
         appendLog(job, "warn", `Recording upload failed: ${err?.message || String(err)}`)
       }
     }
     job.recordingUrl = recordingUrl || undefined
-    job.recordingSegments = recordingFiles
-      .map((filePath) => {
-        const index = recordingFiles.indexOf(filePath)
-        return filePath && index >= 0 && filePath === recordingFiles[index] ? undefined : undefined
-      })
-      .filter(Boolean) as string[]
+    job.recordingSegments = recordingUrls.length > 0 ? recordingUrls : undefined
     ;(job as any).recordingControl = "stopped"
 
     // ---- Flow graph ----
@@ -945,6 +944,7 @@ export async function executeAutonomousJob(
       flowGraph,
       domDiscoveryGraph: job.domDiscoveryGraph,
       recordingUrl: recordingUrl || undefined,
+      recordingSegments: recordingUrls.length > 0 ? recordingUrls : undefined,
       evidenceTrace: testCases.flatMap((t) => (t as TestCaseResult & { evidenceTrace?: EvidenceTrace[] }).evidenceTrace || []),
     } as AutomationJob["report"]
 
