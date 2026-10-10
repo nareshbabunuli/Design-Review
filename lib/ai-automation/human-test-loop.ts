@@ -21,6 +21,7 @@ import {
 import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
 import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
+import { reconcileActionLedger } from "./action-ledger-reconciliation"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -653,13 +654,44 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
 function queueMissedCoverage(job: AutomationJob, candidates: CandidateTest[]) {
   const ledger = ensureLedger(job)
   for (const candidate of candidates) {
-    if (!ledger.entries.some((e) => e.actionKey === candidate.id) && !ledger.untestedQueue.includes(candidate.id)) {
+    let entry = ledger.entries.find((item) => item.actionKey === candidate.id)
+    if (!entry) {
+      const role = (candidate.target?.role || "").toLowerCase()
+      const elementType = (candidate.target?.elementType || "").toLowerCase()
+      const type: ActionableElementType =
+        role === "tab" ? "tab" :
+        role === "menuitem" ? "menu" :
+        role === "switch" ? "toggle" :
+        role === "checkbox" || elementType === "checkbox" ? "checkbox" :
+        role === "radio" || elementType === "radio" ? "radio" :
+        role === "button" || elementType === "button" ? "button" :
+        role === "link" || !!candidate.target?.href || elementType === "a" ? "link" :
+        elementType === "select" ? "select" :
+        ["input", "textarea"].includes(elementType) ? "input" : "other"
+      const screenUrl = candidate.stateKey.split("::ui-")[0] || candidate.stateKey
+      entry = {
+        actionKey: candidate.id,
+        screenId: candidate.stateKey,
+        screenUrl,
+        screenPath: (() => { try { return new URL(screenUrl).pathname } catch { return screenUrl } })(),
+        name: candidate.title,
+        type,
+        selector: candidate.target?.selector,
+        href: candidate.target?.href,
+        interactionConfidence: candidate.priority / 100,
+        discoveryReason: [candidate.goal],
+        status: "untested",
+        attempts: 0,
+        discoveredAt: candidate.generatedAt,
+      }
+      ledger.entries.push(entry)
+    }
+    if ((entry.status === "untested" || entry.status === "running") && !ledger.untestedQueue.includes(candidate.id)) {
       ledger.untestedQueue.push(candidate.id)
     }
   }
-  ledger.untested = ledger.untestedQueue.length + ledger.entries.filter((e) => e.status === "untested").length
-  ledger.total = Math.max(ledger.total, ledger.entries.length + ledger.untestedQueue.length)
-  ledger.updatedAt = new Date().toISOString()
+  reconcileActionLedger(ledger)
+  saveJob(job)
 }
 
 
@@ -1079,19 +1111,9 @@ export async function runHumanLikeDecisionLoop(
   page.off("requestfailed", onRequestFailed)
   page.off("response", onResponse)
   const ledger = ensureLedger(job)
-  ledger.total = ledger.entries.length + ledger.untestedQueue.length
-  ledger.untested = ledger.untestedQueue.length + ledger.entries.filter((entry) => entry.status === "untested").length
-  ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
-  ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
-  ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
-  ledger.updatedAt = new Date().toISOString()
-  // Reconcile both representations: queued candidate IDs and inventory entries can
-  // independently remain untested. Looking only at untestedQueue can falsely report
-  // completion when an existing ledger entry was not added to that queue.
-  const missedCoverage = [...new Set([
-    ...ledger.untestedQueue,
-    ...ledger.entries.filter((entry) => entry.status === "untested").map((entry) => entry.actionKey),
-  ])]
+  // Finalize in-flight entries as untested and reconcile every entry with the
+  // pending queue before deciding whether the run can honestly be complete.
+  const missedCoverage = reconcileActionLedger(ledger, true)
   const graphTruncated = Boolean(job.domDiscoveryGraph?.truncated)
   const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated && !restorationFailed
   if (graphTruncated) appendLog(job, "warn", "[DOMDiscovery] Route/state graph reached its node or edge limit; discovery is incomplete.")
