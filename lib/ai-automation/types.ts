@@ -20,6 +20,9 @@ export type AutomationIssue = {
     | "data_not_reflected"
     | "covered_element"
     | "focus_not_restored"
+    | "http_error"
+    | "request_failed"
+    | "empty_data_surface"
   severity: "low" | "medium" | "high" | "blocker"
   viewport?: string
   description: string
@@ -394,6 +397,16 @@ export type NetworkCallEvidence = {
   isMutating: boolean
   headers?: Record<string, string>
   postData?: string
+}
+
+/** Resource failures captured for documents, scripts, styles, images, media and API requests. */
+export type ResourceIssueEvidence = {
+  url: string
+  resourceType: string
+  method: string
+  status?: number
+  errorText?: string
+  timestamp: string
 }
 
 export type StepEvidence = {
