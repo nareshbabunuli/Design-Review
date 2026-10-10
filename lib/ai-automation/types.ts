@@ -266,6 +266,38 @@ export type ActionableElementType =
   | "file_upload"
   | "other"
 
+export type ActionLedgerStatus = "untested" | "running" | "passed" | "failed" | "blocked" | "skipped"
+
+export type ActionLedgerEntry = {
+  actionKey: string
+  screenId: string
+  screenUrl: string
+  screenPath: string
+  name: string
+  type: ActionableElementType
+  selector?: string
+  href?: string
+  interactionConfidence?: number
+  discoveryReason?: string[]
+  status: ActionLedgerStatus
+  attempts: number
+  discoveredAt: string
+  lastTestedAt?: string
+  workflowId?: string
+  error?: string
+  evidence?: { beforeScreenshotUrl?: string; afterScreenshotUrl?: string; observedOutcome?: string }
+}
+
+export type ActionLedger = {
+  entries: ActionLedgerEntry[]
+  updatedAt: string
+  total: number
+  untested: number
+  tested: number
+  failed: number
+  blocked: number
+}
+
 export type ActionableElement = {
   id: string
   name: string
@@ -482,6 +514,7 @@ export type AutomationJob = {
   screens: DiscoveredScreen[]
   issues: AutomationIssue[]
   report?: AutomationReport
+  actionLedger?: ActionLedger
   aiModel?: string
   aiBaseUrl?: string
   layaBaseUrl?: string
