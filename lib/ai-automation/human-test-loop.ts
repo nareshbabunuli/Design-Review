@@ -689,11 +689,14 @@ function recordDomInventory(job: AutomationJob, snapshot: Awaited<ReturnType<typ
       href: element.href,
       interactionConfidence: element.risk === "safe" ? 0.8 : 0.3,
       discoveryReason: ["DOM-first inventory", "kind:" + element.kind, "risk:" + element.risk],
-      status: "untested",
+      // Disabled controls are visible inventory, but not actionable coverage.
+      // Record them as blocked rather than leaving them permanently unresolved.
+      status: element.enabled ? "untested" : "blocked",
       attempts: 0,
       discoveredAt: new Date().toISOString(),
+      error: element.enabled ? undefined : "Control is disabled in the observed DOM state.",
     })
-    ledger.untestedQueue.push(actionKey)
+    if (element.enabled) ledger.untestedQueue.push(actionKey)
   }
   ledger.total = ledger.entries.length
   ledger.untested = ledger.entries.filter((entry) => entry.status === "untested").length
