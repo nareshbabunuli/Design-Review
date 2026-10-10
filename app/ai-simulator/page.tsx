@@ -216,6 +216,7 @@ export default function AISimulatorPage() {
   const [maxScreens, setMaxScreens] = useState(5)
   const [checkBackNav, setCheckBackNav] = useState(true)
   const [checkResponsive, setCheckResponsive] = useState(true)
+  const [recordVideo, setRecordVideo] = useState(true)
 
   // Active Automation Job State
   const [currentJob, setCurrentJob] = useState<AutomationJob | null>(null)
@@ -1566,6 +1567,7 @@ export default function AISimulatorPage() {
           postmanCollection: postmanObj,
           allowTestPayments,
           allowActions: effectiveAllowActions,
+          recordVideo,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials: effectiveCreds,
@@ -1655,6 +1657,7 @@ export default function AISimulatorPage() {
           postmanCollection: postmanObj,
           allowTestPayments,
           allowActions: effectiveAllowActions,
+          recordVideo,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials:
@@ -3781,6 +3784,22 @@ export default function AISimulatorPage() {
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar text-xs">
+              {/* Optional browser session video recording */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-start gap-3">
+                <Video className="h-4 w-4 mt-0.5 text-indigo-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="record-session-video" className="font-semibold text-slate-100 cursor-pointer">Record test session video</label>
+                  <p className="text-[11px] text-slate-400 mt-1">Capture the browser journey with action overlays. The video is attached to the run report when recording and storage are available.</p>
+                </div>
+                <input
+                  id="record-session-video"
+                  type="checkbox"
+                  checked={recordVideo}
+                  onChange={(e) => setRecordVideo(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-indigo-500 cursor-pointer shrink-0"
+                />
+              </div>
+
               {/* 1. Upload Folder */}
               <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between">
