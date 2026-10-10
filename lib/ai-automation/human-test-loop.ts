@@ -651,6 +651,48 @@ function queueMissedCoverage(job: AutomationJob, candidates: CandidateTest[]) {
   ledger.updatedAt = new Date().toISOString()
 }
 
+
+function recordDomInventory(job: AutomationJob, snapshot: Awaited<ReturnType<typeof inspectPageDom>>): void {
+  const ledger = ensureLedger(job)
+  for (const element of snapshot.elements) {
+    const actionKey = "dom-inventory:" + snapshot.url + "::" + element.selector
+    if (ledger.entries.some((entry) => entry.actionKey === actionKey)) continue
+    const type: ActionableElementType =
+      element.role === "tab" ? "tab" :
+      element.role === "menuitem" ? "menu" :
+      element.role === "switch" ? "toggle" :
+      element.role === "checkbox" ? "checkbox" :
+      element.role === "radio" ? "radio" :
+      element.href ? "link" :
+      element.tag === "input" || element.tag === "textarea" ? "input" :
+      element.tag === "select" ? "select" :
+      element.tag === "button" || element.role === "button" ? "button" : "other"
+    ledger.entries.push({
+      actionKey,
+      screenId: snapshot.url,
+      screenUrl: snapshot.url,
+      screenPath: (() => { try { return new URL(snapshot.url).pathname } catch { return snapshot.url } })(),
+      name: element.label,
+      type,
+      selector: element.selector,
+      href: element.href,
+      interactionConfidence: element.risk === "safe" ? 0.8 : 0.3,
+      discoveryReason: ["DOM-first inventory", "kind:" + element.kind, "risk:" + element.risk],
+      status: "untested",
+      attempts: 0,
+      discoveredAt: new Date().toISOString(),
+    })
+    ledger.untestedQueue.push(actionKey)
+  }
+  ledger.total = ledger.entries.length
+  ledger.untested = ledger.entries.filter((entry) => entry.status === "untested").length
+  ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
+  ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
+  ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
+  ledger.updatedAt = new Date().toISOString()
+  saveJob(job)
+}
+
 export async function runHumanLikeDecisionLoop(
   job: AutomationJob,
   page: Page,
@@ -687,8 +729,9 @@ export async function runHumanLikeDecisionLoop(
     }
     const url = await page.url()
     const domInventory = await inspectPageDom(page).catch(() => null)
-    if (step === 0 && domInventory) {
-      appendLog(job, "info", `[DOMDiscovery] Inventoried ${domInventory.elements.length} visible interactive elements on ${domInventory.url}; ${Object.entries(domInventory.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}; forms=${domInventory.forms}; dialogs=${domInventory.dialogs}. Navigation links are recorded, not followed during inventory.`)
+    if (domInventory) {
+      recordDomInventory(job, domInventory)
+      if (step === 0) appendLog(job, "info", `[DOMDiscovery] Inventoried ${domInventory.elements.length} visible interactive elements on ${domInventory.url}; ${Object.entries(domInventory.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}; forms=${domInventory.forms}; dialogs=${domInventory.dialogs}. Navigation links are recorded, not followed during inventory.`)
     }
     const state = await readPatternState(page, url)
     state.consoleErrorCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length
@@ -803,21 +846,7 @@ export async function runHumanLikeDecisionLoop(
           routeQueue.push({ url: explored.destination.url, returnTo: url })
           appendLog(job, "info", `[DOMDiscovery] Queued destination for full DOM exploration: ${explored.destination.url}.`)
         }
-        const ledger = ensureLedger(job)
-        for (const element of explored.destination.elements) {
-          const actionKey = `dom-inventory:${explored.destination.url}::${element.selector}`
-          if (ledger.entries.some((entry) => entry.actionKey === actionKey)) continue
-          const type: ActionableElementType = element.role === "tab" ? "tab" : element.role === "menuitem" ? "menu" : element.role === "switch" ? "toggle" : element.role === "checkbox" ? "checkbox" : element.role === "radio" ? "radio" : element.href ? "link" : (element.tag === "input" || element.tag === "textarea") ? "input" : element.tag === "select" ? "select" : element.tag === "button" || element.role === "button" ? "button" : "other"
-          ledger.entries.push({ actionKey, screenId: explored.destination.url, screenUrl: explored.destination.url, screenPath: (() => { try { return new URL(explored.destination!.url).pathname } catch { return explored.destination!.url } })(), name: element.label, type, selector: element.selector, href: element.href, interactionConfidence: element.risk === "safe" ? 0.8 : 0.3, discoveryReason: ["DOM-first inventory", "kind:" + element.kind, "risk:" + element.risk], status: "untested", attempts: 0, discoveredAt: new Date().toISOString() })
-          ledger.untestedQueue.push(actionKey)
-        }
-        ledger.total = ledger.entries.length
-        ledger.untested = ledger.entries.filter((entry) => entry.status === "untested").length
-        ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
-        ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
-        ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
-        ledger.updatedAt = new Date().toISOString()
-        saveJob(job)
+        recordDomInventory(job, explored.destination)
         if (!explored.restored) appendLog(job, "error", `[DOMDiscovery] Could not restore source after visiting ${explored.destination.url}; coverage remains incomplete.`)
       }
     } else {
