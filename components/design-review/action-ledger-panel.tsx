@@ -145,6 +145,11 @@ export default function ActionLedgerPanel({ actionLedger }: Props) {
                       {entry.evidence?.observedOutcome && (
                         <div className="text-[10px] text-slate-500 mt-1 break-words">{entry.evidence.observedOutcome}</div>
                       )}
+                      {(entry.history?.length || 0) > 1 && (
+                        <div className="text-[9px] text-slate-600 mt-1 break-words" aria-label="Recent action attempts">
+                          Attempts: {entry.history!.slice(-4).map((attempt) => attempt.status).join(" → ")}
+                        </div>
+                      )}
                     </div>
                     <span className={`text-[9px] font-bold uppercase shrink-0 ${statusStyle}`}>{entry.status}</span>
                   </div>
