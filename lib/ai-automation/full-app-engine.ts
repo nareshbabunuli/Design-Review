@@ -419,6 +419,8 @@ export async function extractActionableInventory(page: Page): Promise<{
     document.querySelectorAll(semanticObjectSelector).forEach((el: any) => {
       const tag = (el.tagName || '').toLowerCase()
       if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
+      // Prefer the containing card/gallery object over its child thumbnail.
+      if ((tag === "img" || tag === "video") && el.closest('[class*="card" i], [class*="tile" i], [class*="gallery" i], [class*="carousel" i], [data-action]')) return
 
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
