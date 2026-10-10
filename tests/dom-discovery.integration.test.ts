@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import puppeteer from "puppeteer";
-import { drainDomNavigationEvents, exploreInternalLinkAndReturn, installDomNavigationObserver } from "../lib/ai-automation/dom-first-discovery.ts";
+import { drainDomNavigationEvents, exploreInternalLinkAndReturn, installDomNavigationObserver } from "../lib/ai-automation/dom-first-discovery";
 
 test("production navigation observer captures SPA and hash changes", async () => {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
@@ -23,7 +23,7 @@ test("production link explorer reports a real source-restoration failure", async
     if (req.url === "/destination") { res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Destination</title><p>Destination page</p>"); return; }
     res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Source</title><a id=internal href=/destination>Internal destination</a>");
   });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const sourceUrl = "http://127.0.0.1:" + address.port + "/";
