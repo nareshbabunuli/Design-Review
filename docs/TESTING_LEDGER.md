@@ -12,6 +12,7 @@
 - [x] Stateful control verification strengthened: checkbox/radio/toggle must show a state change; expand/collapse must show an expanded-state change.
 - [x] Form-level invalid-input candidates restricted to supported email and URL fields.
 - [x] Link origin detection now compares parsed URL origins instead of string prefixes; unknown/malformed destinations are conservatively classified as external.
+- [x] Expanded action-risk classification to treat purchases, payments, refunds, transfers, outbound messages, publishing/deploying, invitations, access changes, and password changes as destructive/consequential candidates blocked by default.
 - [x] Earlier TypeScript validation run #28 passed at commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
 - [x] TypeScript validation passed for both latest code commits (#29 and #30).
 - [ ] Run browser fixture tests for the classification matrix.
@@ -64,6 +65,7 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [ ] Confirm text and specialized inputs use type-appropriate values and originals are restored.
 - [ ] Confirm checkbox, radio, toggle, and expand/collapse results rely on the target's state, not unrelated page changes.
 - [ ] Test same-origin, external, malformed, and prefix-confusion URLs (e.g. a trusted hostname followed by an attacker-controlled suffix).
+- [ ] Test destructive/consequential labels including pay, purchase, refund, transfer, send, publish, deploy, invite, access changes, and password changes; verify all remain blocked.
 - [ ] Confirm search only passes when a visible result or empty state is observed.
 - [ ] Confirm no real form submission, payment, deletion, publication, email, logout, or external navigation occurs in the fixture.
 - [ ] Confirm each pass/fail/blocked result includes a clear observation and is recorded in the Action Ledger.
@@ -77,8 +79,8 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 2. **Search behavior needs an app-specific assertion.** Text changing anywhere on the page may be unrelated; fixture tests should ensure the expected results/empty state is what changed.
 3. **Native validity is not server validation.** Email/URL `checkValidity()` tests browser constraints only; it does not prove backend validation.
 4. **Synthetic input restoration needs verification.** Confirm framework-controlled inputs retain their original state after restoration and no unwanted autosave/API side effects occur.
-5. **Browser/end-to-end tests remain outstanding.** TypeScript checks passed before the newest URL-origin hardening commit; confirm its CI and run the fixture matrix.
+5. **Browser/end-to-end tests remain outstanding.** TypeScript checks passed before the latest URL-origin and action-risk commits; confirm their CI and run the fixture matrix.
 
 ## Update log
 
-- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, and the browser fixture test plan. Browser tests have not yet been run.
+- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, consequential-action risk classification, and browser fixture test requirements. Browser tests have not yet been run.
