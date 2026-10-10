@@ -83,6 +83,11 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         disabled: (el as HTMLButtonElement).disabled,
         required: input.required,
         placeholder: input.placeholder || undefined,
+        expanded: el.getAttribute("aria-expanded") === null ? undefined : el.getAttribute("aria-expanded") === "true",
+        pressed: el.getAttribute("aria-pressed") === null ? undefined : el.getAttribute("aria-pressed") === "true",
+        sortable: !!el.closest("th")?.hasAttribute("aria-sort") || !!el.closest('[role="columnheader"]')?.hasAttribute("aria-sort"),
+        accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("title") || (el as HTMLElement).innerText?.trim() || input.placeholder || input.labels?.length),
+
       }
     })
     const forms = Array.from(document.querySelectorAll("form")).filter(visible).slice(0, 20).map((form) => ({
@@ -208,9 +213,61 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
       return { ok: false, observation: (back ? "Back" : "Forward") + " navigation failed: " + (error?.message || String(error)) }
     }
     const afterUrl = page.url()
-    return afterUrl !== beforeUrl
-      ? { ok: true, observation: (back ? "Back" : "Forward") + " changed URL from " + beforeUrl + " to " + afterUrl + "." }
-      : { ok: false, observation: (back ? "Back" : "Forward") + " did not change the URL; no history transition was observed." }
+    if (afterUrl === beforeUrl) {
+      return { ok: false, observation: (back ? "Back" : "Forward") + " did not change the URL; no history transition was observed." }
+    }
+    let beforeOrigin = "", afterOrigin = ""
+    try { beforeOrigin = new URL(beforeUrl).origin; afterOrigin = new URL(afterUrl).origin } catch {}
+    if (!beforeOrigin || afterOrigin !== beforeOrigin) {
+      await page.goto(beforeUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {})
+      return { ok: false, blocked: true, observation: (back ? "Back" : "Forward") + " would leave the target origin; returned to " + beforeUrl + "." }
+    }
+    return { ok: true, observation: (back ? "Back" : "Forward") + " changed URL from " + beforeUrl + " to " + afterUrl + "." }
+  }
+
+  if (candidate.pattern === "responsive_layout") {
+    const original = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+    try {
+      await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+      await new Promise((resolve) => setTimeout(resolve, 350))
+      const result = await page.evaluate(() => {
+        const doc = document.documentElement, body = document.body
+        const overflow = Math.max(doc.scrollWidth, body?.scrollWidth || 0) - innerWidth
+        const offenders = Array.from(document.querySelectorAll("body *")).filter((el) => {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.right > innerWidth + 3 && getComputedStyle(el).position !== "fixed"
+        }).slice(0, 5).map((el) => (el as HTMLElement).tagName.toLowerCase() + (el.id ? "#" + el.id : "")).join(", ")
+        return { overflow, offenders }
+      })
+      return result.overflow <= 2
+        ? { ok: true, observation: "Mobile viewport 390×844 has no significant horizontal overflow." }
+        : { ok: false, observation: "Mobile viewport has " + result.overflow + "px horizontal overflow; examples: " + result.offenders }
+    } catch (error: any) {
+      return { ok: false, observation: "Responsive viewport check failed: " + (error?.message || String(error)) }
+    } finally {
+      await page.setViewport({ width: original.width, height: original.height, deviceScaleFactor: 1 }).catch(() => {})
+    }
+  }
+
+  if (candidate.pattern === "keyboard_navigation") {
+    try {
+      const beforeActive = await page.evaluate(() => {
+        const el = document.activeElement
+        return el ? el.tagName + "|" + (el.getAttribute("aria-label") || (el as HTMLElement).innerText || (el as HTMLInputElement).name || "") : ""
+      })
+      await page.keyboard.press("Tab")
+      const focused = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null
+        if (!el || el === document.body) return { visible: false, label: "" }
+        const r = el.getBoundingClientRect(), st = getComputedStyle(el)
+        return { visible: r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none", label: el.getAttribute("aria-label") || el.innerText || (el as HTMLInputElement).name || el.tagName }
+      })
+      return focused.visible
+        ? { ok: true, observation: "Tab moved focus to a visible element: " + String(focused.label).slice(0, 100) + "; previous focus: " + beforeActive.slice(0, 80) }
+        : { ok: false, observation: "Tab did not produce a visible focused element." }
+    } catch (error: any) {
+      return { ok: false, observation: "Keyboard focus test failed: " + (error?.message || String(error)) }
+    }
   }
 
   if (candidate.pattern === "refresh") {
@@ -224,6 +281,22 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     } catch (error: any) {
       return { ok: false, observation: "Reload failed: " + (error?.message || String(error)) }
     }
+  }
+
+  if (candidate.pattern === "accessible_name") {
+    const selector = candidate.target?.selector
+    if (!selector) return { ok: false, observation: "No target available for accessible-name inspection." }
+    const result = await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null
+      if (!el) return null
+      const input = el as HTMLInputElement
+      const named = !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title") ||
+        el.innerText?.trim() || input.placeholder || input.labels?.length)
+      return { named, tag: el.tagName.toLowerCase(), role: el.getAttribute("role") || "" }
+    }, selector).catch(() => null)
+    return !result ? { ok: false, observation: "Could not inspect accessible name." } : result.named
+      ? { ok: true, observation: "Interactive " + result.tag + " has an accessible-name source." }
+      : { ok: false, observation: "Interactive " + result.tag + " has no detected accessible name." }
   }
 
   if (["table", "empty_state", "network_failure", "error_state", "loading", "modal"].includes(candidate.pattern)) {
@@ -519,6 +592,10 @@ export async function runHumanLikeDecisionLoop(
         },
       })
       const choice = readChoice(result?.answers?.next_test)
+      if (choice?.index === -1) {
+        appendLog(job, "info", "[HumanLoop] Laya escalated: no safe candidate selected; remaining coverage stays queued.")
+        break
+      }
       if (choice && choice.confidence >= LAYA_THRESHOLD && candidates[choice.index]) {
         selected = candidates[choice.index]
       }
@@ -577,6 +654,12 @@ export async function runHumanLikeDecisionLoop(
   page.off("requestfailed", onRequestFailed)
   page.off("response", onResponse)
   const ledger = ensureLedger(job)
+  ledger.total = ledger.entries.length + ledger.untestedQueue.length
+  ledger.untested = ledger.untestedQueue.length + ledger.entries.filter((entry) => entry.status === "untested").length
+  ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
+  ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
+  ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
+  ledger.updatedAt = new Date().toISOString()
   const missedCoverage = [...new Set(ledger.untestedQueue)]
   const completed = missedCoverage.length === 0
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
