@@ -156,12 +156,41 @@ export type AutomationReport = {
   markdownReport?: string
   postmanSummary?: PostmanCollectionSummary
   endpointMappings?: PostmanEndpointMapping[]
+  postmanCoverage?: PostmanCoverageReport
   aiExecutiveSummary?: {
     executiveSummary: string
     keyStrengths: string[]
     criticalFixes: string[]
     overallScore: number
   }
+}
+
+export type PostmanCoverageReport = {
+  totalEndpoints: number
+  matchedEndpoints: number
+  executedEndpoints: number
+  wireConfirmedEndpoints: number
+  wireVerificationFailedEndpoints: number
+  unencounteredEndpoints: number
+  coveragePercentage: number
+  endpoints: Array<{
+    name: string
+    method: string
+    url: string
+    status: "unencountered" | "matched" | "executed" | "wire_confirmed" | "wire_verification_failed"
+    screenId?: string
+    formId?: string
+  }>
+  uiFieldsWithoutPostmanMatch: Array<{
+    screenId: string
+    formId?: string
+    uiFieldName: string
+    uiSelector?: string
+  }>
+  postmanFieldsNotFoundInUi: Array<{
+    endpointName: string
+    apiFieldName: string
+  }>
 }
 
 export type AIThinkingModel = {
