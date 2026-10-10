@@ -45,6 +45,9 @@ export default function ActionLedgerPanel({ actionLedger }: Props) {
     return {
       live: all.filter((entry) => entry.status === "running").length,
       queue: actionLedger?.untested ?? 0,
+      passed: all.filter((entry) => entry.status === "passed").length,
+      failed: all.filter((entry) => entry.status === "failed").length,
+      blocked: all.filter((entry) => entry.status === "blocked").length,
       history: all.filter((entry) => ["passed", "failed", "blocked", "skipped"].includes(entry.status)).length,
     }
   }, [actionLedger])
@@ -79,11 +82,16 @@ export default function ActionLedgerPanel({ actionLedger }: Props) {
             {actionLedger.untested} queued
           </span>
           <span className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-[10px] font-bold text-emerald-300">
-            {actionLedger.tested} completed
+            {counts.passed} passed
           </span>
-          {actionLedger.failed > 0 && (
+          {counts.failed > 0 && (
             <span className="px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-[10px] font-bold text-rose-300">
-              {actionLedger.failed} failed
+              {counts.failed} failed
+            </span>
+          )}
+          {counts.blocked > 0 && (
+            <span className="px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-[10px] font-bold text-amber-300">
+              {counts.blocked} blocked
             </span>
           )}
           <ChevronDown className={`h-4 w-4 text-slate-500 transition ${expanded ? "rotate-180" : ""}`} />
