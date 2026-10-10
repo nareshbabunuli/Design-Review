@@ -121,6 +121,17 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
   })
 }
 
+function discoveryStateSignature(snapshot: DomDiscoverySnapshot): string {
+  return JSON.stringify({
+    title: snapshot.title,
+    elements: snapshot.elements.map((element) => [element.selector, element.label, element.kind, element.risk, element.enabled, element.href]),
+    counts: snapshot.counts,
+    forms: snapshot.forms,
+    dialogs: snapshot.dialogs,
+    scrollableRegions: snapshot.scrollableRegions,
+  })
+}
+
 /**
  * Explore one recorded same-origin link, capture its destination inventory,
  * and return to the source URL. A failed restoration is surfaced to the caller.
@@ -130,7 +141,7 @@ export async function exploreInternalLinkAndReturn(
   selector: string,
   expectedHref: string,
   captureScreenshot?: (label: string) => Promise<string>,
-): Promise<{ destination: DomDiscoverySnapshot | null; screenshotUrl?: string; observation: string; restored: boolean; blocked?: boolean }> {
+): Promise<{ destination: DomDiscoverySnapshot | null; screenshotUrl?: string; observation: string; restored: boolean; blocked?: boolean; stateChanged?: boolean }> {
   const sourceUrl = page.url()
   let sourceOrigin = ""
   let target: URL
@@ -146,6 +157,7 @@ export async function exploreInternalLinkAndReturn(
   if (/\/(logout|log-out|signout|sign-out|delete|purchase|checkout|payment)(\/|$)/i.test(target.pathname)) {
     return { destination: null, observation: "Navigation path appears consequential and was blocked by the safe exploration policy.", restored: true, blocked: true }
   }
+  const beforeSnapshot = await inspectPageDom(page).catch(() => null)
   const element = await page.$(selector).catch(() => null)
   if (!element) return { destination: null, observation: "Navigation element is no longer present; candidate remains unresolved.", restored: false }
   const linkInfo = await element.evaluate((el) => ({ href: (el as HTMLAnchorElement).href || "", target: el.getAttribute("target") || "" })).catch(() => ({ href: "", target: "" }))
@@ -173,7 +185,15 @@ export async function exploreInternalLinkAndReturn(
     const afterUrl = page.url()
     if (afterUrl === sourceUrl) {
       const snapshot = await inspectPageDom(page)
-      return { destination: snapshot, observation: "Click did not change the URL; recorded as a same-page interaction for later state verification.", restored: true }
+      const stateChanged = Boolean(beforeSnapshot && discoveryStateSignature(beforeSnapshot) !== discoveryStateSignature(snapshot))
+      return {
+        destination: snapshot,
+        observation: stateChanged
+          ? "Click stayed on the same URL but changed the observed DOM state; recorded as a same-page transition."
+          : "Click stayed on the same URL and no meaningful DOM inventory change was observed; the interaction is not verified.",
+        restored: true,
+        stateChanged,
+      }
     }
     const destination = await inspectPageDom(page)
     const screenshotUrl = await captureScreenshot?.("dom-discovery-destination").catch(() => "") || ""
@@ -182,7 +202,7 @@ export async function exploreInternalLinkAndReturn(
       Object.entries(destination.counts).map(([kind, count]) => kind + "=" + count).join(", ") +
       "), forms=" + destination.forms + ", dialogs=" + destination.dialogs + "."
     const restored = await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
-    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: return to source URL failed."), restored }
+    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: return to source URL failed."), restored, stateChanged: true }
   } catch (error: any) {
     const restored = page.url() === sourceUrl || await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
     return { destination: null, observation: "Navigation exploration failed: " + String(error?.message || error) + (restored ? "; source URL restored." : "; source URL restoration failed."), restored }
