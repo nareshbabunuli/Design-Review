@@ -817,6 +817,25 @@ function linkTestPlanStepsToLedger(job: AutomationJob, testPlan: FullAppTestPlan
 
   for (const step of testPlan.steps) {
     if (step.actionKey) continue
+
+    // A form scenario exercises the form's submit control. Link it to that
+    // control so the ledger does not create a redundant standalone click step.
+    if (step.actionType === "form_scenario" && step.formId) {
+      const screen = testPlan.screens.find((candidate) => candidate.id === step.screenId)
+      const form = screen?.forms.find((candidate) => candidate.id === step.formId)
+      const submitName = form?.submitButton?.trim().toLowerCase()
+      const submitEntry = submitName
+        ? ledger.entries.find((candidate) =>
+            candidate.screenId === step.screenId &&
+            candidate.name.trim().toLowerCase() === submitName
+          )
+        : undefined
+      if (submitEntry) {
+        step.actionKey = submitEntry.actionKey
+        continue
+      }
+    }
+
     const entry = ledger.entries.find((candidate) =>
       candidate.screenId === step.screenId &&
       candidate.name.toLowerCase() === step.targetName.toLowerCase() &&
@@ -824,6 +843,96 @@ function linkTestPlanStepsToLedger(job: AutomationJob, testPlan: FullAppTestPlan
     )
     if (entry) step.actionKey = entry.actionKey
   }
+}
+
+/**
+ * Ensures every discovered ledger action has an executable plan step. This is
+ * used after initial planning and after every live DOM rescan, so links, tabs,
+ * form fields and controls revealed by modals do not disappear from coverage.
+ */
+function queueUnplannedLedgerActions(
+  job: AutomationJob,
+  testPlan: FullAppTestPlan,
+  onlyScreenId?: string
+): number {
+  const ledger = job.actionLedger
+  if (!ledger) return 0
+
+  linkTestPlanStepsToLedger(job, testPlan)
+  const represented = new Set(
+    testPlan.steps.map((step) => step.actionKey).filter((key): key is string => Boolean(key))
+  )
+  let added = 0
+
+  for (const entry of ledger.entries) {
+    if (entry.status !== "untested" || (onlyScreenId && entry.screenId !== onlyScreenId)) continue
+    if (represented.has(entry.actionKey)) continue
+
+    const screen = testPlan.screens.find((candidate) => candidate.id === entry.screenId)
+    const element = screen?.actionableElements.find((candidate) => candidate.actionKey === entry.actionKey)
+    const actionType: TestPlanStep["actionType"] =
+      entry.type === "input" ? "fill" :
+      entry.type === "select" ? "select" :
+      entry.type === "checkbox" || entry.type === "radio" || entry.type === "toggle" ? "toggle" :
+      entry.type === "file_upload" ? "upload" :
+      entry.type === "button" || entry.type === "clickable" || entry.type === "link" ||
+      entry.type === "tab" || entry.type === "menu" ? "click" :
+      "verify"
+
+    // Text-like observations are not executable actions.
+    if (actionType === "verify" && !element?.isInteractive) continue
+
+    const name = entry.name || "Unnamed action"
+    let syntheticValue: string | undefined
+    if (actionType === "fill") {
+      const inputType = (element?.inputType || "").toLowerCase()
+      if (inputType === "email" || /email/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.email
+      else if (inputType === "password" || /password/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.password
+      else if (inputType === "tel" || /phone|mobile/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.phone
+      else syntheticValue = SYNTHETIC_TEST_DATA.fullName
+    } else if (actionType === "select") {
+      syntheticValue = element?.options?.[0] || "Option 1"
+    }
+
+    let fileTypeRequired: TestPlanStep["fileTypeRequired"]
+    if (actionType === "upload") {
+      const accept = element?.accept || ""
+      fileTypeRequired = /pdf/i.test(accept + name) ? "pdf" :
+        /csv/i.test(accept + name) ? "csv" :
+        /video/i.test(accept + name) ? "video" :
+        /doc/i.test(accept + name) ? "document" : "image"
+    }
+
+    testPlan.steps.push({
+      id: `step-${testPlan.steps.length + 1}`,
+      screenId: entry.screenId,
+      screenName: screen?.name || entry.screenPath,
+      stepIndex: testPlan.steps.length + 1,
+      actionType,
+      targetName: name,
+      targetSelector: entry.selector,
+      actionKey: entry.actionKey,
+      syntheticValue,
+      fileTypeRequired,
+      expectedResult: actionType === "click"
+        ? `Clicking "${name}" produces a verifiable UI, navigation, modal, or network effect.`
+        : actionType === "fill"
+          ? `Field "${name}" accepts synthetic input and reflects the entered value.`
+          : actionType === "select"
+            ? `Control "${name}" changes to the selected option.`
+            : actionType === "upload"
+              ? `Upload control "${name}" accepts a compatible test file.`
+              : `Control "${name}" responds to interaction and its outcome is recorded.`,
+      status: "pending",
+    })
+    represented.add(entry.actionKey)
+    added++
+  }
+
+  if (added > 0) {
+    appendLog(job, "info", `[QUEUE] Added ${added} previously unplanned action(s) to the execution queue.`)
+  }
+  return added
 }
 
 export async function discoverAndMapApp(
@@ -2204,74 +2313,93 @@ export async function executeStructuredTestPlan(
         step.evidenceTimestamp = new Date().toISOString()
       } catch {}
 
-      // 5. Dynamic Check for NEW DISCOVERY
+      // 5. Dynamic inventory: rescan after EVERY action, even if the route
+      // already exists. A modal, tab or expanded section can reveal new controls
+      // without changing the URL.
       const currentUrl = page.url()
       const origin = new URL(testPlan.targetUrl).origin
       const currentNorm = normalizePath(currentUrl, origin)
+      const newInv = await extractActionableInventory(page)
+      const currentScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
+      const hasActiveModal = Boolean(newInv.modalTitle)
 
-      const currentHeading = await page.evaluate(() => {
-        const h = document.querySelector("h1, h2, [role='heading'], [data-screen-title]")
-        return h ? (h.textContent || "").trim().slice(0, 40) : ""
-      })
-      const isKnown = testPlan.screens.some(
-        (s) => s.path === currentNorm && (!currentHeading || s.name.toLowerCase().includes(currentHeading.toLowerCase()))
+      let currentScreen = testPlan.screens.find((screen) =>
+        screen.path === currentNorm &&
+        screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase()
       )
-      const hasNewModal = await page.evaluate(() => {
-        const d = document.querySelector('[role="dialog"], dialog[open]')
-        return Boolean(d && window.getComputedStyle(d).display !== "none")
-      })
 
-      if (!isKnown || hasNewModal) {
-        const newInv = await extractActionableInventory(page)
+      if (!currentScreen && !hasActiveModal) {
+        currentScreen = testPlan.screens.find((screen) =>
+          screen.path === currentNorm &&
+          (!newInv.heading || screen.name.toLowerCase().includes(newInv.heading.toLowerCase()))
+        )
+      }
+
+      if (!currentScreen) {
         const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
-        const newScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
+        currentScreen = {
+          id: newScreenId,
+          name: currentScreenName,
+          url: currentUrl,
+          path: hasActiveModal ? `${currentNorm}#modal-${encodeURIComponent((newInv.modalTitle || "dialog").toLowerCase().replace(/\\s+/g, "-"))}` : currentNorm,
+          screenshotUrl: step.screenshotUrl,
+          actionableElements: [],
+          forms: [],
+          isNewDiscovery: true,
+          discoveredAt: new Date().toISOString(),
+        }
+        testPlan.screens.push(currentScreen)
+        testPlan.transitions.push({
+          id: `tr-${testPlan.transitions.length + 1}`,
+          fromScreenId: step.screenId,
+          toScreenId: newScreenId,
+          action: `[NEW DISCOVERY] Triggered by ${step.targetName}`,
+          actionType: hasActiveModal ? "modal_open" : "click",
+        })
+        appendLog(job, "success", `🌟 [NEW DISCOVERY] Found ${hasActiveModal ? "modal/view" : "screen"} ${newScreenId}: "${currentScreenName}" during test.`)
+      }
 
-        if (!testPlan.screens.some((s) => s.name === newScreenName && s.path === currentNorm)) {
-          appendLog(job, "success", `🌟 [NEW DISCOVERY] Found unmapped screen: ${newScreenId} "${newScreenName}" during test!`)
-
-          const newScreenNode: AppScreenNode = {
-            id: newScreenId,
-            name: newScreenName,
-            url: currentUrl,
-            path: currentNorm,
-            screenshotUrl: step.screenshotUrl,
-            actionableElements: newInv.actionableElements,
-            forms: newInv.forms,
-            isNewDiscovery: true,
-            discoveredAt: new Date().toISOString(),
-          }
-
-          testPlan.screens.push(newScreenNode)
-          mergeScreenActionsIntoLedger(job, newScreenNode)
-          linkTestPlanStepsToLedger(job, testPlan)
-          saveJob(job)
-          testPlan.transitions.push({
-            id: `tr-${testPlan.transitions.length + 1}`,
-            fromScreenId: step.screenId,
-            toScreenId: newScreenId,
-            action: `[NEW DISCOVERY] Triggered by ${step.targetName}`,
-            actionType: "click",
-          })
-
-          const newStep: TestPlanStep = {
-            id: `step-${testPlan.steps.length + 1}`,
-            screenId: newScreenId,
-            screenName: newScreenName,
-            stepIndex: testPlan.steps.length + 1,
-            actionType: "verify",
-            targetName: `${newScreenName} Content`,
-            expectedResult: `Verify new discovery screen "${newScreenName}" is interactive.`,
-            actualResult: `Discovered during test of ${step.targetName} with ${newInv.actionableElements.length} elements.`,
-            status: "passed",
-            verdict: "passed",
-            isNewDiscovery: true,
-            screenshotUrl: step.screenshotUrl,
-            evidenceTimestamp: new Date().toISOString(),
-          }
-          testPlan.steps.push(newStep)
-          passedCount++
+      // Merge inventory into the existing screen instead of replacing it.
+      // Stable keys preserve history and allow the queue to distinguish new actions.
+      const screenPathForKeys = currentScreen.path
+      const knownElementKeys = new Set(
+        currentScreen.actionableElements.map((element) => element.actionKey || [
+          "dom", screenPathForKeys, element.type, element.name.trim().toLowerCase(),
+          element.selector || "", element.href || "", element.formId || "",
+        ].join("|"))
+      )
+      for (const element of newInv.actionableElements) {
+        const key = element.actionKey || [
+          "dom", screenPathForKeys, element.type, element.name.trim().toLowerCase(),
+          element.selector || "", element.href || "", element.formId || "",
+        ].join("|")
+        element.actionKey = key
+        if (!knownElementKeys.has(key)) {
+          currentScreen.actionableElements.push(element)
+          knownElementKeys.add(key)
         }
       }
+
+      const knownFormKeys = new Set(
+        currentScreen.forms.map((form) => [form.id, form.selector || "", form.name || ""].join("|").toLowerCase())
+      )
+      for (const form of newInv.forms) {
+        const key = [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()
+        if (!knownFormKeys.has(key)) {
+          currentScreen.forms.push(form)
+          knownFormKeys.add(key)
+        }
+      }
+
+      currentScreen.url = currentUrl
+      if (step.screenshotUrl) currentScreen.screenshotUrl = step.screenshotUrl
+      mergeScreenActionsIntoLedger(job, currentScreen)
+      linkTestPlanStepsToLedger(job, testPlan)
+      const queuedNow = queueUnplannedLedgerActions(job, testPlan, currentScreen.id)
+      if (queuedNow > 0) {
+        appendLog(job, "info", `[COVERAGE] "${currentScreen.name}" now has ${currentScreen.actionableElements.length} known controls; ${queuedNow} new/unplanned action(s) queued for execution.`)
+      }
+      saveJob(job)
 
       // 6. Update Coverage
       testPlan.coverage = {
@@ -2472,6 +2600,7 @@ export async function executeFullAppTestingJob(
       postmanCollection: params.postmanCollection || job.postmanCollection,
     })
     linkTestPlanStepsToLedger(job, testPlan)
+    queueUnplannedLedgerActions(job, testPlan)
     job.fullAppTestPlan = testPlan
     job.flowGraph = buildFigmaWorkflowMap(testPlan)
     saveJob(job)
