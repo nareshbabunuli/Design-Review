@@ -571,6 +571,7 @@ export async function executeAutonomousJob(
   const recordingPath = path.join(dir, "recording.webm")
   let recordingControl: "recording" | "paused" = "recording"
   let recordingMonitor: ReturnType<typeof setInterval> | null = null
+  const recordingFiles: string[] = []
 
   try {
     const count = scenarioCountFromCommand(params.userInstruction || "", params.scenarioCount || 15)
@@ -646,6 +647,7 @@ export async function executeAutonomousJob(
         const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
         recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
         await recorder.start(recordingPath)
+        recordingFiles.push(recordingPath)
         ;(job as any).recordingControl = "recording"
         saveJob(job)
         appendLog(job, "info", "Session video recording started.")
@@ -667,7 +669,7 @@ export async function executeAutonomousJob(
                 const segmentPath = path.join(dir, `recording-${Date.now()}.webm`)
                 recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
                 await recorder.start(segmentPath)
-                ;(job as any).recordingSegmentPath = segmentPath
+                recordingFiles.push(segmentPath)
                 appendLog(job, "info", "Session video recording resumed.")
               } catch (err: any) {
                 recorder = null
@@ -864,7 +866,6 @@ export async function executeAutonomousJob(
       }
     }
     let recordingUrl = ""
-    const recordingFiles = [recordingPath, (job as any).recordingSegmentPath].filter(Boolean) as string[]
     for (let i = 0; i < recordingFiles.length; i++) {
       const filePath = recordingFiles[i]
       if (!fs.existsSync(filePath) || fs.statSync(filePath).size <= 1024) continue
