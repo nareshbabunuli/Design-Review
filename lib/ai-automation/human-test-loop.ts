@@ -963,7 +963,13 @@ export async function runHumanLikeDecisionLoop(
   ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
   ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
   ledger.updatedAt = new Date().toISOString()
-  const missedCoverage = [...new Set(ledger.untestedQueue)]
+  // Reconcile both representations: queued candidate IDs and inventory entries can
+  // independently remain untested. Looking only at untestedQueue can falsely report
+  // completion when an existing ledger entry was not added to that queue.
+  const missedCoverage = [...new Set([
+    ...ledger.untestedQueue,
+    ...ledger.entries.filter((entry) => entry.status === "untested").map((entry) => entry.actionKey),
+  ])]
   const completed = maxSteps > 0 && missedCoverage.length === 0
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
   if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
