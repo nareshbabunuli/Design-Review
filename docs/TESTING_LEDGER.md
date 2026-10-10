@@ -102,6 +102,14 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - Existing AI Bot username/password fields remain the credential input. Credentials are not copied into the saved workflow records.
 - **Prototype limitation:** persistence is browser-local, not synchronized across browsers/devices or shared project members. Credential inputs remain the existing shared fields rather than separate per-role credential profiles. CI run [#118](https://github.com/nareshbabunuli/Design-Review/actions/runs/38089716594) passed type-check and DOM discovery fixtures for the preceding workflow UI commit; the final target-URL scoping change still needs its own CI result. Manual browser verification is pending; this does not prove end-to-end role isolation.
 
+### 2026-10-10 — Optional test-session video recording
+
+- Added a **Record test session video** checkbox to the AI Simulator pre-flight modal; it is enabled by default and can be switched off before a run.
+- The preference is sent with both Full App and Feature / Workflow Testing requests.
+- Full App Testing already respected `recordVideo: false`; Feature / Workflow Testing now starts and finalizes the existing session recorder and includes its recording URL in the report. Autonomous Testing now skips starting its recorder when recording is disabled.
+- Recording remains best-effort: if the recorder dependency or storage upload is unavailable, the test run continues and logs the recording limitation. Supabase schema changes are not required; existing storage upload behavior is reused.
+- **Verification:** implementation committed; CI/typecheck and browser UI verification are pending. No claim is made that a video has been captured successfully in a live run.
+
 ## Update log
 
 - **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, consequential-action risk classification, labelled user visual checks, and expanded consequential-action guard coverage. Browser tests have not yet been run.
