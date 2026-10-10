@@ -201,3 +201,11 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [x] Fixed a false-positive pass for same-URL link interactions: discovery now compares pre/post DOM inventory signatures and only treats the interaction as verified when an observable inventory change occurs. A click with no URL or meaningful inventory change is recorded as failed/unverified, not passed.
 - [ ] This inventory-signature check is a bounded heuristic; application-specific semantic assertions and browser fixture evidence are still required.
 - [ ] Route graph edges, stronger same-URL/SPA state evidence, and automated browser fixtures remain the next code phases. No live-browser result is claimed.
+
+
+### DOM discovery route/state graph — 2026-10-10
+
+- [x] Added a bounded domDiscoveryGraph separate from the existing Stagehand scenario graph, preserving both views.
+- [x] Record observed navigation and inventory-changing same-URL transitions with source/destination state IDs, action label, selector, status, and evidence summary.
+- [x] Graph limits are 200 nodes and 400 edges; overflow is explicitly flagged as truncated.
+- [ ] TypeScript CI for the graph changes is pending; browser fixtures, SPA/hash behavior, and real-browser route restoration remain unverified.
