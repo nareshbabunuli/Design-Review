@@ -144,3 +144,15 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [ ] Browser fixture and end-to-end tests remain outstanding.
 
 **CI status:** TypeScript validation was triggered for commit `43709eab378c21cec6913fa0ba16dd789ee6e786` (run [#42](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078416648)). The run was still in progress when checked; no pass is claimed yet. A later docs commit may trigger another run.
+
+### DOM-first route queue follow-up
+
+- [x] Internal-link candidates are deferred until safe current-state candidates are exhausted.
+- [x] Same-origin link exploration inventories the destination, captures a destination screenshot when available, and attempts to restore the source URL.
+- [x] Discovered destination controls are persisted as untested Action Ledger inventory entries.
+- [x] Discovered internal destinations are queued for a later full exploration pass, with a recorded parent URL for return.
+- [x] Links targeting a new tab are recorded but not clicked automatically.
+- [x] Discovery-loop exceptions now surface as scenario errors instead of being silently treated as successful broader exploration.
+- [x] Budget calculation no longer counts untested inventory rows as already executed actions.
+- [ ] A single central run-level budget and central-runner ownership are still required; the existing autonomous runner still starts from AI-planned scenarios.
+- [ ] Automated browser fixtures and end-to-end route/backtracking verification remain outstanding.
