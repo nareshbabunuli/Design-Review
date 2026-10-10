@@ -814,11 +814,11 @@ function updateActionLedgerForStep(
   entry.status = status
   if (status !== "running") entry.attempts += 1
   entry.lastTestedAt = new Date().toISOString()
-  entry.error = error
+  entry.error = error ? secretRedactor.redact(error) : undefined
   entry.evidence = {
     beforeScreenshotUrl: evidence?.beforeScreenshotUrl,
     afterScreenshotUrl: evidence?.afterScreenshotUrl,
-    observedOutcome,
+    observedOutcome: observedOutcome ? secretRedactor.redact(observedOutcome) : undefined,
   }
 
   rebuildActionLedger(job, ledger.entries)
@@ -2451,9 +2451,9 @@ export async function executeStructuredTestPlan(
       step.status = "failed"
       step.verdict = "failed"
       failedCount++
-      step.error = stepErr?.message || "Execution exception"
+      step.error = secretRedactor.redact(stepErr?.message || "Execution exception")
       updateActionLedgerForStep(job, step, "failed", step.error, step.error)
-      appendLog(job, "warn", `Step ${i + 1} exception: ${stepErr?.message}`)
+      appendLog(job, "warn", `Step ${i + 1} exception: ${secretRedactor.redact(stepErr?.message || "Execution exception")}`)
     } finally {
       netRecorder.cleanup()
       consoleRecorder.cleanup()
@@ -2741,7 +2741,7 @@ export async function executeFullAppTestingJob(
       }
     }
     job.status = "failed"
-    job.error = err?.message || "Execution exception occurred during Full App Testing"
+    job.error = secretRedactor.redact(err?.message || "Execution exception occurred during Full App Testing")
     job.finishedAt = new Date().toISOString()
     appendLog(job, "error", `Fatal Full App Testing failure: ${job.error}`)
     saveJob(job)
