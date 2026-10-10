@@ -390,11 +390,6 @@ export default function AISimulatorPage() {
         const idx = currentJob.screens.findIndex((s) => {
           const sTitle = (s.title || "").toLowerCase()
           const nTitle = screenNode.name.toLowerCase()
-          const actionLedgerLive = activePlan?.steps?.filter((s) => s.status === "running").map((s: any) => ({ id: s.id, title: s.targetName || "Running action", detail: s.expectedResult, status: "running" as const })) || []
-  const actionLedgerQueue = activePlan?.steps?.filter((s) => ["pending", "queued"].includes(s.status)).map((s: any) => ({ id: s.id, title: s.targetName || "Pending action", detail: s.expectedResult, status: "queued" as const })) || []
-  const actionLedgerHistory = activePlan?.steps?.filter((s) => ["passed", "failed", "skipped"].includes(s.status)).slice(-30).reverse().map((s: any) => ({ id: s.id, title: s.targetName || "Completed action", detail: s.actualResult || s.expectedResult, status: s.status as "passed" | "failed" | "skipped" })) || []
-
-  return (
             sTitle.includes(nTitle) ||
             nTitle.includes(sTitle) ||
             (s.path && screenNode.path && s.path === screenNode.path) ||
@@ -412,8 +407,16 @@ export default function AISimulatorPage() {
   )
 
   // Local Project Route Scanner State
-  const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>
-        <ActionLedger live={actionLedgerLive} queue={actionLedgerQueue} history={actionLedgerHistory} className="mb-4" />>([])
+  const actionLedgerLive = activePlan?.steps?.filter((s) => s.status === "running").map((s) => ({ id: s.id, title: s.targetName || "Running action", detail: s.expectedResult, status: "running" as const })) || []
+  const actionLedgerQueue = activePlan?.steps?.filter((s) => s.status === "pending").map((s) => ({ id: s.id, title: s.targetName || "Pending action", detail: s.expectedResult, status: "queued" as const })) || []
+  const actionLedgerHistory = activePlan?.steps?.filter((s) => ["passed", "failed", "blocked", "skipped_unsafe"].includes(s.status)).slice(-30).reverse().map((s) => ({
+    id: s.id,
+    title: s.targetName || "Completed action",
+    detail: s.actualResult || s.expectedResult,
+    status: s.status === "passed" ? "passed" as const : s.status === "failed" ? "failed" as const : "skipped" as const,
+  })) || []
+
+  const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
   const [isScanningRoutes, setIsScanningRoutes] = useState(false)
 
   const fetchLocalRoutes = useCallback(async (dirOverride?: string, urlOverride?: string) => {
