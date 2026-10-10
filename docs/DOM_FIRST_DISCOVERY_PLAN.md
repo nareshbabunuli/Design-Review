@@ -29,9 +29,9 @@
 ### Phase 2 — Route queue and recursive exploration
 - [x] Add a bounded in-memory queue of discovered internal URLs during the decision loop (persistent route-queue recovery remains future work).
 - [x] Visit queued same-origin routes, inventory their DOM, explore safe local state changes, and return to the recorded parent URL.
-- [ ] Record route graph edges (source page, triggering element, destination page).
+- [x] Record bounded DOM route/state graph edges with source/destination state IDs, triggering action/selector, observed outcome, and transition type; expose it separately from the Stagehand scenario graph in the report.
 - [ ] Re-scan after modal/tab/dropdown/form-state changes and enqueue newly revealed controls/states.
-- [ ] Handle SPA route changes, hash navigation, same-URL state transitions, and multi-tab links explicitly.
+- [ ] Fully handle SPA route changes, hash navigation, and multi-tab links explicitly. Same-URL transitions are recorded when the DOM inventory changes; unchanged same-URL clicks remain unverified.
 - [ ] Bound total routes/actions/time, but report remaining work as incomplete rather than silently dropping it.
 
 ### Phase 3 — Central runner integration
@@ -55,10 +55,18 @@ The first central DOM-first discovery pass is wired into the autonomous runner b
 
 The most recent confirmed TypeScript validation before the latest coverage-reconciliation fix passed on commit `9174acd89eaaaa3308b1c1260ffed2b563871fc2` (run [#64](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078951528)). The new coverage fix is commit `1e3758282eb90e4928dea53fdfa5d890fa9ba3de`; its CI result must be checked separately.
 
-This is **not yet a proven complete recursive explorer**. Remaining work includes a truly shared run-wide budget, route graph edges, rescanning newly revealed states after tabs/modals/dropdowns, explicit SPA/hash/same-URL handling, automated browser fixtures, and a disposable-app end-to-end run. TypeScript success alone does not prove browser behavior.
+This is **not yet a proven complete recursive explorer**. Remaining work includes a truly shared run-wide budget, rescanning newly revealed states after tabs/modals/dropdowns, full SPA/hash/multi-tab handling, automated browser fixtures, and a disposable-app end-to-end run. TypeScript success alone does not prove browser behavior.
 
 
 ### Follow-up code review — same-URL transitions
 
 - [x] Same-URL link clicks now compare the pre-click and post-click DOM inventory signature; a click with no observed URL or inventory-state change is not marked passed.
 - [ ] This is inventory-level evidence only. Route graph edges, app-specific assertions, automated fixtures, and browser E2E verification remain open.
+
+
+### Route/state graph implementation — 2026-10-10
+
+- [x] Added a separate DOM discovery graph to the job/report types; existing Stagehand scenario flowGraph remains unchanged.
+- [x] Record observed source/destination nodes and transition edges with action label, selector, transition kind, outcome status, timestamp, and bounded evidence text.
+- [x] Bound graph growth at 200 nodes and 400 edges; exceeding either cap sets truncated: true rather than silently implying complete graph coverage.
+- [ ] TypeScript CI and browser fixture/E2E validation for this change are pending.
