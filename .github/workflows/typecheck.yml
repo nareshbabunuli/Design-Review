@@ -26,3 +26,10 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: "true"
       - name: Type-check application
         run: npx tsc --noEmit --pretty false
+      - name: Install Chromium for isolated browser fixtures
+        run: npx puppeteer browsers install chrome
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+
+      - name: Run DOM discovery browser fixtures
+        run: npm run test:dom-discovery
