@@ -1,0 +1,28 @@
+name: TypeScript validation
+
+on:
+  push:
+    branches:
+      - action-ledger-development
+  pull_request:
+    branches:
+      - action-ledger-development
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies without downloading browser binaries
+        run: npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+      - name: Type-check application
+        run: npx tsc --noEmit --pretty false
