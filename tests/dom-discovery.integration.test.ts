@@ -12,6 +12,10 @@ test("production navigation observer captures SPA and hash changes", async () =>
     await installDomNavigationObserver(page);
     await page.click("#spa");
     await page.click("#hash");
+    await page.waitForFunction(() => window.location.hash === "#details");
+    // hashchange is dispatched after the URL mutation, so allow the event
+    // task to run before draining the observer's queue.
+    await page.evaluate(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
     const events = await drainDomNavigationEvents(page);
     assert.ok(events.some(event => event.kind === "pushState" && event.to.endsWith("#dashboard")));
     assert.ok(events.some(event => event.kind === "hashchange" && event.to.endsWith("#details")));
