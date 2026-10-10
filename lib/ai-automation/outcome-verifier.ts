@@ -218,14 +218,14 @@ export async function detectEmptyDataSurfaces(
         if (rect.width <= 1 || rect.height <= 1 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return
 
         const headers = Array.from(el.querySelectorAll("th, [role='columnheader']"))
-          .map((header) => (header.textContent || "").replace(/\\s+/g, " ").trim())
+          .map((header) => (header.textContent || "").replace(/\s+/g, " ").trim())
           .filter(Boolean)
         if (headers.length === 0) return
 
         const rows = Array.from(el.querySelectorAll("tbody tr, [role='row']"))
         const dataRows = rows.filter((row) => {
           if (row.querySelector("th, [role='columnheader']")) return false
-          const text = (row.textContent || "").replace(/\\s+/g, " ").trim()
+          const text = (row.textContent || "").replace(/\s+/g, " ").trim()
           if (!text || emptyStatePattern.test(text)) return false
           return Boolean(row.querySelector("td, [role='cell'], [role='gridcell']"))
         })
@@ -664,7 +664,7 @@ export async function runWithLadder(
         if (r.width <= 1 || r.height <= 1 || s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return 0
         if ((e as HTMLButtonElement).disabled || e.getAttribute("aria-disabled") === "true") return 0
 
-        const norm = (v: string) => v.replace(/\\s+/g, " ").trim().toLowerCase()
+        const norm = (v: string) => v.replace(/\s+/g, " ").trim().toLowerCase()
         const wanted = norm(name)
         const text = norm(e.innerText || e.textContent || "")
         const aria = norm(e.getAttribute("aria-label") || "")
