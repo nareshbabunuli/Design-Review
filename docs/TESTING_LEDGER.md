@@ -97,10 +97,10 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 ### 2026-10-10 — Persist role-based test workflows
 
 - **Commit:** `8df90a5a1181ed6716c53ebbd6c683ce30e64981` — `feat: persist role workflows per AI simulator project`.
-- Saved role workflows now load from and save to browser local storage, scoped by the active AI Simulator project ID. They survive refreshes in the same browser and remain separate from the Figma design-review workflow records.
+- Saved role workflows now load from and save to browser local storage, scoped by the target app URL. They survive refreshes in the same browser and remain separate from the Figma design-review workflow records. The scope currently uses target URL rather than the database project ID.
 - Each saved item includes role, workflow name, and test prompt; users can load or delete an item from the existing workflow panel. Runs include the selected role and workflow name in the instruction sent to the existing test runner.
 - Existing AI Bot username/password fields remain the credential input. Credentials are not copied into the saved workflow records.
-- **Prototype limitation:** persistence is browser-local, not synchronized across browsers/devices or shared project members. Credential inputs remain the existing shared fields rather than separate per-role credential profiles. CI and manual browser verification are pending; this does not prove end-to-end role isolation.
+- **Prototype limitation:** persistence is browser-local, not synchronized across browsers/devices or shared project members. Credential inputs remain the existing shared fields rather than separate per-role credential profiles. CI run [#118](https://github.com/nareshbabunuli/Design-Review/actions/runs/38089716594) passed type-check and DOM discovery fixtures for the preceding workflow UI commit; the final target-URL scoping change still needs its own CI result. Manual browser verification is pending; this does not prove end-to-end role isolation.
 
 ## Update log
 
