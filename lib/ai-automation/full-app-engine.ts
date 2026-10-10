@@ -876,11 +876,11 @@ function queueUnplannedLedgerActions(
       entry.type === "checkbox" || entry.type === "radio" || entry.type === "toggle" ? "toggle" :
       entry.type === "file_upload" ? "upload" :
       entry.type === "button" || entry.type === "clickable" || entry.type === "link" ||
-      entry.type === "tab" || entry.type === "menu" ? "click" :
+      entry.type === "tab" || entry.type === "menu" || (entry.type === "other" && element?.isInteractive) ? "click" :
       "verify"
 
-    // Text-like observations are not executable actions.
-    if (actionType === "verify" && !element?.isInteractive) continue
+    // Do not silently turn an unknown element into a passing verification step.
+    if (actionType === "verify") continue
 
     const name = entry.name || "Unnamed action"
     let syntheticValue: string | undefined
@@ -2324,13 +2324,13 @@ export async function executeStructuredTestPlan(
       const hasActiveModal = Boolean(newInv.modalTitle)
 
       let currentScreen = testPlan.screens.find((screen) =>
-        screen.path === currentNorm &&
+        screen.path.split("#")[0] === currentNorm &&
         screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase()
       )
 
       if (!currentScreen && !hasActiveModal) {
         currentScreen = testPlan.screens.find((screen) =>
-          screen.path === currentNorm &&
+          screen.path.split("#")[0] === currentNorm &&
           (!newInv.heading || screen.name.toLowerCase().includes(newInv.heading.toLowerCase()))
         )
       }
@@ -2424,6 +2424,26 @@ export async function executeStructuredTestPlan(
       netRecorder.cleanup()
       consoleRecorder.cleanup()
     }
+  }
+
+  // A run is not complete while any discovered action remains untested or running.
+  // This prevents the report from claiming full coverage after a queueing gap.
+  const unresolvedLedgerEntries = (job.actionLedger?.entries || []).filter(
+    (entry) => entry.status === "untested" || entry.status === "running"
+  )
+  const unresolvedSteps = testPlan.steps.filter(
+    (queued) => queued.status === "pending" || queued.status === "running"
+  )
+  if (unresolvedLedgerEntries.length > 0 || unresolvedSteps.length > 0) {
+    const detail = `${unresolvedLedgerEntries.length} ledger action(s) and ${unresolvedSteps.length} plan step(s) remain unverified.`
+    appendLog(job, "error", `[COVERAGE INCOMPLETE] ${detail} The run will not be marked complete.`)
+    testPlan.status = "error"
+    job.testingPhase = "executing"
+    job.status = "failed"
+    job.progress = Math.min(job.progress, 99)
+    job.currentStep = detail
+    saveJob(job)
+    return
   }
 
   // PHASE 4: Chained Multi-Step Workflows ("go next next" & state persistence)
@@ -2647,6 +2667,16 @@ export async function executeFullAppTestingJob(
         job.recordingUrl = recUrl
         if (job.report) job.report.recordingUrl = recUrl
       }
+    }
+
+    // Preserve an explicit incomplete-coverage failure from the execution phase.
+    if (job.status === "failed" || job.fullAppTestPlan?.status === "error") {
+      job.status = "failed"
+      job.testingPhase = "reporting"
+      job.finishedAt = new Date().toISOString()
+      saveJob(job)
+      appendLog(job, "error", "Full App Testing stopped without claiming completion because coverage remains unresolved.")
+      return
     }
 
     // PHASE 4: Final Reporting & Coverage
