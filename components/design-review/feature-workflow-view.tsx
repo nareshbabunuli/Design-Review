@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useEffect } from "react"
 import {
   Sparkles,
   Play,
@@ -43,7 +43,8 @@ interface FeatureWorkflowViewProps {
   targetUrl: string
   activeSubTab?: "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   onSubTabChange?: (tab: "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
-  onStartWorkflowTest: (workflowPrompt: string) => Promise<void>
+  projectId?: string
+  onStartWorkflowTest: (workflowPrompt: string, role?: string, workflowName?: string) => Promise<void>
   onCancelJob?: () => void
   onOpenMapPage?: () => void
   isMapPageActive?: boolean
@@ -95,6 +96,7 @@ export default function FeatureWorkflowView({
   job,
   isRunning,
   targetUrl,
+  projectId = "default",
   activeSubTab = "plan",
   onSubTabChange,
   onStartWorkflowTest,
@@ -108,6 +110,32 @@ export default function FeatureWorkflowView({
   const [workflowInput, setWorkflowInput] = useState("")
   const [selectedRole, setSelectedRole] = useState("Customer")
   const [savedFlows, setSavedFlows] = useState<Array<{ id: string; role: string; name: string; prompt: string }>>([])
+  const [savedFlowsLoaded, setSavedFlowsLoaded] = useState(false)
+  const savedFlowsKey = `open-design-ai:role-workflows:${projectId}`
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(savedFlowsKey)
+      const parsed = raw ? JSON.parse(raw) : []
+      setSavedFlows(Array.isArray(parsed) ? parsed.filter((flow) =>
+        flow && typeof flow.id === "string" && typeof flow.role === "string" &&
+        typeof flow.name === "string" && typeof flow.prompt === "string"
+      ) : [])
+    } catch {
+      setSavedFlows([])
+    } finally {
+      setSavedFlowsLoaded(true)
+    }
+  }, [savedFlowsKey])
+
+  useEffect(() => {
+    if (!savedFlowsLoaded) return
+    try {
+      window.localStorage.setItem(savedFlowsKey, JSON.stringify(savedFlows))
+    } catch (error) {
+      console.warn("Could not persist saved test workflows in this browser.", error)
+    }
+  }, [savedFlows, savedFlowsKey, savedFlowsLoaded])
   const [flowName, setFlowName] = useState("Customer journey")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analyzedSpec, setAnalyzedSpec] = useState<FeatureWorkflowSpec | null>(null)
@@ -165,7 +193,9 @@ export default function FeatureWorkflowView({
   const handleRunTest = async (promptToRun?: string) => {
     const text = (promptToRun || workflowInput || currentSpec?.userGoal || "").trim()
     if (!text) return
-    await onStartWorkflowTest(text)
+    const role = selectedRole === "Custom role" ? "Custom role" : selectedRole
+    const name = flowName.trim() || currentSpec?.workflowName || "Workflow test"
+    await onStartWorkflowTest(`[User role: ${role}] [Workflow: ${name}] ${text}`, role, name)
   }
 
   const passedSteps = activePlan?.steps?.filter((s) => s.status === "passed").length || 0
@@ -347,7 +377,7 @@ export default function FeatureWorkflowView({
               <button type="button" disabled={!workflowInput.trim() || !flowName.trim()} onClick={() => { const prompt = workflowInput.trim(); const name = flowName.trim(); setSavedFlows((flows) => [...flows.filter((f) => f.name !== name || f.role !== selectedRole), { id: crypto.randomUUID(), role: selectedRole, name, prompt }]); }} className="rounded-lg border border-indigo-500/50 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-950 disabled:opacity-40">Save flow</button>
             </div>
             <p className="text-[10px] text-slate-500">A project can contain multiple separate role-based flows. Each run gets its own role/name in the test instruction; use test credentials for that role when starting the run.</p>
-            {savedFlows.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2">{savedFlows.map((flow) => <div key={flow.id} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-white">{flow.name}</div><div className="text-[10px] text-slate-400">{flow.role} · saved in this browser session</div><div className="truncate text-[10px] text-slate-500">{flow.prompt}</div></div><button type="button" disabled={isRunning} onClick={() => { setSelectedRole(flow.role); setFlowName(flow.name); setWorkflowInput(flow.prompt); setAnalyzedSpec(null); setPreviewPlan(null); }} className="rounded-md bg-slate-800 px-2 py-1 text-[10px] text-slate-200 disabled:opacity-40">Load</button><button type="button" onClick={() => setSavedFlows((flows) => flows.filter((f) => f.id !== flow.id))} aria-label={`Remove ${flow.name}`} className="px-1 text-slate-500 hover:text-rose-300">×</button></div>)}</div>}
+            {savedFlows.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2">{savedFlows.map((flow) => <div key={flow.id} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-white">{flow.name}</div><div className="text-[10px] text-slate-400">{flow.role} · saved for this project in this browser</div><div className="truncate text-[10px] text-slate-500">{flow.prompt}</div></div><button type="button" disabled={isRunning} onClick={() => { setSelectedRole(flow.role); setFlowName(flow.name); setWorkflowInput(flow.prompt); setAnalyzedSpec(null); setPreviewPlan(null); }} className="rounded-md bg-slate-800 px-2 py-1 text-[10px] text-slate-200 disabled:opacity-40">Load</button><button type="button" onClick={() => setSavedFlows((flows) => flows.filter((f) => f.id !== flow.id))} aria-label={`Remove ${flow.name}`} className="px-1 text-slate-500 hover:text-rose-300">×</button></div>)}</div>}
           </div>
 
           {/* Workflow Input Form */}
