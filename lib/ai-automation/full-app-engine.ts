@@ -799,7 +799,7 @@ function updateActionLedgerForStep(
   if (!entry) return
 
   entry.status = status
-  entry.attempts += 1
+  if (status !== "running") entry.attempts += 1
   entry.lastTestedAt = new Date().toISOString()
   entry.error = error
   entry.evidence = {
@@ -1011,6 +1011,8 @@ export async function discoverAndMapApp(
                 discoveredAt: new Date().toISOString(),
               }
               screens.push(tabNode)
+              mergeScreenActionsIntoLedger(job, tabNode)
+              saveJob(job)
               addTransition(startId, tabNode.id, `Switch to "${tab.name}" Tab`, "click")
               appendLog(
                 job,
@@ -2240,6 +2242,9 @@ export async function executeStructuredTestPlan(
           }
 
           testPlan.screens.push(newScreenNode)
+          mergeScreenActionsIntoLedger(job, newScreenNode)
+          linkTestPlanStepsToLedger(job, testPlan)
+          saveJob(job)
           testPlan.transitions.push({
             id: `tr-${testPlan.transitions.length + 1}`,
             fromScreenId: step.screenId,
