@@ -137,6 +137,29 @@ export type FlowGraph = {
   edges: FlowGraphEdge[]
 }
 
+/** Bounded, observation-backed graph produced by the DOM-first discovery pass. */
+export type DomDiscoveryGraph = {
+  nodes: Array<{
+    id: string
+    url: string
+    title: string
+    observedAt: string
+    elementCount: number
+  }>
+  edges: Array<{
+    id: string
+    from: string
+    to: string
+    action: string
+    selector?: string
+    transition: "navigation" | "same_url_state"
+    status: "passed" | "failed" | "blocked"
+    observedAt: string
+    evidence?: string
+  }>
+  truncated: boolean
+}
+
 export type AutomationLog = {
   timestamp: string
   level: "info" | "success" | "warn" | "error"
@@ -158,6 +181,8 @@ export type AutomationReport = {
   testCases?: TestCaseResult[]
   /** Autonomous runs: Figma-style node/edge flow of visited screens. */
   flowGraph?: FlowGraph
+  /** DOM-first observed route/state transitions; kept separate from scenario flowGraph. */
+  domDiscoveryGraph?: DomDiscoveryGraph
   /** Autonomous runs: session recording (webm) URL. */
   recordingUrl?: string
   /** Structured multi-step workflows executed during full app testing */
@@ -563,6 +588,8 @@ export type AutomationJob = {
   scenarios?: TestScenario[]
   testCases?: TestCaseResult[]
   flowGraph?: FlowGraph
+  /** DOM-first route/state graph; distinct from the Stagehand scenario graph. */
+  domDiscoveryGraph?: DomDiscoveryGraph
   recordingUrl?: string
   /** Vision-driven thinking model & interactive UI checklist */
   thinkingModel?: AIThinkingModel
