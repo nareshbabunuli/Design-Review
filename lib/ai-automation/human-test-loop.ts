@@ -447,13 +447,13 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   }
 
   if (candidate.pattern === "invalid_input") {
-    if (targetInfo.type !== "email") {
+    if (targetInfo.type !== "email" && targetInfo.type !== "url") {
       await target.dispose().catch(() => {})
       return { ok: false, observation: 'Safe invalid-input check is not implemented for field type "' + (targetInfo.type || "unknown") + '".' }
     }
     const original = targetInfo.value
     try {
-      await setInputValue("not-an-email")
+      await setInputValue(targetInfo.type === "email" ? "not-an-email" : "not-a-url")
       const invalid = await target.evaluate((el) => !(el as HTMLInputElement).checkValidity()).catch(() => false)
       await setInputValue(original).catch(() => {})
       await target.dispose().catch(() => {})
