@@ -38,6 +38,7 @@ import {
   runWithLadder,
   verifyModalCloseAndFocus,
   detectEmptyDataSurfaces,
+  detectBrokenDomAssets,
   NetworkRecorder,
   ConsoleRecorder,
 } from "./outcome-verifier"
@@ -2482,6 +2483,26 @@ export async function executeStructuredTestPlan(
           expected: "Resource should load successfully (HTTP 2xx/3xx) without a network failure.",
           actual: `${statusText}; resource type: ${resourceIssue.resourceType}; method: ${resourceIssue.method}.`,
           timestamp: resourceIssue.timestamp || diagnosticTimestamp,
+        })
+      }
+
+      const observedResourceUrls = new Set(
+        netRecorder.getResourceIssues().map((resourceIssue) => secretRedactor.redact(resourceIssue.url))
+      )
+      const brokenDomAssets = await detectBrokenDomAssets(page)
+      for (const asset of brokenDomAssets) {
+        const safeAssetUrl = secretRedactor.redact(asset.url)
+        if (observedResourceUrls.has(safeAssetUrl)) continue
+        pushDiagnostic({
+          id: `issue-dom-asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenUrl: diagnosticUrl,
+          screenTitle: step.screenName,
+          type: "broken_asset",
+          severity: asset.resourceType === "media" ? "high" : "medium",
+          description: `Broken visible ${asset.resourceType} asset: ${safeAssetUrl}. ${asset.description}`,
+          expected: "Visible images and media should load and decode successfully.",
+          actual: asset.description,
+          timestamp: diagnosticTimestamp,
         })
       }
 
