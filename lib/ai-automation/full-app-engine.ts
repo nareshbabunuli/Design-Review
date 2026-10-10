@@ -16,6 +16,7 @@ import {
   FlowGraph,
   StepEvidence,
   AutomationVerdict,
+  ActionLedgerEntry,
 } from "./types"
 import { saveJob, getJob, appendLog } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
@@ -426,7 +427,7 @@ export async function extractActionableInventory(page: Page): Promise<{
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
       const text = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("alt") || el.getAttribute("title") || "")
-        .trim().replace(/\\s+/g, " ").slice(0, 60)
+        .trim().replace(/\s+/g, " ").slice(0, 60)
       const className = typeof el.className === "string" ? el.className : ""
       const identity = [el.id || "", el.getAttribute("data-testid") || el.getAttribute("data-cy") || "", className].join("|")
       const hasMedia = Boolean(el.matches("img, video") || el.querySelector("img, video, picture, source"))
@@ -710,6 +711,121 @@ async function collectLinks(page: Page, origin: string): Promise<Array<{ text: s
   }, origin)
 }
 
+function rebuildActionLedger(job: AutomationJob, entries: ActionLedgerEntry[]): void {
+  const now = new Date().toISOString()
+  const deduped = new Map<string, ActionLedgerEntry>()
+  for (const entry of entries) {
+    const previous = deduped.get(entry.actionKey)
+    if (!previous || (entry.lastTestedAt || "") >= (previous.lastTestedAt || "")) {
+      deduped.set(entry.actionKey, entry)
+    }
+  }
+  const normalized = Array.from(deduped.values())
+  job.actionLedger = {
+    entries: normalized,
+    untestedQueue: normalized.filter((entry) => entry.status === "untested").map((entry) => entry.actionKey),
+    updatedAt: now,
+    total: normalized.length,
+    untested: normalized.filter((entry) => entry.status === "untested").length,
+    tested: normalized.filter((entry) => ["passed", "failed", "skipped"].includes(entry.status)).length,
+    failed: normalized.filter((entry) => entry.status === "failed").length,
+    blocked: normalized.filter((entry) => entry.status === "blocked").length,
+  }
+}
+
+function mergeScreenActionsIntoLedger(job: AutomationJob, screen: AppScreenNode): void {
+  const existing = new Map<string, ActionLedgerEntry>(
+    (job.actionLedger?.entries || []).map((entry) => [entry.actionKey, entry])
+  )
+  const now = new Date().toISOString()
+
+  for (const element of screen.actionableElements) {
+    const actionKey = element.actionKey || [
+      "dom",
+      screen.path,
+      element.type,
+      element.name.trim().toLowerCase(),
+      element.selector || "",
+      element.href || "",
+      element.formId || "",
+    ].join("|")
+
+    element.actionKey = actionKey
+    const previous = existing.get(actionKey)
+
+    existing.set(actionKey, {
+      actionKey,
+      screenId: screen.id,
+      screenUrl: screen.url,
+      screenPath: screen.path,
+      name: element.name,
+      type: element.type,
+      selector: element.selector,
+      href: element.href,
+      interactionConfidence: element.interactionConfidence,
+      discoveryReason: element.discoveryReason,
+      status: previous?.status || "untested",
+      attempts: previous?.attempts || 0,
+      discoveredAt: previous?.discoveredAt || now,
+      lastTestedAt: previous?.lastTestedAt,
+      workflowId: previous?.workflowId,
+      error: previous?.error,
+      evidence: previous?.evidence,
+    })
+  }
+
+  rebuildActionLedger(job, Array.from(existing.values()))
+}
+
+function updateActionLedgerForStep(
+  job: AutomationJob,
+  step: TestPlanStep,
+  status: ActionLedgerEntry["status"],
+  observedOutcome?: string,
+  error?: string,
+  evidence?: { beforeScreenshotUrl?: string; afterScreenshotUrl?: string }
+): void {
+  const ledger = job.actionLedger
+  if (!ledger) return
+
+  const entry = step.actionKey
+    ? ledger.entries.find((candidate) => candidate.actionKey === step.actionKey)
+    : ledger.entries.find((candidate) =>
+        candidate.screenId === step.screenId &&
+        candidate.name.toLowerCase() === step.targetName.toLowerCase() &&
+        (!step.targetSelector || candidate.selector === step.targetSelector)
+      )
+
+  if (!entry) return
+
+  entry.status = status
+  entry.attempts += 1
+  entry.lastTestedAt = new Date().toISOString()
+  entry.error = error
+  entry.evidence = {
+    beforeScreenshotUrl: evidence?.beforeScreenshotUrl,
+    afterScreenshotUrl: evidence?.afterScreenshotUrl,
+    observedOutcome,
+  }
+
+  rebuildActionLedger(job, ledger.entries)
+}
+
+function linkTestPlanStepsToLedger(job: AutomationJob, testPlan: FullAppTestPlan): void {
+  const ledger = job.actionLedger
+  if (!ledger) return
+
+  for (const step of testPlan.steps) {
+    if (step.actionKey) continue
+    const entry = ledger.entries.find((candidate) =>
+      candidate.screenId === step.screenId &&
+      candidate.name.toLowerCase() === step.targetName.toLowerCase() &&
+      (!step.targetSelector || candidate.selector === step.targetSelector)
+    )
+    if (entry) step.actionKey = entry.actionKey
+  }
+}
+
 export async function discoverAndMapApp(
   job: AutomationJob,
   page: Page,
@@ -759,6 +875,8 @@ export async function discoverAndMapApp(
     }
     screens.push(node)
     pathScreenMap.set(curPath, id)
+    mergeScreenActionsIntoLedger(job, node)
+    saveJob(job)
     appendLog(
       job,
       "success",
@@ -1256,12 +1374,14 @@ export async function executeStructuredTestPlan(
       step.status = "skipped_unsafe"
       step.verdict = "skipped_unsafe"
       step.actualResult = `Skipped by safety guard: ${safety.reason}`
+      updateActionLedgerForStep(job, step, "skipped", step.actualResult)
       skippedUnsafeCount++
       appendLog(job, "warn", `[SAFETY GUARD ${i + 1}/${testPlan.steps.length}] ${step.targetName} skipped: ${safety.reason}`)
       continue
     }
 
     step.status = "running"
+    updateActionLedgerForStep(job, step, "running")
     job.currentStep = `[${i + 1}/${testPlan.steps.length}] Testing ${step.screenName}: ${step.actionType.toUpperCase()} ${step.targetName}`
     job.progress = Math.round(30 + ((i + 1) / testPlan.steps.length) * 65)
     saveJob(job)
@@ -2019,6 +2139,20 @@ export async function executeStructuredTestPlan(
       step.status = actionVerdict
       step.actualResult = observation
 
+      const ledgerStatus: ActionLedgerEntry["status"] =
+        actionVerdict === "suspected_non_functional" ? "failed" :
+        actionVerdict === "skipped_unsafe" ? "skipped" :
+        actionVerdict
+      updateActionLedgerForStep(
+        job,
+        step,
+        ledgerStatus,
+        observation,
+        actionVerdict === "failed" || actionVerdict === "suspected_non_functional" || actionVerdict === "blocked"
+          ? observation
+          : undefined
+      )
+
       // Check for email confirmation / external verification requirements
       try {
         const verifyCheck = await detectVerificationScreen(page)
@@ -2151,6 +2285,7 @@ export async function executeStructuredTestPlan(
       step.verdict = "failed"
       failedCount++
       step.error = stepErr?.message || "Execution exception"
+      updateActionLedgerForStep(job, step, "failed", step.error, step.error)
       appendLog(job, "warn", `Step ${i + 1} exception: ${stepErr?.message}`)
     } finally {
       netRecorder.cleanup()
@@ -2331,6 +2466,7 @@ export async function executeFullAppTestingJob(
       isAuthenticated: job.authState === "logged_in",
       postmanCollection: params.postmanCollection || job.postmanCollection,
     })
+    linkTestPlanStepsToLedger(job, testPlan)
     job.fullAppTestPlan = testPlan
     job.flowGraph = buildFigmaWorkflowMap(testPlan)
     saveJob(job)
