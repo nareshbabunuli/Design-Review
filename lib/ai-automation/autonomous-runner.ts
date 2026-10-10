@@ -492,7 +492,7 @@ async function runScenarioWithStagehand(
           actionList.push({ ...action, action: `RECOVERY: ${description}` })
           if (RISKY_ACTION.test(description)) out.riskyHit = description
         }
-        out.actionsTaken = actionList.length
+        out.actionsTaken += actionList.length
         if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
         const recoveryScreenshotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-recovery`)
         addEvidence(out, "OBSERVE", "Captured the browser state after the evidence-driven recovery action.", {
