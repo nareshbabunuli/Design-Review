@@ -6,9 +6,57 @@ import {
   WorkflowRun,
   PostmanCollectionSummary,
   PostmanEndpointMapping,
+  PostmanCoverageReport,
 } from "./types"
 import { formatCurlCommand } from "./workflow-chainer"
 import { secretRedactor } from "./secure-credentials-manager"
+
+function buildPostmanCoverageReport(testPlan: FullAppTestPlan, postmanSummary?: PostmanCollectionSummary): PostmanCoverageReport | undefined {
+  if (!postmanSummary) return undefined
+  const steps = testPlan.steps || []
+  const endpointKey = (endpoint: { name: string; method: string; url: string; pathSegments?: string[] }) =>
+    `${endpoint.method.toUpperCase()} ${(endpoint.pathSegments || endpoint.url.split("/").filter(Boolean)).join("/")} ${endpoint.name}`
+  const coverage = postmanSummary.endpoints.map((endpoint) => {
+    const key = endpointKey(endpoint)
+    const matchingSteps = steps.filter((step) => step.postmanEndpoint && endpointKey(step.postmanEndpoint) === key)
+    const executedStep = matchingSteps.find((step) => step.status !== "pending" && step.verdict !== undefined)
+    const confirmedStep = matchingSteps.find((step) => step.confirmedOnWire === true)
+    const failedWireStep = matchingSteps.find((step) => step.confirmedOnWire === false)
+    let status: PostmanCoverageReport["endpoints"][number]["status"] = "unencountered"
+    if (confirmedStep) status = "wire_confirmed"
+    else if (failedWireStep) status = "wire_verification_failed"
+    else if (executedStep) status = "executed"
+    else if (matchingSteps.length > 0) status = "matched"
+    const first = matchingSteps[0]
+    return { name: endpoint.name, method: endpoint.method, url: endpoint.url, status, screenId: first?.screenId, formId: first?.formId }
+  })
+  const uiFieldsWithoutPostmanMatch = steps.flatMap((step) => (step.postmanMappings || [])
+    .filter((m) => m.confidenceLevel === "unmatched" || !m.apiFieldName)
+    .map((m) => ({ screenId: step.screenId, formId: step.formId, uiFieldName: m.uiFieldName, uiSelector: m.uiSelector })))
+  const postmanFieldsNotFoundInUi: PostmanCoverageReport["postmanFieldsNotFoundInUi"] = []
+  for (const endpoint of postmanSummary.endpoints) {
+    const matchingSteps = steps.filter((step) => step.postmanEndpoint && endpointKey(step.postmanEndpoint) === endpointKey(endpoint))
+    if (matchingSteps.length === 0) continue
+    const matchedApiFields = new Set(matchingSteps.flatMap((step) => (step.postmanMappings || []).map((m) => m.apiFieldName).filter(Boolean)))
+    for (const apiFieldName of Object.keys(endpoint.payloadFields)) {
+      if (!matchedApiFields.has(apiFieldName)) postmanFieldsNotFoundInUi.push({ endpointName: endpoint.name, apiFieldName })
+    }
+  }
+  const totalEndpoints = coverage.length
+  const coveredEndpoints = coverage.filter((e) => e.status !== "unencountered").length
+  return {
+    totalEndpoints,
+    matchedEndpoints: coveredEndpoints,
+    executedEndpoints: coverage.filter((e) => ["executed", "wire_confirmed", "wire_verification_failed"].includes(e.status)).length,
+    wireConfirmedEndpoints: coverage.filter((e) => e.status === "wire_confirmed").length,
+    wireVerificationFailedEndpoints: coverage.filter((e) => e.status === "wire_verification_failed").length,
+    unencounteredEndpoints: coverage.filter((e) => e.status === "unencountered").length,
+    coveragePercentage: totalEndpoints === 0 ? 100 : Math.round((coveredEndpoints / totalEndpoints) * 100),
+    endpoints: coverage,
+    uiFieldsWithoutPostmanMatch,
+    postmanFieldsNotFoundInUi,
+  }
+}
 
 /**
  * Builds the comprehensive outcome-verified UI testing report,
@@ -36,6 +84,7 @@ export function buildAutomationReport(
   const blockedSteps = steps.filter((s) => s.verdict === "blocked" || s.status === "blocked").length
 
   const totalIssues = job.issues.length
+  const postmanCoverage = buildPostmanCoverageReport(testPlan, options?.postmanSummary || testPlan.postmanSummary)
 
   // Screen counts
   const totalScreens = testPlan.screens.length
@@ -101,6 +150,7 @@ export function buildAutomationReport(
     recommendations,
     postmanSummary: options?.postmanSummary,
     endpointMappings: options?.endpointMappings,
+    postmanCoverage,
   })
 
   const report: AutomationReport = {
@@ -200,6 +250,44 @@ function generateMarkdownReportText(params: {
           `| \`${map.endpoint.name}\` | \`${map.endpoint.method}\` | ${map.screenId} (${map.formId || "form"}) | **${map.overallConfidence.toUpperCase()}** | ${wireStatus} |`
         )
       }
+      sections.push("")
+    }
+  }
+
+  // Postman API coverage: keep every imported endpoint visible, including APIs never reached by the UI.
+  if (postmanCoverage) {
+    sections.push(`## 🧭 Postman API Coverage\n`)
+    sections.push(`The Postman collection is treated as the API test-data contract. Coverage shows which expected APIs were encountered, executed, and confirmed on the wire.\n`)
+    sections.push(`| Metric | Result |`)
+    sections.push(`| :--- | :--- |`)
+    sections.push(`| **Postman APIs** | ${postmanCoverage.totalEndpoints} |`)
+    sections.push(`| **APIs encountered in UI** | ${postmanCoverage.matchedEndpoints}/${postmanCoverage.totalEndpoints} |`)
+    sections.push(`| **APIs executed** | ${postmanCoverage.executedEndpoints}/${postmanCoverage.totalEndpoints} |`)
+    sections.push(`| **Wire-confirmed APIs** | ${postmanCoverage.wireConfirmedEndpoints}/${postmanCoverage.totalEndpoints} |`)
+    sections.push(`| **Wire verification failed** | ${postmanCoverage.wireVerificationFailedEndpoints} |`)
+    sections.push(`| **APIs never encountered** | ${postmanCoverage.unencounteredEndpoints} |`)
+    sections.push(`| **UI/API coverage** | **${postmanCoverage.coveragePercentage}%** |\n`)
+    sections.push(`### Endpoint-by-Endpoint Coverage\n`)
+    sections.push(`| API | Method | Status | UI Location |`)
+    sections.push(`| :--- | :--- | :--- | :--- |`)
+    for (const endpoint of postmanCoverage.endpoints) {
+      const icon = endpoint.status === "wire_confirmed" ? "✅" : endpoint.status === "wire_verification_failed" ? "❌" : endpoint.status === "executed" ? "🟢" : endpoint.status === "matched" ? "🟡" : "⚪"
+      sections.push(`| \`${endpoint.name}\` | \`${endpoint.method}\` | ${icon} ${endpoint.status.replace(/_/g, " ")} | ${endpoint.screenId ? `${endpoint.screenId} / ${endpoint.formId || "form"}` : "Not encountered"} |`)
+    }
+    sections.push("")
+    if (postmanCoverage.unencounteredEndpoints > 0) {
+      sections.push(`### ⚠️ Postman APIs Not Encountered Anywhere in the UI\n`)
+      for (const endpoint of postmanCoverage.endpoints.filter((e) => e.status === "unencountered")) sections.push(`- **${endpoint.method} ${endpoint.name}** — \`${endpoint.url}\``)
+      sections.push("")
+    }
+    if (postmanCoverage.uiFieldsWithoutPostmanMatch.length > 0) {
+      sections.push(`### UI Fields Without a Postman Field Match\n`)
+      for (const field of postmanCoverage.uiFieldsWithoutPostmanMatch) sections.push(`- ${field.screenId} / ${field.formId || "form"}: **${field.uiFieldName}**${field.uiSelector ? ` (\`${field.uiSelector}\`)` : ""}`)
+      sections.push("")
+    }
+    if (postmanCoverage.postmanFieldsNotFoundInUi.length > 0) {
+      sections.push(`### Postman Fields Not Found in the Matched UI\n`)
+      for (const field of postmanCoverage.postmanFieldsNotFoundInUi) sections.push(`- **${field.endpointName}** → \`${field.apiFieldName}\``)
       sections.push("")
     }
   }
