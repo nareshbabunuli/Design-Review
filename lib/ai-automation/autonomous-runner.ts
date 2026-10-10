@@ -641,12 +641,12 @@ export async function executeAutonomousJob(
     // ---- Optional session video ----
     if (params.recordVideo !== false) {
       try {
-      const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
-      recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
-      await recorder.start(recordingPath)
-      appendLog(job, "info", "Session video recording started.")
-    } catch (err: any) {
-      appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
+        const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
+        recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
+        await recorder.start(recordingPath)
+        appendLog(job, "info", "Session video recording started.")
+      } catch (err: any) {
+        appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
         recorder = null
       }
     } else {
