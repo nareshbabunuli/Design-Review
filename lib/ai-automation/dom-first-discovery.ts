@@ -130,7 +130,7 @@ export async function exploreInternalLinkAndReturn(
   selector: string,
   expectedHref: string,
   captureScreenshot?: (label: string) => Promise<string>,
-): Promise<{ destination: DomDiscoverySnapshot | null; screenshotUrl?: string; observation: string; restored: boolean }> {
+): Promise<{ destination: DomDiscoverySnapshot | null; screenshotUrl?: string; observation: string; restored: boolean; blocked?: boolean }> {
   const sourceUrl = page.url()
   let sourceOrigin = ""
   let target: URL
@@ -138,13 +138,13 @@ export async function exploreInternalLinkAndReturn(
     sourceOrigin = new URL(sourceUrl).origin
     target = new URL(expectedHref, sourceUrl)
   } catch {
-    return { destination: null, observation: "Navigation candidate has an invalid URL; no click was attempted.", restored: true }
+    return { destination: null, observation: "Navigation candidate has an invalid URL; no click was attempted.", restored: true, blocked: true }
   }
   if (target.origin !== sourceOrigin) {
-    return { destination: null, observation: "External navigation was inventoried but not followed.", restored: true }
+    return { destination: null, observation: "External navigation was inventoried but not followed.", restored: true, blocked: true }
   }
   if (/\/(logout|log-out|signout|sign-out|delete|purchase|checkout|payment)(\/|$)/i.test(target.pathname)) {
-    return { destination: null, observation: "Navigation path appears consequential and was blocked by the safe exploration policy.", restored: true }
+    return { destination: null, observation: "Navigation path appears consequential and was blocked by the safe exploration policy.", restored: true, blocked: true }
   }
   const element = await page.$(selector).catch(() => null)
   if (!element) return { destination: null, observation: "Navigation element is no longer present; candidate remains unresolved.", restored: false }
@@ -152,7 +152,7 @@ export async function exploreInternalLinkAndReturn(
   const liveHref = linkInfo.href
   if (linkInfo.target.toLowerCase() === "_blank") {
     await element.dispose().catch(() => {})
-    return { destination: null, observation: "New-tab navigation was inventoried but not clicked in this pass.", restored: true }
+    return { destination: null, observation: "New-tab navigation was inventoried but not clicked in this pass.", restored: true, blocked: true }
   }
   let liveTargetMatches = false
   try {
@@ -162,7 +162,7 @@ export async function exploreInternalLinkAndReturn(
   }
   if (!liveTargetMatches) {
     await element.dispose().catch(() => {})
-    return { destination: null, observation: "Navigation target changed or became invalid since discovery; refusing a stale click.", restored: true }
+    return { destination: null, observation: "Navigation target changed or became invalid since discovery; refusing a stale click.", restored: true, blocked: true }
   }
   try {
     await Promise.all([
