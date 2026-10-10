@@ -271,6 +271,10 @@ export type ActionableElement = {
   name: string
   type: ActionableElementType
   selector?: string
+  /** Resolved destination for navigation-capable DOM actions (primarily anchors). */
+  href?: string
+  /** Stable semantic identity used by the Action Ledger across rediscovery. */
+  actionKey?: string
   inputType?: string
   accept?: string
   placeholder?: string
