@@ -2123,14 +2123,14 @@ export async function executeStructuredTestPlan(
             targetName: `${newScreenName} Content`,
             expectedResult: `Verify new discovery screen "${newScreenName}" is interactive.`,
             actualResult: `Discovered during test of ${step.targetName} with ${newInv.actionableElements.length} elements.`,
-            status: "passed",
-            verdict: "passed",
+            status: "pending",
             isNewDiscovery: true,
             screenshotUrl: step.screenshotUrl,
             evidenceTimestamp: new Date().toISOString(),
           }
           testPlan.steps.push(newStep)
-          passedCount++
+          // Discovery itself is not a passing test outcome.
+          // The queued verification step will be executed by the same loop.
         }
       }
 
