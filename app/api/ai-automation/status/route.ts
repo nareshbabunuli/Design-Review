@@ -7,6 +7,7 @@ import {
   AuthError,
 } from "@/lib/auth/require-project-access"
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
+import { setJobSecrets, clearJobSecrets } from "@/lib/ai-automation/job-secret-vault"
 
 async function assertJobAccess(job: { projectId?: string; userId?: string }) {
   const user = await requireUser()
@@ -98,6 +99,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "stop") {
+      clearJobSecrets(jobId)
       const stopped = cancelJob(jobId)
       const updated = getJob(jobId)
       return NextResponse.json({
@@ -116,10 +118,9 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-      ;(job as any).pendingCredentials = {
-        username: String(username),
-        password: String(password),
-      }
+      setJobSecrets(jobId, {
+        credentials: { username: String(username), password: String(password) },
+      })
       ;(job as any).authState = "logged_in"
       ;(job as any).authPrompt = undefined
       saveJob(job)
@@ -142,11 +143,13 @@ export async function POST(req: NextRequest) {
 
     if (action === "confirm_verification") {
       const { verificationUrl, verificationCode } = body
-      ;(job as any).pendingVerification = {
-        completed: true,
-        verificationUrl: verificationUrl ? String(verificationUrl) : undefined,
-        verificationCode: verificationCode ? String(verificationCode) : undefined,
-      }
+      setJobSecrets(jobId, {
+        verification: {
+          completed: true,
+          verificationUrl: verificationUrl ? String(verificationUrl) : undefined,
+          verificationCode: verificationCode ? String(verificationCode) : undefined,
+        },
+      })
       ;(job as any).verificationState = "verified"
       ;(job as any).verificationPrompt = undefined
       saveJob(job)
@@ -158,7 +161,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "skip_verification") {
-      ;(job as any).pendingVerification = { skip: true }
+      setJobSecrets(jobId, { verification: { skip: true } })
       ;(job as any).verificationState = "skipped"
       ;(job as any).verificationPrompt = undefined
       saveJob(job)
@@ -177,7 +180,11 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-      ;(job as any).pendingSettingsCredentials = credentials
+      const secretValues: Record<string, string> = {}
+      for (const [key, value] of Object.entries(credentials)) {
+        if (typeof value === "string") secretValues[key] = value
+      }
+      setJobSecrets(jobId, { settingsCredentials: secretValues })
       ;(job as any).settingsState = "configured"
       ;(job as any).settingsPrompt = undefined
       saveJob(job)
@@ -189,7 +196,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "skip_settings_credentials") {
-      ;(job as any).pendingSettingsCredentials = { skip: true }
+      setJobSecrets(jobId, { settingsCredentials: { __skip: "true" } })
       ;(job as any).settingsState = "skipped"
       ;(job as any).settingsPrompt = undefined
       saveJob(job)
