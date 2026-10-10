@@ -290,6 +290,7 @@ async function runScenarioWithStagehand(
   } as any)
 
   const stopTracker = { done: false }
+  const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
   try {
     await stagehand.init()
     const stagePage: any = stagehand.context.activePage()
@@ -304,7 +305,6 @@ async function runScenarioWithStagehand(
     } catch {}
 
     const targetOrigin = new URL(job.targetUrl).origin
-    const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
     addEvidence(out, "OBSERVE", "Initial browser state captured before scenario execution.", {
       url: await stagePage.url().catch(() => job.targetUrl),
       consoleErrors: [],
