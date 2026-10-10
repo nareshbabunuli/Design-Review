@@ -12,7 +12,7 @@
 - [x] Stateful control verification strengthened: checkbox/radio/toggle must show a state change; expand/collapse must show an expanded-state change.
 - [x] Form-level invalid-input candidates restricted to supported email and URL fields.
 - [x] Earlier TypeScript validation run #28 passed at commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
-- [ ] Confirm TypeScript validation for the latest commits.
+- [x] TypeScript validation passed for both latest code commits (#29 and #30).
 - [ ] Run browser fixture tests for the classification matrix.
 - [ ] Run end-to-end verification against a real sample app.
 - [ ] Confirm build/deployment and full coverage behavior.
@@ -32,8 +32,9 @@
 ## CI evidence
 
 - **Previously passed:** [TypeScript validation #28](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074124209) — commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
-- **Latest check observed:** [TypeScript validation #29](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074602041) — commit `058f08517ecc0341d197de373f2885077dd41d32`; it was still running when last checked.
-- The form-classification commit `04c32395a2e64a08f6ba5758eaa7520b7d618784` was made after run #29 started. Confirm the branch's newest commit has a successful check before calling CI green.
+- **Passed:** [TypeScript validation #29](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074602041) — commit `058f08517ecc0341d197de373f2885077dd41d32`.
+- **Passed:** [TypeScript validation #30](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074606541) — commit `04c32395a2e64a08f6ba5758eaa7520b7d618784`, including the latest form-classification change.
+- CI is green for the latest code changes. This is TypeScript validation, not browser/end-to-end verification.
 - TypeScript validation is not a browser test and does not prove end-to-end behavior.
 
 ## Browser fixture matrix
@@ -74,8 +75,8 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 2. **Search behavior needs an app-specific assertion.** Text changing anywhere on the page may be unrelated; fixture tests should ensure the expected results/empty state is what changed.
 3. **Native validity is not server validation.** Email/URL `checkValidity()` tests browser constraints only; it does not prove backend validation.
 4. **Synthetic input restoration needs verification.** Confirm framework-controlled inputs retain their original state after restoration and no unwanted autosave/API side effects occur.
-5. **Latest CI result is pending/unconfirmed.** Update this ledger with the result for the newest branch commit.
+5. **Browser/end-to-end tests remain outstanding.** The latest TypeScript checks pass, but the fixture matrix and runtime behavior still need testing.
 
 ## Update log
 
-- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, prior CI evidence, and the browser fixture test plan. Browser tests have not yet been run.
+- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, and the browser fixture test plan. Browser tests have not yet been run.
