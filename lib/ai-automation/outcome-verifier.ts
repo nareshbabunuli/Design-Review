@@ -253,6 +253,56 @@ export async function detectEmptyDataSurfaces(
 }
 
 /**
+ * Finds visible images or audio/video elements that failed to load/decode.
+ * This DOM-level check also catches broken assets loaded before per-step network
+ * listeners were attached.
+ */
+export async function detectBrokenDomAssets(
+  page: Page
+): Promise<Array<{ url: string; resourceType: "image" | "media"; description: string }>> {
+  try {
+    return await page.evaluate(() => {
+      const broken: Array<{ url: string; resourceType: "image" | "media"; description: string }> = []
+      const visible = (el: Element) => {
+        const node = el as HTMLElement
+        const rect = node.getBoundingClientRect()
+        const style = getComputedStyle(node)
+        return rect.width > 1 && rect.height > 1 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0"
+      }
+
+      document.querySelectorAll("img").forEach((img) => {
+        const url = img.currentSrc || img.src
+        if (!url || !visible(img) || img.complete && img.naturalWidth > 0) return
+        broken.push({
+          url,
+          resourceType: "image",
+          description: "Visible image did not load or decode (possible missing file or unsupported format).",
+        })
+      })
+
+      document.querySelectorAll("video, audio").forEach((media) => {
+        const node = media as HTMLMediaElement
+        const url = node.currentSrc || node.querySelector("source")?.getAttribute("src") || node.getAttribute("src") || ""
+        if (!url || !visible(media)) return
+        if (node.error || node.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+          broken.push({
+            url: new URL(url, document.baseURI).href,
+            resourceType: "media",
+            description: node.error
+              ? `Media failed to load (media error code ${node.error.code}).`
+              : "Media element has no usable source.",
+          })
+        }
+      })
+
+      return broken
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
  * Pre-action volatility probe: checks if page content changes on its own over 400ms.
  * Returns selectors that naturally fluctuate so we don't false-pass on live tickers.
  */
