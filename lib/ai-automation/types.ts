@@ -254,7 +254,7 @@ export type AgentAction = {
   value?: string
   coordinates?: { x: number; y: number }
   observation?: string
-  status?: "pending" | "running" | "passed" | "failed"
+  status?: "pending" | "running" | "passed" | "failed" | "blocked"
   durationMs?: number
   timestamp: string
   screenshotUrl?: string
