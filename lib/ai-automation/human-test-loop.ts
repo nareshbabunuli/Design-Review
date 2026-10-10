@@ -188,8 +188,8 @@ function chooseCriteria(candidates: CandidateTest[]): Record<string, string> {
 
 function readChoice(answer: any): { index: number; confidence: number } | null {
   const raw = String(answer?.choice ?? answer?.label ?? answer?.value ?? "")
-  if (/^\\s*(escalate|stop|none)\\b/i.test(raw)) return { index: -1, confidence: 1 }
-  const match = raw.match(/test_(\\d+)/i)
+  if (/^\s*(escalate|stop|none)\b/i.test(raw)) return { index: -1, confidence: 1 }
+  const match = raw.match(/test_(\d+)/i)
   if (!match) return null
   const scoreValue = answer?.confidence ?? answer?.probability ?? answer?.score
   // Laya often omits confidence for choice answers. A valid listed choice is still a decision.
@@ -551,7 +551,7 @@ export async function runHumanLikeDecisionLoop(
   const runtimeEvidence = { consoleErrors: [] as string[], pageErrors: [] as string[], failedRequests: [] as string[], badResponses: [] as string[] }
   const onConsole = (message: any) => { if (message.type?.() === "error") runtimeEvidence.consoleErrors.push(String(message.text?.() || "Console error").slice(0, 300)) }
   const onPageError = (error: Error) => runtimeEvidence.pageErrors.push(String(error?.message || error).slice(0, 300))
-  const onRequestFailed = (request: any) => runtimeEvidence.failedRequests.push((String(request.method?.() || "GET") + " " + String(request.url?.() || "") + ": " + String(request.failure?.()?.errorText || "request failed")).slice(0, 400))
+  const onRequestFailed = (request: any) => runtimeEvidence.failedRequests.push((String(request.resourceType?.() || "other") + " " + String(request.method?.() || "GET") + " " + String(request.url?.() || "") + ": " + String(request.failure?.()?.errorText || "request failed")).slice(0, 400))
   const onResponse = (response: any) => { if (response.status?.() >= 400) runtimeEvidence.badResponses.push((String(response.request?.()?.resourceType?.() || "other") + " " + String(response.status()) + " " + String(response.request?.()?.method?.() || "GET") + " " + String(response.url?.() || "")).slice(0, 400)) }
   page.on("console", onConsole)
   page.on("pageerror", onPageError)
@@ -568,9 +568,9 @@ export async function runHumanLikeDecisionLoop(
     state.consoleErrorCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length
     state.network = {
       failedCount: runtimeEvidence.failedRequests.length,
-      status4xx: runtimeEvidence.badResponses.filter((entry) => /^4\d\d\s/.test(entry)).length,
-      status5xx: runtimeEvidence.badResponses.filter((entry) => /^5\d\d\s/.test(entry)).length,
-      resource404Count: runtimeEvidence.badResponses.filter((entry) => /^404\s/.test(entry)).length,
+      status4xx: runtimeEvidence.badResponses.filter((entry) => /(?:^|\s)4\d\d\s/.test(entry)).length,
+      status5xx: runtimeEvidence.badResponses.filter((entry) => /(?:^|\s)5\d\d\s/.test(entry)).length,
+      resource404Count: runtimeEvidence.badResponses.filter((entry) => /(?:^|\s)404\s/.test(entry)).length,
     }
     const stateSignature = JSON.stringify({
       elements: state.elements.map((el) => [el.selector, el.label, el.type, el.disabled, el.expanded, el.pressed, el.accessibleName]),
@@ -660,8 +660,8 @@ export async function runHumanLikeDecisionLoop(
           errorText: entry.slice(0, 300),
         })),
         ...stepBadResponses.map((entry) => {
-          const match = entry.match(/^(\d{3})\s+\w+\s+(https?:\/\/\S+)/)
-          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, errorText: entry.slice(0, 300) }
+          const match = entry.match(/(?:^|\s)(\d{3})\s+\w+\s+(https?:\/\/\S+)/)
+          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, resourceType: /^(xhr|fetch)\\s/i.test(entry) ? entry.split(/\\s+/)[0] : undefined, errorText: entry.slice(0, 300) }
         }),
       ]
       const hasServerFailure = networkFailures.some((failure) => (failure.status || 0) >= 500)
