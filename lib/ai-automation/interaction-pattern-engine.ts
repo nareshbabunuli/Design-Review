@@ -293,10 +293,21 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     if (type === "search" || role === "searchbox" || text.includes("search")) {
       add(out, "search", [t], "Search control detected.", 0.98)
     }
-    if (["input", "textarea", "select"].includes(tag) && type !== "hidden") {
-      add(out, "valid_input", [t], "Editable form control detected.", 0.9)
-      if (el.required) add(out, "required_validation", [t], "Required field can be tested empty.", 0.98)
-      if (type === "email") add(out, "invalid_input", [t], "Email field supports malformed-input validation.", 0.96)
+    // Only text-entry controls receive synthetic text. Choice controls and
+    // action controls have dedicated patterns; specialized inputs need
+    // type-aware values and must not be treated as generic text fields.
+    const textEntryTypes = new Set([
+      "text", "email", "search", "tel", "url", "password",
+    ])
+    const isTextEntry = tag === "textarea" || (tag === "input" && textEntryTypes.has(type))
+    if (isTextEntry) {
+      if (type !== "search") {
+        add(out, "valid_input", [t], "Text-entry field can be tested with a type-appropriate synthetic value.", 0.9)
+      }
+      if (el.required) add(out, "required_validation", [t], "Required text-entry field can be tested empty without submitting.", 0.98)
+      if (type === "email" || type === "url" || type === "tel") {
+        add(out, "invalid_input", [t], "Typed field supports malformed-input validation.", 0.96)
+      }
     }
     if (el.accessibleName === false && ["button", "a", "input", "select", "textarea"].includes(tag)) {
       add(out, "accessible_name", [t], "Interactive element appears to lack an accessible name.", 0.96)
