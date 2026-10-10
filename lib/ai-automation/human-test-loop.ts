@@ -949,6 +949,30 @@ export async function runHumanLikeDecisionLoop(
       }
     } else {
       observation = await executeCandidate(page, selected)
+      // Re-scan after successful safe interactions to discover controls revealed
+      // by tabs, dialogs, dropdowns, expand/collapse and client-side UI changes.
+      if (observation.ok) {
+        const afterUrl = page.url()
+        const refreshed = await inspectPageDom(page).catch(() => null)
+        if (refreshed) {
+          recordDomInventory(job, refreshed)
+          const destinationGraphNodeId = recordDomGraphNode(job, refreshed)
+          if (destinationGraphNodeId !== sourceGraphNodeId) {
+            recordDomGraphEdge(job, {
+              from: sourceGraphNodeId,
+              to: destinationGraphNodeId,
+              action: selected.title,
+              selector: selected.target?.selector,
+              transition: afterUrl !== url ? "navigation" : "same_url_state",
+              status: "passed",
+              evidence: "Fresh DOM inventory after safe interaction. URL: " + url + " → " + afterUrl + "; newly visible controls remain untested until selected.",
+            })
+          }
+          if (afterUrl !== url) appendLog(job, "info", "[DOMDiscovery] Detected client-side navigation/state URL change: " + url + " → " + afterUrl + ".")
+        } else {
+          appendLog(job, "warn", "[DOMDiscovery] Post-interaction DOM rescan failed; newly revealed controls may remain undiscovered.")
+        }
+      }
     }
     const afterScreenshotUrl = destinationScreenshotUrl || await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
 
