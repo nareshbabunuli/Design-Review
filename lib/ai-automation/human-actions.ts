@@ -118,7 +118,9 @@ export async function humanClick(
 
   try {
     if (opts?.double) {
-      await page.mouse.click(pt.x, pt.y, { clickCount: 2 })
+      await page.mouse.click(pt.x, pt.y)
+      await sleep(100)
+      await page.mouse.click(pt.x, pt.y)
     } else {
       await page.mouse.click(pt.x, pt.y)
     }
