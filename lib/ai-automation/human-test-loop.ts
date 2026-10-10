@@ -20,6 +20,7 @@ import {
 } from "./interaction-pattern-engine"
 import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
+import { inspectPageDom, exploreInternalLinkAndReturn } from "./dom-first-discovery"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -672,6 +673,11 @@ export async function runHumanLikeDecisionLoop(
 
   for (let step = 0; step < maxSteps; step++) {
     const url = await page.url()
+    // DOM-first inventory is observational only: navigation is catalogued before it is explored.
+    const domInventory = await inspectPageDom(page).catch(() => null)
+    if (step === 0 && domInventory) {
+      appendLog(job, "info", `[DOMDiscovery] Inventoried ${domInventory.elements.length} visible interactive elements on ${domInventory.url}; ${Object.entries(domInventory.counts).map(([kind, count]) => `${kind}=${count}`).join(", ")}; forms=${domInventory.forms}; dialogs=${domInventory.dialogs}. Navigation links are recorded, not followed during inventory.`)
+    }
     const state = await readPatternState(page, url)
     state.consoleErrorCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length
     state.network = {
@@ -691,12 +697,20 @@ export async function runHumanLikeDecisionLoop(
     for (let i = 0; i < stateSignature.length; i++) { fingerprint ^= stateSignature.charCodeAt(i); fingerprint = Math.imul(fingerprint, 16777619) }
     const stateKey = url + "::ui-" + (fingerprint >>> 0).toString(16)
     state.stateKey = stateKey
-    const candidates = generateCandidateTests(state, { alreadyTestedIds: tested, maxCandidates: 18, allowMutating: true, allowDestructive: false })
+    const candidates = generateCandidateTests(state, { alreadyTestedIds: tested, maxCandidates: 40, allowMutating: true, allowDestructive: false })
     queueMissedCoverage(job, candidates)
 
     if (candidates.length === 0) break
 
-    const criteria = chooseCriteria(candidates)
+    // Exhaust safe current-state interactions before traversing recorded navigation.
+    // This avoids losing the source page state by clicking links too early.
+    const nonNavigation = candidates.filter((candidate) => !["link_navigation", "back_navigation", "forward_navigation", "external_link"].includes(candidate.pattern))
+    const decisionCandidates = nonNavigation.length > 0 ? nonNavigation.slice(0, 18) : candidates.filter((candidate) => candidate.pattern === "link_navigation").slice(0, 18)
+    if (decisionCandidates.length === 0) {
+      appendLog(job, "info", "[DOMDiscovery] Remaining candidates are navigation/history/external actions; external links and browser-history controls are recorded but not auto-clicked in this pass.")
+      break
+    }
+    const criteria = chooseCriteria(decisionCandidates)
     let selected: CandidateTest | null = null
     let selectionSource: "laya" | "fallback" = "fallback"
     try {
@@ -723,13 +737,13 @@ export async function runHumanLikeDecisionLoop(
           },
         },
       })
-      const choice = readChoice(result?.answers?.next_test, candidates)
+      const choice = readChoice(result?.answers?.next_test, decisionCandidates)
       if (choice?.index === -1) {
         appendLog(job, "info", "[HumanLoop] Laya escalated: no safe candidate selected; remaining coverage stays queued.")
         break
       }
-      if (choice && choice.confidence >= LAYA_THRESHOLD && choice.index >= 0 && choice.index < Math.min(14, candidates.length)) {
-        selected = candidates[choice.index]
+      if (choice && choice.confidence >= LAYA_THRESHOLD && choice.index >= 0 && choice.index < decisionCandidates.length) {
+        selected = decisionCandidates[choice.index]
         selectionSource = "laya"
       }
     } catch (error: any) {
@@ -737,7 +751,7 @@ export async function runHumanLikeDecisionLoop(
     }
 
     if (!selected) {
-      selected = candidates[0]
+      selected = decisionCandidates[0]
       appendLog(job, "info", `[HumanLoop] Deterministic fallback selected: ${selected.title}`)
     }
 
@@ -750,108 +764,24 @@ export async function runHumanLikeDecisionLoop(
       badResponses: runtimeEvidence.badResponses.length,
     }
     const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
-    const observation = await executeCandidate(page, selected)
-    const afterScreenshotUrl = await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
+    let observation: { ok: boolean; blocked?: boolean; observation: string }
+    let destinationScreenshotUrl = ""
+    if (selected.pattern === "link_navigation" && selected.target?.selector && selected.target.href) {
+      const explored = await exploreInternalLinkAndReturn(page, selected.target.selector, selected.target.href,
+        options?.captureScreenshot ? (label) => options.captureScreenshot!(label + "-" + step) : undefined)
+      destinationScreenshotUrl = explored.screenshotUrl || ""
+      observation = { ok: Boolean(explored.destination && explored.restored), blocked: !explored.restored, observation: explored.observation }
+      if (explored.destination) {
+        appendLog(job, "info", `[DOMDiscovery] ${explored.observation}`)
+        if (!explored.restored) appendLog(job, "error", `[DOMDiscovery] Could not restore source after visiting ${explored.destination.url}; coverage remains incomplete.`)
+      }
+    } else {
+      observation = await executeCandidate(page, selected)
+    }
+    const afterScreenshotUrl = destinationScreenshotUrl || await options?.captureScreenshot?.("human-loop-after-" + step).catch(() => "") || ""
 
     // Correlate only evidence that appeared during this action with unexplained empty tables
     // on the same observed screen; unrelated old errors are not attached to this issue.
     const stepConsoleErrors = [
       ...runtimeEvidence.consoleErrors.slice(evidenceBaseline.consoleErrors),
       ...runtimeEvidence.pageErrors.slice(evidenceBaseline.pageErrors),
-    ]
-    const stepFailedRequests = runtimeEvidence.failedRequests.slice(evidenceBaseline.failedRequests)
-    const stepBadResponses = runtimeEvidence.badResponses.slice(evidenceBaseline.badResponses)
-    const observedPostState = await readPatternState(page, await page.url()).catch(() => state)
-    const unexplainedEmptyTables = observedPostState.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
-    if (unexplainedEmptyTables.length && (stepConsoleErrors.length || stepFailedRequests.length || stepBadResponses.length)) {
-      const isDataRequest = (entry: string) => /^(xhr|fetch)\s/i.test(entry) || /\/api(?:\/|[?#])|graphql|rpc|\.json(?:[?#]|$)/i.test(entry)
-    const networkFailures: Array<{ url: string; resourceType?: string; errorText: string; status?: number }> = [
-        ...stepFailedRequests.filter(isDataRequest).map((entry) => ({
-          url: entry.match(/https?:\/\/\S+/)?.[0] || entry.slice(0, 180),
-          resourceType: /^(xhr|fetch)\s/i.test(entry) ? entry.split(/\s+/)[0] : undefined,
-          errorText: entry.slice(0, 300),
-        })),
-        ...stepBadResponses.filter(isDataRequest).map((entry) => {
-          const match = entry.match(/(?:^|\s)(\d{3})\s+\w+\s+(https?:\/\/\S+)/)
-          return { url: match?.[2] || entry.slice(0, 180), status: match ? Number(match[1]) : undefined, resourceType: /^(xhr|fetch)\s/i.test(entry) ? entry.split(/\s+/)[0] : undefined, errorText: entry.slice(0, 300) }
-        }),
-      ]
-      const hasServerFailure = networkFailures.some((failure) => (failure.status || 0) >= 500)
-      issues.push({
-        id: "correlated-ui-data-" + Date.now() + "-" + step,
-        screenUrl: url,
-        screenTitle: observedPostState.title || state.title || url,
-        type: "correlated_ui_data_failure",
-        severity: hasServerFailure ? "high" : "medium",
-        description: "A data table has no rows or explicit empty state while new console/network failures occurred during the same action.",
-        expected: "The table should render data or explain a valid empty/error state; related requests should succeed.",
-        actual: "Empty surfaces: " + unexplainedEmptyTables.map((table) => table.name || table.selector || "table").join(", ") +
-          "; console errors: " + stepConsoleErrors.length + "; failed requests/status errors: " + networkFailures.length + ".",
-        correlatedEvidence: {
-          consoleErrors: stepConsoleErrors.slice(0, 8),
-          networkFailures: networkFailures.slice(0, 8),
-          emptyDataSurfaces: unexplainedEmptyTables.map((table) => table.name || table.selector || "table"),
-        },
-        timestamp: new Date().toISOString(),
-      })
-    }
-    tested.add(selected.id)
-    const status = observation.ok ? "passed" : (observation.blocked || isDestructive(selected) ? "blocked" : "failed")
-    recordLedger(job, selected, status, observation.observation, url, { before: beforeScreenshotUrl, after: afterScreenshotUrl })
-
-    const action: AgentAction = {
-      id: `human-loop-${Date.now()}-${step}`,
-      type: selected.pattern === "back_navigation" ? "back"
-        : selected.pattern === "forward_navigation" || selected.pattern === "refresh" ? "navigate"
-        : selected.pattern === "responsive_layout" ? "resize"
-        : selected.pattern === "keyboard_navigation" || ["table","empty_state","network_failure","error_state","loading","modal","accessible_name"].includes(selected.pattern) ? "inspect"
-        : ["input","textarea","select"].includes(selected.target?.elementType?.toLowerCase() || "") ? "type" : "click",
-      description: selected.title,
-      thought: (selectionSource === "laya" ? "Laya selected: " : "Deterministic fallback selected: ") + selected.goal,
-      target: selected.target?.selector || selected.target?.href,
-      observation: observation.observation,
-      screenshotUrl: afterScreenshotUrl || undefined,
-      status: status === "blocked" ? "blocked" : status,
-      durationMs: Date.now() - started,
-      timestamp: new Date().toISOString(),
-    }
-    actions.push(action)
-    if (!job.actionHistory) job.actionHistory = []
-    job.actionHistory.unshift(action)
-    job.actionHistory = job.actionHistory.slice(0, 50)
-    appendLog(job, observation.ok ? "success" : "warn", `[HumanLoop] ${selected.title}: ${observation.observation}`)
-
-    if (!observation.ok && !observation.blocked && !isDestructive(selected)) {
-      issues.push({
-        id: `human-loop-${Date.now()}`,
-        screenUrl: url,
-        screenTitle: state.title || url,
-        type: "non_functional_control",
-        severity: "medium",
-        description: `Candidate test failed: ${selected.title}`,
-        expected: selected.expectedOutcome,
-        actual: observation.observation,
-        timestamp: new Date().toISOString(),
-      })
-    }
-
-    saveJob(job)
-  }
-
-  page.off("console", onConsole)
-  page.off("pageerror", onPageError)
-  page.off("requestfailed", onRequestFailed)
-  page.off("response", onResponse)
-  const ledger = ensureLedger(job)
-  ledger.total = ledger.entries.length + ledger.untestedQueue.length
-  ledger.untested = ledger.untestedQueue.length + ledger.entries.filter((entry) => entry.status === "untested").length
-  ledger.tested = ledger.entries.filter((entry) => entry.status === "passed" || entry.status === "failed").length
-  ledger.failed = ledger.entries.filter((entry) => entry.status === "failed").length
-  ledger.blocked = ledger.entries.filter((entry) => entry.status === "blocked").length
-  ledger.updatedAt = new Date().toISOString()
-  const missedCoverage = [...new Set(ledger.untestedQueue)]
-  const completed = maxSteps > 0 && missedCoverage.length === 0
-  const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
-  if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
-  return { actions, issues, completed, missedCoverage }
-}
