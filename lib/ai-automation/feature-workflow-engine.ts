@@ -25,6 +25,7 @@ import {
   createDummyFileBuffer,
 } from "./full-app-engine"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
+import { SessionVideoRecorder } from "./visual-recorder"
 
 /**
  * Checks if a user prompt is requesting Feature / Workflow Testing
@@ -525,6 +526,7 @@ export async function executeFeatureWorkflowJob(
   params: StartAutomationRequest
 ): Promise<void> {
   let browser: Browser | null = null
+  let videoRecorder: SessionVideoRecorder | null = null
 
   try {
     job.status = "running"
@@ -576,6 +578,13 @@ export async function executeFeatureWorkflowJob(
 
     const page = await browser.newPage()
     await page.setViewport({ width: 1440, height: 900 })
+    if (params.recordVideo !== false) {
+      videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
+      await videoRecorder.start()
+      appendLog(job, "info", "Session video recording enabled for this workflow run.")
+    } else {
+      appendLog(job, "info", "Session video recording disabled for this workflow run.")
+    }
 
     page.on("pageerror", (err: any) => {
       const errMsg = err?.message || String(err)
@@ -929,6 +938,12 @@ export async function executeFeatureWorkflowJob(
     job.fullAppTestPlan = workflowPlan
     job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
 
+    // Finalize optional session video before generating the report.
+    if (videoRecorder) {
+      const recordingUrl = await videoRecorder.stop(job)
+      if (recordingUrl) job.recordingUrl = recordingUrl
+    }
+
     // Populate report object
     job.report = {
       totalScreensTested: screenNodes.length,
@@ -944,6 +959,8 @@ export async function executeFeatureWorkflowJob(
       ],
       issues: job.issues,
       flowGraph: job.flowGraph,
+      recordingUrl: job.recordingUrl,
+      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.${job.recordingUrl ? " Session video attached." : ""}`,
     }
 
     saveJob(job)
@@ -956,6 +973,11 @@ export async function executeFeatureWorkflowJob(
     appendLog(job, "error", `Fatal workflow failure: ${job.error}`)
     saveJob(job)
   } finally {
+    if (videoRecorder) {
+      // Ensure recording is finalized even if workflow execution fails before report generation.
+      const recordingUrl = await videoRecorder.stop(job).catch(() => "")
+      if (recordingUrl) job.recordingUrl = recordingUrl
+    }
     if (browser) {
       try {
         await browser.close()
