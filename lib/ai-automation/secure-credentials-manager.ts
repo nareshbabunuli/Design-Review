@@ -48,10 +48,16 @@ class SecretRedactor {
     result = result.replace(/AKIA[0-9A-Z]{16}/g, "AKIA[REDACTED_AWS]")
     // Bearer tokens
     result = result.replace(/Bearer\s+([A-Za-z0-9_\-\.]{20,})/gi, "Bearer [REDACTED_TOKEN]")
-    // Password JSON fields
-    result = result.replace(/("(?:password|pass|secret|token|api_?key)"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
-    // Password form-urlencoded
-    result = result.replace(/((?:password|pass|secret|token|api_?key)=)([^&]+)/gi, "$1[REDACTED]")
+    // Credential and payment fields in JSON bodies
+    result = result.replace(
+      /("(?:password|pass|secret|token|api_?key|card_?number|cardnumber|cvv|cvc|security_?code|expiry|expiration)"\s*:\s*")([^"]+)(")/gi,
+      '$1[REDACTED]$3'
+    )
+    // Credential and payment fields in form-urlencoded bodies and query strings
+    result = result.replace(
+      /((?:password|pass|secret|token|api_?key|card_?number|cardnumber|cvv|cvc|security_?code|expiry|expiration)=)([^&]+)/gi,
+      "$1[REDACTED]"
+    )
 
     return result
   }
