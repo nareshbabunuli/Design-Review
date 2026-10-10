@@ -76,6 +76,7 @@ export type PatternElement = {
   pressed?: boolean
   sortable?: boolean
   accessibleName?: boolean
+  clickHandler?: boolean
 }
 
 export type PatternFormField = {
@@ -255,7 +256,7 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
       }
     }
 
-    if (tag === "button" || role === "button" || type === "button" || type === "submit") {
+    if (tag === "button" || role === "button" || role === "tab" || role === "menuitem" || role === "option" || role === "link" || type === "button" || type === "submit") {
       if (containsAny(text, ["delete", "remove", "destroy", "unsubscribe", "cancel subscription"])) {
         add(out, "delete", [t], "Destructive action detected; execution is disabled by default.", 0.99)
       } else if (containsAny(text, ["save", "update"])) {
@@ -271,6 +272,9 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
       }
     }
 
+    if (el.clickHandler && !["button", "a", "input", "select", "textarea"].includes(tag) && !["button", "link", "tab", "menuitem", "option"].includes(role)) {
+      add(out, "button", [t], "Custom visible element exposes click/tab interaction semantics.", 0.82)
+    }
     if (type === "checkbox" || role === "checkbox") {
       add(out, "checkbox", [t], "Checkbox can change selection state.", 0.99)
     }
