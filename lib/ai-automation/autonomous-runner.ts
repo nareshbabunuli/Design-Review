@@ -504,7 +504,7 @@ async function runScenarioWithStagehand(
           consoleErrors: pageErrors.slice(-5),
           actions: actionList.length,
         })
-        appendLog(job, recovery?.success === false ? "warn" : "info",
+        appendLog(job, (recovery as any)?.success === false ? "warn" : "info",
           `[${scenario.name}] Recovery attempted ${recoveryActions.length} alternate action(s).`)
       } catch (recoveryError: any) {
         appendLog(job, "warn", `[${scenario.name}] Recovery attempt failed: ${recoveryError?.message || String(recoveryError)}`)
