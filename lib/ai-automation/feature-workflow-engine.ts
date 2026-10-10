@@ -942,6 +942,7 @@ export async function executeFeatureWorkflowJob(
     if (videoRecorder) {
       const recordingUrl = await videoRecorder.stop(job)
       if (recordingUrl) job.recordingUrl = recordingUrl
+      videoRecorder = null
     }
 
     // Populate report object
