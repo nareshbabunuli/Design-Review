@@ -631,6 +631,17 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
     })
   }
   ledger.untestedQueue = ledger.untestedQueue.filter((id) => id !== actionKey)
+  const inventoryKey = candidate.target?.selector ? "dom-inventory:" + screenUrl + "::" + candidate.target.selector : ""
+  const inventoryEntry = inventoryKey ? ledger.entries.find((entry) => entry.actionKey === inventoryKey) : undefined
+  if (inventoryEntry) {
+    inventoryEntry.status = status
+    inventoryEntry.attempts += 1
+    inventoryEntry.lastTestedAt = now
+    inventoryEntry.error = status === "failed" || status === "blocked" ? observation : undefined
+    inventoryEntry.evidence = { ...(inventoryEntry.evidence || {}), observedOutcome: observation, beforeScreenshotUrl: screenshots?.before || inventoryEntry.evidence?.beforeScreenshotUrl, afterScreenshotUrl: screenshots?.after || inventoryEntry.evidence?.afterScreenshotUrl }
+    inventoryEntry.history = [...(inventoryEntry.history || []), { status, timestamp: now, observedOutcome: observation, error: inventoryEntry.error, beforeScreenshotUrl: screenshots?.before, afterScreenshotUrl: screenshots?.after }]
+    ledger.untestedQueue = ledger.untestedQueue.filter((id) => id !== inventoryKey)
+  }
   ledger.total = ledger.entries.length
   ledger.untested = ledger.entries.filter((e) => e.status === "untested").length
   ledger.tested = ledger.entries.filter((e) => e.status === "passed" || e.status === "failed").length
