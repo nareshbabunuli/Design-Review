@@ -703,8 +703,12 @@ export async function executeAutonomousJob(
       } catch (err: any) {
         appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
         recorder = null
+        ;(job as any).recordingControl = "stopped"
+        saveJob(job)
       }
     } else {
+      ;(job as any).recordingControl = "stopped"
+      saveJob(job)
       appendLog(job, "info", "Session video recording disabled for this run.")
     }
 
