@@ -1824,6 +1824,7 @@ export async function executeStructuredTestPlan(
               const name = (field.name || field.id || "").toLowerCase()
               const placeholder = (field.placeholder || "").toLowerCase()
               const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder)
+              if (["checkbox", "radio", "file", "hidden", "submit", "button"].includes(type)) return false
               return !sensitive && typeof field.value === "string" && field.value.trim().length > 0 && field.checkValidity()
             }).length
           }, formSel)
