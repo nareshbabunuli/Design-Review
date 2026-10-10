@@ -34,7 +34,14 @@ export function saveJob(job: AutomationJob) {
   jobStore.set(job.id, job)
   try {
     ensureJobsDir()
-    fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8")
+    // Never persist interactive credentials, payment data, OTPs, or tokenized
+    // verification links. They remain available only in the live process.
+    const persisted = JSON.parse(JSON.stringify(job)) as Record<string, unknown>
+    delete persisted.pendingCredentials
+    delete persisted.pendingSettingsCredentials
+    delete persisted.pendingPaymentCredentials
+    delete persisted.pendingVerification
+    fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(persisted, null, 2), "utf8")
   } catch (err) {
     console.warn("[AI Runner] Failed to persist job to disk:", err)
   }
