@@ -2118,7 +2118,8 @@ export async function executeStructuredTestPlan(
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
         await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
         if (step.targetSelector) {
-          await highlightInputTyping(page, step.targetSelector, displayValue)
+          // Keep the actual value for the browser interaction; only UI/log evidence is masked.
+          await highlightInputTyping(page, step.targetSelector, inputVal)
         }
         const targetArg = { selector: step.targetSelector, name: step.targetName }
         const before = await captureState(page)
