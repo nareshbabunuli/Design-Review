@@ -148,7 +148,12 @@ export async function exploreInternalLinkAndReturn(
   }
   const element = await page.$(selector).catch(() => null)
   if (!element) return { destination: null, observation: "Navigation element is no longer present; candidate remains unresolved.", restored: false }
-  const liveHref = await element.evaluate((el) => (el as HTMLAnchorElement).href || "").catch(() => "")
+  const linkInfo = await element.evaluate((el) => ({ href: (el as HTMLAnchorElement).href || "", target: el.getAttribute("target") || "" })).catch(() => ({ href: "", target: "" }))
+  const liveHref = linkInfo.href
+  if (linkInfo.target.toLowerCase() === "_blank") {
+    await element.dispose().catch(() => {})
+    return { destination: null, observation: "New-tab navigation was inventoried but not clicked in this pass.", restored: true }
+  }
   if (!liveHref || new URL(liveHref, sourceUrl).href !== target.href) {
     await element.dispose().catch(() => {})
     return { destination: null, observation: "Navigation target changed since discovery; refusing a stale click.", restored: true }
