@@ -11,6 +11,7 @@
 - [x] Native malformed email/URL validation committed.
 - [x] Stateful control verification strengthened: checkbox/radio/toggle must show a state change; expand/collapse must show an expanded-state change.
 - [x] Form-level invalid-input candidates restricted to supported email and URL fields.
+- [x] Link origin detection now compares parsed URL origins instead of string prefixes; unknown/malformed destinations are conservatively classified as external.
 - [x] Earlier TypeScript validation run #28 passed at commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
 - [x] TypeScript validation passed for both latest code commits (#29 and #30).
 - [ ] Run browser fixture tests for the classification matrix.
@@ -62,6 +63,7 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [ ] Confirm visible controls are classified correctly and hidden/disabled controls are excluded.
 - [ ] Confirm text and specialized inputs use type-appropriate values and originals are restored.
 - [ ] Confirm checkbox, radio, toggle, and expand/collapse results rely on the target's state, not unrelated page changes.
+- [ ] Test same-origin, external, malformed, and prefix-confusion URLs (e.g. a trusted hostname followed by an attacker-controlled suffix).
 - [ ] Confirm search only passes when a visible result or empty state is observed.
 - [ ] Confirm no real form submission, payment, deletion, publication, email, logout, or external navigation occurs in the fixture.
 - [ ] Confirm each pass/fail/blocked result includes a clear observation and is recorded in the Action Ledger.
@@ -75,8 +77,8 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 2. **Search behavior needs an app-specific assertion.** Text changing anywhere on the page may be unrelated; fixture tests should ensure the expected results/empty state is what changed.
 3. **Native validity is not server validation.** Email/URL `checkValidity()` tests browser constraints only; it does not prove backend validation.
 4. **Synthetic input restoration needs verification.** Confirm framework-controlled inputs retain their original state after restoration and no unwanted autosave/API side effects occur.
-5. **Browser/end-to-end tests remain outstanding.** The latest TypeScript checks pass, but the fixture matrix and runtime behavior still need testing.
+5. **Browser/end-to-end tests remain outstanding.** TypeScript checks passed before the newest URL-origin hardening commit; confirm its CI and run the fixture matrix.
 
 ## Update log
 
-- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, and the browser fixture test plan. Browser tests have not yet been run.
+- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, and the browser fixture test plan. Browser tests have not yet been run.
