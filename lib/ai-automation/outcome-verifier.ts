@@ -272,7 +272,7 @@ export async function detectBrokenDomAssets(
 
       document.querySelectorAll("img").forEach((img) => {
         const url = img.currentSrc || img.src
-        if (!url || !visible(img) || img.complete && img.naturalWidth > 0) return
+        if (!url || !visible(img) || !img.complete || img.naturalWidth > 0) return
         broken.push({
           url,
           resourceType: "image",
