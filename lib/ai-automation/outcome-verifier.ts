@@ -6,6 +6,7 @@ import type {
   AutomationVerdict,
   StepEvidence,
   NetworkCallEvidence,
+  ResourceIssueEvidence,
 } from "./types"
 
 /** Built-in analytics / telemetry / tracking host regexes to filter out */
@@ -197,6 +198,61 @@ export async function captureState(page: Page, excludedSelectors: string[] = [])
 }
 
 /**
+ * Finds visible data tables/grids that expose column headers but no data rows and
+ * do not provide an explicit empty-state message. Empty tables are reported as
+ * review findings, not automatic failures, because some products legitimately have no data.
+ */
+export async function detectEmptyDataSurfaces(
+  page: Page
+): Promise<Array<{ name: string; headers: string[]; selector: string }>> {
+  try {
+    return await page.evaluate(() => {
+      const surfaces = Array.from(document.querySelectorAll("table, [role='grid'], [role='table']"))
+      const empty: Array<{ name: string; headers: string[]; selector: string }> = []
+      const emptyStatePattern = /no data|no results|nothing to show|no records|no items|empty state|add your first|get started/i
+
+      surfaces.forEach((surface, index) => {
+        const el = surface as HTMLElement
+        const rect = el.getBoundingClientRect()
+        const style = getComputedStyle(el)
+        if (rect.width <= 1 || rect.height <= 1 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return
+
+        const headers = Array.from(el.querySelectorAll("th, [role='columnheader']"))
+          .map((header) => (header.textContent || "").replace(/\\s+/g, " ").trim())
+          .filter(Boolean)
+        if (headers.length === 0) return
+
+        const rows = Array.from(el.querySelectorAll("tbody tr, [role='row']"))
+        const dataRows = rows.filter((row) => {
+          if (row.querySelector("th, [role='columnheader']")) return false
+          const text = (row.textContent || "").replace(/\\s+/g, " ").trim()
+          if (!text || emptyStatePattern.test(text)) return false
+          return Boolean(row.querySelector("td, [role='cell'], [role='gridcell']"))
+        })
+        if (dataRows.length > 0) return
+
+        const contextText = [el.innerText || "", el.parentElement?.innerText || ""].join(" ").slice(0, 1200)
+        if (emptyStatePattern.test(contextText)) return
+
+        const caption = el.getAttribute("aria-label") ||
+          el.querySelector("caption")?.textContent?.trim() ||
+          headers.slice(0, 4).join(", ") ||
+          `Data table ${index + 1}`
+        empty.push({
+          name: caption,
+          headers: headers.slice(0, 12),
+          selector: el.matches("table") ? `table:nth-of-type(${index + 1})` : (el.getAttribute("role") || "data-grid"),
+        })
+      })
+
+      return empty
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
  * Pre-action volatility probe: checks if page content changes on its own over 400ms.
  * Returns selectors that naturally fluctuate so we don't false-pass on live tickers.
  */
@@ -221,9 +277,12 @@ export class NetworkRecorder {
   private targetOrigin: string
   private customNoise: RegExp[]
   private inFlight = new Set<HTTPRequest>()
+  private allRequests = new Set<HTTPRequest>()
   private calls: NetworkCallEvidence[] = []
+  private resourceIssues: ResourceIssueEvidence[] = []
   private requestHandler: (req: HTTPRequest) => void
   private responseHandler: (res: HTTPResponse) => void
+  private requestFailedHandler: (req: HTTPRequest) => void
 
   constructor(page: Page, targetUrl: string, noiseHosts: string[] = []) {
     this.page = page
@@ -235,17 +294,31 @@ export class NetworkRecorder {
     this.customNoise = noiseHosts.map((h) => new RegExp(`(^|\\.)${h.replace(/\./g, "\\.")}$`, "i"))
 
     this.requestHandler = (req: HTTPRequest) => {
-      const type = req.resourceType()
-      if (type !== "xhr" && type !== "fetch") return
-
       const url = req.url()
       if (this.isNoise(url)) return
 
-      this.inFlight.add(req)
+      // Track every first-party/meaningful resource, not only API calls.
+      this.allRequests.add(req)
+      const type = req.resourceType()
+      if (type === "xhr" || type === "fetch") this.inFlight.add(req)
     }
 
     this.responseHandler = (res: HTTPResponse) => {
       const req = res.request()
+      const status = res.status()
+      if (this.allRequests.has(req)) {
+        this.allRequests.delete(req)
+        if (status >= 400) {
+          this.recordResourceIssue({
+            url: req.url(),
+            resourceType: req.resourceType(),
+            method: req.method().toUpperCase(),
+            status,
+          })
+        }
+      }
+
+      // Preserve the existing API-call evidence contract for outcome classification.
       if (!this.inFlight.has(req)) return
       this.inFlight.delete(req)
 
@@ -270,15 +343,29 @@ export class NetworkRecorder {
       this.calls.push({
         method,
         url: secretRedactor.redact(req.url()),
-        status: res.status(),
+        status,
         isMutating,
         headers,
         postData,
       })
     }
 
+    this.requestFailedHandler = (req: HTTPRequest) => {
+      if (!this.allRequests.has(req)) return
+      this.allRequests.delete(req)
+      this.inFlight.delete(req)
+      const failure = req.failure()
+      this.recordResourceIssue({
+        url: req.url(),
+        resourceType: req.resourceType(),
+        method: req.method().toUpperCase(),
+        errorText: failure?.errorText || "Request failed without an HTTP response",
+      })
+    }
+
     this.page.on("request", this.requestHandler)
     this.page.on("response", this.responseHandler)
+    this.page.on("requestfailed", this.requestFailedHandler)
   }
 
   private isNoise(urlStr: string): boolean {
@@ -306,14 +393,34 @@ export class NetworkRecorder {
     return this.inFlight.size
   }
 
+  private recordResourceIssue(issue: Omit<ResourceIssueEvidence, "timestamp">): void {
+    const safeUrl = secretRedactor.redact(issue.url)
+    const key = [safeUrl, issue.resourceType, issue.status ?? "", issue.errorText ?? ""].join("|")
+    if (this.resourceIssues.some((item) =>
+      [item.url, item.resourceType, item.status ?? "", item.errorText ?? ""].join("|") === key
+    )) return
+
+    this.resourceIssues.push({
+      ...issue,
+      url: safeUrl,
+      timestamp: new Date().toISOString(),
+    })
+  }
+
   public getCapturedCalls(): NetworkCallEvidence[] {
     return [...this.calls]
+  }
+
+  public getResourceIssues(): ResourceIssueEvidence[] {
+    return [...this.resourceIssues]
   }
 
   public cleanup(): void {
     this.page.off("request", this.requestHandler)
     this.page.off("response", this.responseHandler)
+    this.page.off("requestfailed", this.requestFailedHandler)
     this.inFlight.clear()
+    this.allRequests.clear()
   }
 }
 
