@@ -390,6 +390,7 @@ export default function AISimulatorPage() {
         const idx = currentJob.screens.findIndex((s) => {
           const sTitle = (s.title || "").toLowerCase()
           const nTitle = screenNode.name.toLowerCase()
+          return (
             sTitle.includes(nTitle) ||
             nTitle.includes(sTitle) ||
             (s.path && screenNode.path && s.path === screenNode.path) ||
