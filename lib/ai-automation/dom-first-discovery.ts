@@ -61,10 +61,10 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const parts: string[] = []
       let current: Element | null = el
       while (current && current !== document.documentElement) {
-        const parent = current.parentElement
+        const parent: Element | null = current.parentElement
         const tag = current.tagName.toLowerCase()
         if (!parent) { parts.unshift(tag); break }
-        const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
+        const siblings = (Array.from(parent.children) as Element[]).filter((child: Element) => child.tagName === current!.tagName)
         parts.unshift(siblings.length > 1 ? tag + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tag)
         const candidate = parts.join(" > ")
         try { if (document.querySelectorAll(candidate).length === 1) return candidate } catch {}
