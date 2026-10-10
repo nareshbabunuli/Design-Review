@@ -69,15 +69,30 @@ export async function POST(req: NextRequest) {
       await requireProjectAccess(job.projectId, "edit")
     }
 
-    if (action === "pause_recording" || action === "resume_recording") {
+    if (
+      action === "pause_recording" ||
+      action === "resume_recording" ||
+      action === "stop_recording"
+    ) {
       if (job.status !== "running") {
         return NextResponse.json({ error: "Recording can only be controlled while a test is running" }, { status: 409 })
       }
-      ;(job as any).recordingControl = action === "pause_recording" ? "paused" : "recording"
+      const nextState =
+        action === "pause_recording"
+          ? "paused"
+          : action === "resume_recording"
+            ? "recording"
+            : "stopped"
+      ;(job as any).recordingControl = nextState
       saveJob(job)
       return NextResponse.json({
         success: true,
-        message: action === "pause_recording" ? "Recording paused" : "Recording resumed",
+        message:
+          nextState === "paused"
+            ? "Recording paused"
+            : nextState === "recording"
+              ? "Recording resumed"
+              : "Recording stopped",
         job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
       })
     }
