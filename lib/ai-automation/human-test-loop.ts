@@ -560,7 +560,7 @@ function recordLedger(job: AutomationJob, candidate: CandidateTest, status: "pas
       screenUrl,
       screenPath: (() => { try { return new URL(screenUrl).pathname } catch { return screenUrl } })(),
       name: candidate.title,
-      type: (() => { const role = (candidate.target?.role || "").toLowerCase(); const v = (candidate.target?.elementType || "").toLowerCase(); if (role === "tab") return "tab" as const; if (role === "menuitem") return "menu" as const; if (role === "switch") return "toggle" as const; if (role === "checkbox" || v === "checkbox") return "checkbox" as const; if (role === "radio" || v === "radio") return "radio" as const; if (role === "button" || v === "button") return "button" as const; if (role === "link" || candidate.target?.href || v === "a") return "link" as const; if (["input","select","textarea"].includes(v)) return (v === "select" ? "select" : "input") as const; return "other" as const })(),
+      type: (() => { const role = (candidate.target?.role || "").toLowerCase(); const v = (candidate.target?.elementType || "").toLowerCase(); if (role === "tab") return "tab" as const; if (role === "menuitem") return "menu" as const; if (role === "switch") return "toggle" as const; if (role === "checkbox" || v === "checkbox") return "checkbox" as const; if (role === "radio" || v === "radio") return "radio" as const; if (role === "button" || v === "button") return "button" as const; if (role === "link" || candidate.target?.href || v === "a") return "link" as const; if (["input","select","textarea"].includes(v)) return v === "select" ? ("select" as const) : ("input" as const); return "other" as const })(),
       selector: candidate.target?.selector,
       href: candidate.target?.href,
       interactionConfidence: candidate.priority / 100,
@@ -603,7 +603,7 @@ export async function runHumanLikeDecisionLoop(
   const issues: AutomationIssue[] = []
   const runtimeEvidence = { consoleErrors: [] as string[], pageErrors: [] as string[], failedRequests: [] as string[], badResponses: [] as string[] }
   const onConsole = (message: any) => { if (message.type?.() === "error") runtimeEvidence.consoleErrors.push(String(message.text?.() || "Console error").slice(0, 300)) }
-  const onPageError = (error: Error) => runtimeEvidence.pageErrors.push(String(error?.message || error).slice(0, 300))
+  const onPageError = (error: unknown) => { runtimeEvidence.pageErrors.push(String(error instanceof Error ? error.message : error).slice(0, 300)) }
   const onRequestFailed = (request: any) => runtimeEvidence.failedRequests.push((String(request.resourceType?.() || "other") + " " + String(request.method?.() || "GET") + " " + String(request.url?.() || "") + ": " + String(request.failure?.()?.errorText || "request failed")).slice(0, 400))
   const onResponse = (response: any) => { if (response.status?.() >= 400) runtimeEvidence.badResponses.push((String(response.request?.()?.resourceType?.() || "other") + " " + String(response.status()) + " " + String(response.request?.()?.method?.() || "GET") + " " + String(response.url?.() || "")).slice(0, 400)) }
   page.on("console", onConsole)
@@ -709,7 +709,7 @@ export async function runHumanLikeDecisionLoop(
     const unexplainedEmptyTables = observedPostState.tables.filter((table) => table.rowCount === 0 && !table.hasExplicitEmptyState)
     if (unexplainedEmptyTables.length && (stepConsoleErrors.length || stepFailedRequests.length || stepBadResponses.length)) {
       const isDataRequest = (entry: string) => /^(xhr|fetch)\s/i.test(entry) || /\/api(?:\/|[?#])|graphql|rpc|\.json(?:[?#]|$)/i.test(entry)
-    const networkFailures = [
+    const networkFailures: Array<{ url: string; resourceType?: string; errorText: string; status?: number }> = [
         ...stepFailedRequests.filter(isDataRequest).map((entry) => ({
           url: entry.match(/https?:\/\/\S+/)?.[0] || entry.slice(0, 180),
           resourceType: /^(xhr|fetch)\s/i.test(entry) ? entry.split(/\s+/)[0] : undefined,
