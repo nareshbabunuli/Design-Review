@@ -41,6 +41,19 @@ function visibleSelector(el: Element): string {
 
 async function readPatternState(page: Page, stateKey: string): Promise<PatternState> {
   return page.evaluate((key) => {
+    const visibleSelector = (el: Element): string => {
+      const html = el as HTMLElement
+      if (html.id) return "#" + CSS.escape(html.id)
+      const aria = html.getAttribute("aria-label")
+      if (aria) return '[aria-label="' + CSS.escape(aria) + '"]'
+      const name = html.getAttribute("name")
+      if (name) return '[name="' + CSS.escape(name) + '"]'
+      const tag = html.tagName.toLowerCase()
+      const parent = html.parentElement
+      if (!parent) return tag
+      const siblings = Array.from(parent.children).filter((x) => x.tagName === html.tagName)
+      return tag + ":nth-of-type(" + (siblings.indexOf(html) + 1) + ")"
+    }
     const visible = (el: Element) => {
       const h = el as HTMLElement
       const r = h.getBoundingClientRect()
