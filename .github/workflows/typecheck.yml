@@ -21,7 +21,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies without downloading browser binaries
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --legacy-peer-deps --package-lock=false
         env:
           PUPPETEER_SKIP_DOWNLOAD: "true"
       - name: Type-check application
