@@ -123,6 +123,8 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
           name: i.name || undefined,
           type: i.type || undefined,
           required: i.required,
+          invalid: !i.checkValidity(),
+          confirmationFor: /confirm/i.test(i.getAttribute("aria-label") || i.placeholder || i.name || "") ? "password" : undefined,
         }
       }),
       submitTargets: Array.from(form.querySelectorAll('button[type="submit"],input[type="submit"]')).map((x) => ({
@@ -411,14 +413,25 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   }
 
   if (candidate.pattern === "required_validation") {
-    const required = await target.evaluate((el) => {
-      const input = el as HTMLInputElement
-      return input.required || !!input.closest("form")?.querySelector("[required]")
-    }).catch(() => false)
-    await target.dispose().catch(() => {})
-    return required
-      ? { ok: true, observation: "Confirmed required-field constraint from DOM without submitting the form." }
-      : { ok: false, observation: "Target is not a required field." }
+    const required = await target.evaluate((el) => (el as HTMLInputElement).required).catch(() => false)
+    const original = targetInfo.value
+    if (!required) {
+      await target.dispose().catch(() => {})
+      return { ok: false, observation: "Target is not itself a required field." }
+    }
+    try {
+      await setInputValue("")
+      const emptyIsInvalid = await target.evaluate((el) => !(el as HTMLInputElement).checkValidity()).catch(() => false)
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
+      return emptyIsInvalid
+        ? { ok: true, observation: "Required field correctly fails native validity when empty; original value restored and no submission occurred." }
+        : { ok: false, observation: "Required field remained valid when empty; original value restored." }
+    } catch (error: any) {
+      await setInputValue(original).catch(() => {})
+      await target.dispose().catch(() => {})
+      return { ok: false, observation: "Required validation check failed: " + (error?.message || String(error)) }
+    }
   }
 
   if (candidate.pattern === "invalid_input") {
