@@ -150,8 +150,8 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
           name: clean,
           type: (el.type as ActionableElementType) || "button",
           isInteractive: true,
-          tested: true,
-          testStatus: "passed",
+          tested: false,
+          testStatus: "pending",
         })
       }
     }
@@ -289,8 +289,8 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
         actionType: el.type === "input" ? "fill" : "click",
         targetName: el.name,
         expectedResult: `Interact with ${el.name} and verify state stability.`,
-        actualResult: "Passed UI element interaction test.",
-        status: "passed",
+        actualResult: undefined,
+        status: "pending",
         screenshotUrl: primaryScreenshot,
         evidenceTimestamp: job.finishedAt || new Date().toISOString(),
       })
