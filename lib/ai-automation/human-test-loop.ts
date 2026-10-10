@@ -108,7 +108,7 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
         pressed: el.getAttribute("aria-pressed") === null ? undefined : el.getAttribute("aria-pressed") === "true",
         sortable: !!el.closest("th")?.hasAttribute("aria-sort") || !!el.closest('[role="columnheader"]')?.hasAttribute("aria-sort"),
         accessibleName: !!(el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title") || (el as HTMLElement).innerText?.trim() || input.placeholder || input.labels?.length),
-        clickHandler: el.hasAttribute("onclick") || (el as HTMLElement).tabIndex >= 0,
+        clickHandler: el.hasAttribute("onclick"),
 
       }
     })
@@ -172,7 +172,7 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
       forms,
       tables,
       dialogs,
-      loading: !!document.querySelector('[aria-busy="true"],.loading,.spinner'),
+      loading: Array.from(document.querySelectorAll('[aria-busy="true"],.loading,.spinner')).some(visible),
     }
   }, stateKey)
 }
@@ -583,7 +583,6 @@ export async function runHumanLikeDecisionLoop(
   const maxSteps = Math.max(0, Math.min(options?.maxSteps ?? MAX_LOOP_STEPS, 50))
   const layaUrl = (options?.layaBaseUrl || job.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL).replace(/\/$/, "")
   const tested = new Set<string>((job.actionLedger?.entries || []).map((entry) => entry.actionKey))
-  let lastStateKey = ""
 
   for (let step = 0; step < maxSteps; step++) {
     const url = await page.url()
@@ -613,6 +612,7 @@ export async function runHumanLikeDecisionLoop(
 
     const criteria = chooseCriteria(candidates)
     let selected: CandidateTest | null = null
+    let selectionSource: "laya" | "fallback" = "fallback"
     try {
       const result = await layaPredict(layaUrl, {
         state: JSON.stringify({
@@ -642,8 +642,9 @@ export async function runHumanLikeDecisionLoop(
         appendLog(job, "info", "[HumanLoop] Laya escalated: no safe candidate selected; remaining coverage stays queued.")
         break
       }
-      if (choice && choice.confidence >= LAYA_THRESHOLD && candidates[choice.index]) {
+      if (choice && choice.confidence >= LAYA_THRESHOLD && choice.index >= 0 && choice.index < Math.min(14, candidates.length)) {
         selected = candidates[choice.index]
+        selectionSource = "laya"
       }
     } catch (error: any) {
       appendLog(job, "warn", `[HumanLoop] Laya unavailable: ${error?.message || String(error)}. Falling back to deterministic priority.`)
@@ -714,9 +715,13 @@ export async function runHumanLikeDecisionLoop(
 
     const action: AgentAction = {
       id: `human-loop-${Date.now()}-${step}`,
-      type: selected.pattern === "back_navigation" ? "back" : selected.pattern === "refresh" ? "navigate" : selected.target?.elementType === "input" ? "type" : "click",
+      type: selected.pattern === "back_navigation" ? "back"
+        : selected.pattern === "forward_navigation" || selected.pattern === "refresh" ? "navigate"
+        : selected.pattern === "responsive_layout" ? "resize"
+        : selected.pattern === "keyboard_navigation" || ["table","empty_state","network_failure","error_state","loading","modal","accessible_name"].includes(selected.pattern) ? "inspect"
+        : ["input","textarea","select"].includes(selected.target?.elementType?.toLowerCase() || "") ? "type" : "click",
       description: selected.title,
-      thought: `Laya-selected candidate: ${selected.goal}`,
+      thought: (selectionSource === "laya" ? "Laya selected: " : "Deterministic fallback selected: ") + selected.goal,
       target: selected.target?.selector || selected.target?.href,
       observation: observation.observation,
       screenshotUrl: afterScreenshotUrl || undefined,
