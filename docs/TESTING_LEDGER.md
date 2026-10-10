@@ -12,7 +12,8 @@
 - [x] Stateful control verification strengthened: checkbox/radio/toggle must show a state change; expand/collapse must show an expanded-state change.
 - [x] Form-level invalid-input candidates restricted to supported email and URL fields.
 - [x] Link origin detection now compares parsed URL origins instead of string prefixes; unknown/malformed destinations are conservatively classified as external.
-- [x] Expanded action-risk classification to treat purchases, payments, refunds, transfers, outbound messages, publishing/deploying, invitations, access changes, and password changes as destructive/consequential candidates blocked by default.
+- [x] Expanded action-risk classification to treat purchases, payments, refunds, transfers, outbound messages, publishing/deploying, invitations, access changes, password changes, and sign-out variants as consequential candidates blocked by default.
+- [x] Hardened both pattern discovery and execution guards against common wording variants (including `send`, `invite`, `log out`, `sign out`, refund/transfer, and password/access changes).
 - [x] Earlier TypeScript validation run #28 passed at commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
 - [x] TypeScript validation passed for both latest code commits (#29 and #30).
 - [ ] Run browser fixture tests for the classification matrix.
@@ -29,14 +30,18 @@
 | `f3d67453f8c03ae5192407ec17deb8e18ca4ce4b` | Use type-appropriate synthetic input values | Committed |
 | `55cb0aa82f80df94fe87a010124591ce7e09d454` | Verify malformed URL input safely | Committed |
 | `058f08517ecc0341d197de373f2885077dd41d32` | Verify stateful control outcomes explicitly | Committed; CI pending at last check |
-| `04c32395a2e64a08f6ba5758eaa7520b7d618784` | Restrict form invalid-input candidates to supported types | Committed; CI pending at last check |
+| `04c32395a2e64a08f6ba5758eaa7520b7d618784` | Restrict form invalid-input candidates to supported types | CI passed |
+| `3613eeca5d28a8b9e60ef3cdc9ab540517fe6961` | Broaden consequential-action label detection | Committed; CI pending |
+| `3685a8d5a3645176f6c474bd7aff633512ad073e` | Harden execution guard against risky wording variants | Committed; CI pending |
 
 ## CI evidence
 
 - **Previously passed:** [TypeScript validation #28](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074124209) — commit `55cb0aa82f80df94fe87a010124591ce7e09d454`.
 - **Passed:** [TypeScript validation #29](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074602041) — commit `058f08517ecc0341d197de373f2885077dd41d32`.
 - **Passed:** [TypeScript validation #30](https://github.com/nareshbabunuli/Design-Review/actions/runs/38074606541) — commit `04c32395a2e64a08f6ba5758eaa7520b7d618784`, including the latest form-classification change.
-- CI is green for the latest code changes. This is TypeScript validation, not browser/end-to-end verification.
+- [Passed before the latest guard changes](https://github.com/nareshbabunuli/Design-Review/actions/runs/38075319896): TypeScript validation #36 at `a2360616b1e78c83b16edeeb58ae38d9d8800686`.
+- [In progress at ledger update](https://github.com/nareshbabunuli/Design-Review/actions/runs/38075629532): TypeScript validation #37 for the labelled manual-check documentation commit. Guard changes after that commit will trigger new CI runs.
+- CI results refer to TypeScript validation only, not browser/end-to-end verification.
 - TypeScript validation is not a browser test and does not prove end-to-end behavior.
 
 ## Browser fixture matrix
@@ -79,11 +84,11 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 2. **Search behavior needs an app-specific assertion.** Text changing anywhere on the page may be unrelated; fixture tests should ensure the expected results/empty state is what changed.
 3. **Native validity is not server validation.** Email/URL `checkValidity()` tests browser constraints only; it does not prove backend validation.
 4. **Synthetic input restoration needs verification.** Confirm framework-controlled inputs retain their original state after restoration and no unwanted autosave/API side effects occur.
-5. **Browser/end-to-end tests remain outstanding.** TypeScript checks passed before the latest URL-origin and action-risk commits; confirm their CI and run the fixture matrix.
+5. **Browser/end-to-end tests remain outstanding.** The latest consequential-action guard changes need CI confirmation, then the fixture matrix and end-to-end checks must run.
 
 ## Update log
 
-- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, consequential-action risk classification, and browser fixture test requirements. Browser tests have not yet been run.
+- **2026-10-10:** Recorded input-classification changes, outcome-verification changes, CI runs #29 and #30 passing, URL-origin hardening, consequential-action risk classification, labelled user visual checks, and expanded consequential-action guard coverage. Browser tests have not yet been run.
 
 ## User-run visual/manual checks (labelled for later)
 
