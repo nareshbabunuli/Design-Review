@@ -60,19 +60,38 @@ async function maskSensitiveFields(page: any): Promise<() => Promise<void>> {
   try {
     await page.evaluate(() => {
       document.querySelectorAll('[data-qa-mask="1"]').forEach((el) => el.remove())
-      const boxes: HTMLElement[] = []
-      document
-        .querySelectorAll('input[type="password"], [data-sensitive="true"]')
-        .forEach((input) => {
-          const el = input as HTMLElement
-          const r = el.getBoundingClientRect()
-          if (r.width === 0 || r.height === 0) return
-          const box = document.createElement("div")
-          box.setAttribute("data-qa-mask", "1")
-          box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background:#0b0b0f;z-index:99999998;border-radius:4px;pointer-events:none;`
-          document.body.appendChild(box)
-          boxes.push(box)
-        })
+      const sensitive = /(password|passcode|otp|one[-_ ]?time|api[-_ ]?key|access[-_ ]?token|auth(?:orization)?|secret|private[-_ ]?key|client[-_ ]?secret|cvv|cvc)/i
+      const selector = [
+        'input[type="password"]',
+        'input[autocomplete="one-time-code"]',
+        'input[autocomplete*="password"]',
+        'input[autocomplete*="cc-csc"]',
+        '[data-sensitive="true"]',
+        '[data-private="true"]',
+      ].join(",")
+      const elements = Array.from(document.querySelectorAll(selector))
+      for (const el of Array.from(document.querySelectorAll("input,textarea,[contenteditable='true']"))) {
+        const node = el as HTMLElement
+        const attrs = [
+          node.getAttribute("name") || "",
+          node.getAttribute("id") || "",
+          node.getAttribute("placeholder") || "",
+          node.getAttribute("aria-label") || "",
+          node.getAttribute("data-testid") || "",
+          node.getAttribute("autocomplete") || "",
+        ].join(" ")
+        if (sensitive.test(attrs)) elements.push(node)
+      }
+      const unique = Array.from(new Set(elements))
+      for (const input of unique) {
+        const el = input as HTMLElement
+        const r = el.getBoundingClientRect()
+        if (r.width === 0 || r.height === 0) continue
+        const box = document.createElement("div")
+        box.setAttribute("data-qa-mask", "1")
+        box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background:#0b0b0f;z-index:2147483647;border-radius:4px;pointer-events:none;`
+        document.body.appendChild(box)
+      }
     })
   } catch {}
   return async () => {
@@ -882,6 +901,10 @@ export async function executeAutonomousJob(
 
     // ---- Stop video, upload recording clips ----
     if (recordingMonitor) clearInterval(recordingMonitor)
+    // Wait for any user-requested pause/resume/stop transition to finish before
+    // finalizing the run. Otherwise a queued resume could race this cleanup and
+    // leave a recorder running after the job has already reported completion.
+    await recordingTransition.catch(() => {})
     if (recorder) {
       try {
         await recorder.stop()
