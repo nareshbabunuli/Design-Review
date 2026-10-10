@@ -168,3 +168,16 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - [ ] Confirm TypeScript validation passes on the latest commit.
 - [ ] Add automated browser fixtures and verify route recursion/backtracking against a disposable app.
 - [ ] Verify that the report UI displays DOM inventory entries and unresolved coverage as intended.
+
+## DOM-first discovery follow-up — 2026-10-10
+
+- [x] Central DOM-first discovery pass runs before scenario planning; same-origin destinations are queued for a bounded exploration pass.
+- [x] Destination DOM inventories and screenshots are added to the Action Ledger/report path.
+- [x] Latest confirmed TypeScript validation before this follow-up passed on commit `9174acd89eaaaa3308b1c1260ffed2b563871fc2` ([run #64](https://github.com/nareshbabunuli/Design-Review/actions/runs/38078951528)).
+- [x] Fixed completion reconciliation so both queued candidate IDs and ledger entries still marked `untested` prevent a false complete result (commit `1e3758282eb90e4928dea53fdfa5d890fa9ba3de`).
+- [ ] Check TypeScript CI for the coverage-reconciliation commit and subsequent documentation commits.
+- [ ] Add automated browser fixture tests and run against a disposable sample app.
+- [ ] Validate route recursion/backtracking, restoration failures, SPA state changes, and coverage counts in a real browser.
+- [ ] Keep manual UI checks USER-CHECK-VIS-01..05 pending until actual visual evidence is provided.
+
+**Honesty rule:** The central discovery flow is wired, but no browser E2E result has been produced yet. Do not claim the explorer is fully validated or that every control is verified based on TypeScript CI alone.
