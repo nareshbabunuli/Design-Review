@@ -1598,7 +1598,7 @@ export async function executeStructuredTestPlan(
             const candidates = Array.from(document.querySelectorAll(
               '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
             )) as HTMLElement[]
-            const normalize = (value: string) => value.trim().replace(/\\s+/g, " ").toLowerCase()
+            const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase()
             const tab = candidates.find((candidate) => {
               const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
               return label === name || label.includes(name)
