@@ -41,6 +41,8 @@ export type ElementSemantics = {
   role?: string
   name?: string
   ariaHasPopup?: boolean
+  /** Current page URL, used to distinguish same-document hash links from navigation. */
+  currentUrl?: string
 }
 
 /**
@@ -52,12 +54,25 @@ export function expectFor(el: ElementSemantics): ObservedEffect[] {
   const type = (el.type || "").toLowerCase()
   const href = el.href || ""
 
-  // Anchor with non-hash navigation
+  // Anchors can expose absolute hrefs even for same-document hash links.
+  // Compare resolved URLs when the caller supplies the current page URL.
   if (tag === "a" || role === "link") {
-    if (href && !href.startsWith("#") && !href.startsWith("javascript:")) {
-      return ["navigated"]
+    if (!href || href.startsWith("javascript:")) {
+      return ["content_changed", "modal_opened"]
     }
-    return ["content_changed", "modal_opened"]
+    if (href.startsWith("#")) return ["content_changed", "modal_opened"]
+    if (el.currentUrl) {
+      try {
+        const target = new URL(href, el.currentUrl)
+        const current = new URL(el.currentUrl)
+        if (target.origin === current.origin && target.pathname === current.pathname && target.search === current.search) {
+          return ["content_changed", "modal_opened"]
+        }
+      } catch {
+        // Invalid URLs fall through to the conservative navigation expectation.
+      }
+    }
+    return ["navigated"]
   }
 
   // Submit buttons
