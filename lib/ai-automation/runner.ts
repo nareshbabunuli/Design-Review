@@ -786,7 +786,7 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
 
 async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
-  const openRouterKey = params.openRouterApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const openRouterKey = params.aiApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
   const aiBase = (params.aiBaseUrl || "").trim()
   const isLocalAi = Boolean(aiBase && (aiBase.includes("localhost") || aiBase.includes("127.0.0.1")))
   const isUnoRouter = aiBase.includes("unorouter.com")
