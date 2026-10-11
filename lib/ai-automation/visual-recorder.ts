@@ -107,7 +107,7 @@ const OVERLAY_SCRIPT = `
       caret-color: transparent !important;
     }
     [data-sensitive="true"], [data-qa-secret="true"] { filter: blur(8px) !important; }
-  \\`;
+  \`;
   document.head.appendChild(style);
 
   // 1. Mouse cursor element
