@@ -110,32 +110,37 @@ export default function FeatureWorkflowView({
   const [workflowInput, setWorkflowInput] = useState("")
   const [selectedRole, setSelectedRole] = useState("Customer")
   const [savedFlows, setSavedFlows] = useState<Array<{ id: string; role: string; name: string; prompt: string }>>([])
-  const [savedFlowsLoaded, setSavedFlowsLoaded] = useState(false)
+  const [loadedFlowsKey, setLoadedFlowsKey] = useState<string | null>(null)
   const savedFlowsKey = `open-design-ai:role-workflows:${projectId}`
 
   useEffect(() => {
+    let cancelled = false
     try {
       const raw = window.localStorage.getItem(savedFlowsKey)
       const parsed = raw ? JSON.parse(raw) : []
-      setSavedFlows(Array.isArray(parsed) ? parsed.filter((flow) =>
+      const flows = Array.isArray(parsed) ? parsed.filter((flow) =>
         flow && typeof flow.id === "string" && typeof flow.role === "string" &&
         typeof flow.name === "string" && typeof flow.prompt === "string"
-      ) : [])
+      ) : []
+      if (!cancelled) setSavedFlows(flows)
     } catch {
-      setSavedFlows([])
+      if (!cancelled) setSavedFlows([])
     } finally {
-      setSavedFlowsLoaded(true)
+      if (!cancelled) setLoadedFlowsKey(savedFlowsKey)
     }
+    return () => { cancelled = true }
   }, [savedFlowsKey])
 
   useEffect(() => {
-    if (!savedFlowsLoaded) return
+    // Do not write the previous app's flows under a newly selected app's key
+    // while that app's saved data is still loading.
+    if (loadedFlowsKey !== savedFlowsKey) return
     try {
       window.localStorage.setItem(savedFlowsKey, JSON.stringify(savedFlows))
     } catch (error) {
       console.warn("Could not persist saved test workflows in this browser.", error)
     }
-  }, [savedFlows, savedFlowsKey, savedFlowsLoaded])
+  }, [savedFlows, savedFlowsKey, loadedFlowsKey])
   const [flowName, setFlowName] = useState("Customer journey")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analyzedSpec, setAnalyzedSpec] = useState<FeatureWorkflowSpec | null>(null)
