@@ -36,6 +36,7 @@ import { performVisibleLoginPlaywright } from "./human-actions"
 import { runHumanLikeDecisionLoop } from "./human-test-loop"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 import { clearJobSecrets } from "./job-secret-vault"
+import { SessionVideoRecorder } from "./visual-recorder"
 
 export function isAutonomousCommand(cmd: string): boolean {
   return /(every page|all pages|full (test|audit|run)|autonomous|test every|explore( the app)?|end[\s-]?to[\s-]?end|\d+\s*scenarios?)/i.test(
@@ -587,12 +588,7 @@ export async function executeAutonomousJob(
   }
 
   let browser: Browser | null = null
-  let recorder: any = null
-  const recordingPath = path.join(dir, "recording.webm")
-  let recordingControl: "recording" | "paused" | "stopped" = "recording"
-  let recordingMonitor: ReturnType<typeof setInterval> | null = null
-  let recordingTransition: Promise<void> = Promise.resolve()
-  const recordingFiles: string[] = []
+  let recorder: SessionVideoRecorder | null = null
 
   try {
     const count = scenarioCountFromCommand(params.userInstruction || "", params.scenarioCount || 15)
@@ -662,70 +658,10 @@ export async function executeAutonomousJob(
       appendLog(job, "warn", `Initial navigation note: ${e?.message}`)
     })
 
-    // ---- Optional session video; pause/resume is implemented as recorder segments ----
+    // ---- Optional session video; shared recorder owns pause/resume segments ----
     if (params.recordVideo !== false) {
-      try {
-        const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
-        recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
-        await recorder.start(recordingPath)
-        recordingFiles.push(recordingPath)
-        ;(job as any).recordingControl = "recording"
-        saveJob(job)
-        appendLog(job, "info", "Session video recording started.")
-        recordingMonitor = setInterval(() => {
-          const requested = (job as any).recordingControl === "paused"
-            ? "paused"
-            : (job as any).recordingControl === "stopped"
-              ? "stopped"
-              : "recording"
-          if (requested === recordingControl) return
-
-          recordingTransition = recordingTransition.then(async () => {
-            if (requested === recordingControl) return
-
-            if (requested === "paused" || requested === "stopped") {
-              recordingControl = requested
-              if (recorder) {
-                try {
-                  await recorder.stop()
-                } catch (err: any) {
-                  appendLog(job, "warn", `Recording stop failed: ${err?.message || String(err)}`)
-                } finally {
-                  recorder = null
-                }
-              }
-              appendLog(
-                job,
-                "info",
-                requested === "paused"
-                  ? "Session video recording paused."
-                  : "Session video recording stopped by user.",
-              )
-            } else {
-              try {
-                const segmentPath = path.join(dir, `recording-${Date.now()}.webm`)
-                const nextRecorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
-                await nextRecorder.start(segmentPath)
-                recorder = nextRecorder
-                recordingFiles.push(segmentPath)
-                recordingControl = "recording"
-                appendLog(job, "info", "Session video recording resumed.")
-              } catch (err: any) {
-                recorder = null
-                appendLog(job, "warn", `Recording resume failed: ${err?.message || String(err)}`)
-              }
-            }
-            saveJob(job)
-          }).catch((err: any) => {
-            appendLog(job, "warn", `Recording transition failed: ${err?.message || String(err)}`)
-          })
-        }, 500)
-      } catch (err: any) {
-        appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
-        recorder = null
-        ;(job as any).recordingControl = "stopped"
-        saveJob(job)
-      }
+      recorder = new SessionVideoRecorder(page, job.projectId, job.id)
+      await recorder.start(job)
     } else {
       ;(job as any).recordingControl = "stopped"
       saveJob(job)
@@ -900,44 +836,11 @@ export async function executeAutonomousJob(
       saveJob(job)
     }
 
-    // ---- Stop video, upload recording clips ----
-    if (recordingMonitor) clearInterval(recordingMonitor)
-    // Wait for any user-requested pause/resume/stop transition to finish before
-    // finalizing the run. Otherwise a queued resume could race this cleanup and
-    // leave a recorder running after the job has already reported completion.
-    await recordingTransition.catch(() => {})
-    if (recorder) {
-      try {
-        await recorder.stop()
-        recorder = null
-      } catch (err: any) {
-        appendLog(job, "warn", `Recording finalization note: ${err?.message}`)
-      }
-    }
-    let recordingUrl = ""
-    const recordingUrls: string[] = []
-    for (let i = 0; i < recordingFiles.length; i++) {
-      const filePath = recordingFiles[i]
-      if (!fs.existsSync(filePath) || fs.statSync(filePath).size <= 1024) continue
-      try {
-        const url = await uploadArtifact(
-          fs.readFileSync(filePath),
-          job.projectId,
-          `recording-${i + 1}`,
-          "video/webm",
-          "webm",
-        )
-        if (url) {
-          recordingUrls.push(url)
-          if (!recordingUrl) recordingUrl = url
-        }
-      } catch (err: any) {
-        appendLog(job, "warn", `Recording upload failed: ${err?.message || String(err)}`)
-      }
-    }
+    // ---- Stop shared video recorder and finalize all segments ----
+    const recordingUrl = recorder ? await recorder.stop(job) : ""
+    const recordingUrls = Array.isArray((job as any).recordingSegments) ? (job as any).recordingSegments : []
     job.recordingUrl = recordingUrl || undefined
     job.recordingSegments = recordingUrls.length > 0 ? recordingUrls : undefined
-    ;(job as any).recordingControl = "stopped"
 
     if (getJob(job.id)?.status === "stopped") {
       job.status = "stopped"
