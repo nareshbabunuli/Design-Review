@@ -350,7 +350,12 @@ export class SessionVideoRecorder {
       }
     } catch (err: any) {
       this.recorder = null
-      if (job) appendLog(job, "warn", `Session video recording unavailable: ${err?.message || String(err)}`)
+      this.state = "stopped"
+      if (job) {
+        ;(job as any).recordingControl = "stopped"
+        saveJob(job)
+        appendLog(job, "warn", `Session video recording unavailable: ${err?.message || String(err)}`)
+      }
     }
   }
 
