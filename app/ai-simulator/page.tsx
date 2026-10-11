@@ -1617,6 +1617,10 @@ export default function AISimulatorPage() {
 
   // Start Feature / Workflow Testing (Prompt -> Understand -> Targeted Discovery -> Focused Map -> Plan -> Execute -> Edge Cases -> Report)
   const handleStartWorkflowTesting = async (workflowPrompt?: string) => {
+    // Saved role workflows pass their role in a tagged prompt. Prefer that role
+    // over the global journey selector so the backend job metadata matches the flow.
+    const taggedRole = workflowPrompt?.match(/\[User role:\s*([^\]]+)\]/i)?.[1]?.trim()
+    const effectiveRole = taggedRole || (journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole)
     setBotError("")
     if (!targetUrl.trim()) {
       setBotError("Please specify a target URL to test.")
@@ -1658,7 +1662,7 @@ export default function AISimulatorPage() {
           allowTestPayments,
           allowActions: effectiveAllowActions,
           recordVideo,
-          role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
+          role: effectiveRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials:
             username || password
