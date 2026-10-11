@@ -98,6 +98,12 @@ const OVERLAY_SCRIPT = `
     input[id*="api-key" i], input[id*="api_key" i],
     input[name*="secret" i], input[id*="secret" i],
     input[name*="credential" i], input[id*="credential" i],
+    input[placeholder*="api key" i], input[placeholder*="api-key" i],
+    input[placeholder*="token" i], input[placeholder*="secret" i],
+    input[placeholder*="password" i], input[placeholder*="credential" i],
+    input[placeholder*="private key" i], input[placeholder*="bearer" i],
+    textarea[placeholder*="api key" i], textarea[placeholder*="token" i],
+    textarea[placeholder*="secret" i], textarea[placeholder*="credential" i],
     input[autocomplete*="cc-number" i], input[autocomplete*="cc-csc" i],
     input[data-sensitive="true"], textarea[data-sensitive="true"],
     [data-qa-secret="true"] {
