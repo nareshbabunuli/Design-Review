@@ -261,3 +261,9 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - The status endpoint now rejects invalid recording transitions: pause is allowed only while recording, resume only while paused, and a stopped recording cannot be restarted during the same run.
 - The UI exposes pause, resume, and stop-recording controls while a test is running. Stopping the recording does not cancel the test job.
 - **Verification:** code committed; latest CI status and live browser behavior still need confirmation. Recording depends on the installed recorder package and configured Supabase Storage permissions; upload failure remains best-effort and is logged rather than reported as a successful video.
+
+### 2026-10-11 — Role workflow execution and persistence fixes
+
+- The Feature / Workflow Testing start handler now reads the selected role from the saved-flow prompt tag and sends it as the job's `role` metadata instead of always using the global journey-role selector.
+- Saved-flow persistence now tracks which target-app key has actually loaded before writing local storage. This prevents a previous app's flow list from being written into the new target app's key while its saved flows are still loading.
+- **Verification:** code committed; no confirmed CI run for these latest commits yet. Manual refresh/switch-target checks and a role-specific run remain pending.
