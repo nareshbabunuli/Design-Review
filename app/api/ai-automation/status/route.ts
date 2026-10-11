@@ -78,6 +78,16 @@ export async function POST(req: NextRequest) {
       if (job.status !== "running") {
         return NextResponse.json({ error: "Recording can only be controlled while a test is running" }, { status: 409 })
       }
+      const currentState = (job as any).recordingControl || "recording"
+      if (currentState === "stopped") {
+        return NextResponse.json({ error: "Recording has already stopped and cannot be resumed" }, { status: 409 })
+      }
+      if (action === "pause_recording" && currentState !== "recording") {
+        return NextResponse.json({ error: "Recording is not currently running" }, { status: 409 })
+      }
+      if (action === "resume_recording" && currentState !== "paused") {
+        return NextResponse.json({ error: "Recording is not paused" }, { status: 409 })
+      }
       const nextState =
         action === "pause_recording"
           ? "paused"
