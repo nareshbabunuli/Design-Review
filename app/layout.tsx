@@ -1,5 +1,5 @@
 import { Analytics } from '@vercel/analytics/next'
-import Script from 'next/script'
+import SuppressExtensionErrors from '@/components/suppress-extension-errors'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
@@ -35,40 +35,10 @@ export default function RootLayout({
     <html lang="en" className="light bg-slate-100" suppressHydrationWarning>
       <head>
         <link rel="preload" href="/screenshots/dashboard-preview.png" as="image" type="image/png" />
-        <Script
-          id="suppress-browser-extension-errors"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                function isExtensionError(e) {
-                  var str = (e && (e.message || (e.reason && e.reason.message) || e.filename || '')) + '';
-                  var stack = (e && ((e.error && e.error.stack) || (e.reason && e.reason.stack) || '')) + '';
-                  return (
-                    str.indexOf('Verification timed out') !== -1 ||
-                    str.indexOf('csSpoofGeo') !== -1 ||
-                    stack.indexOf('chrome-extension://') !== -1 ||
-                    str.indexOf('chrome-extension://') !== -1
-                  );
-                }
-                window.addEventListener('error', function(event) {
-                  if (isExtensionError(event)) {
-                    event.stopImmediatePropagation();
-                    event.preventDefault();
-                  }
-                }, true);
-                window.addEventListener('unhandledrejection', function(event) {
-                  if (isExtensionError(event)) {
-                    event.stopImmediatePropagation();
-                    event.preventDefault();
-                  }
-                }, true);
-              })();
-            `,
-          }}
-        />
+
       </head>
       <body className="antialiased" suppressHydrationWarning>
+        <SuppressExtensionErrors />
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
