@@ -27,16 +27,25 @@
 - [x] Avoid showing sensitive field values in action banners and stored outcomes.
 - [x] Prefer valid, visible, non-sensitive values already present in a form; explicit Postman mappings and supplied sandbox payment details take precedence.
 
-## Required validation before merge
+## Unit / pure-logic validation (CI)
+
+- [x] Reconciliation keeps queue, totals, and status counts consistent (`tests/action-ledger-reconciliation.test.ts`).
+- [x] History is preserved across fail → running → pass and capped at 20 attempts.
+- [x] `isCoverageComplete` is false while any entry is untested or running.
+- [x] Safety patterns and hash-link expectations run without pulling storage/Puppeteer runtime (`outcome-semantics.ts` + architecture tests).
+
+## Required browser validation before merge
+
+Use `tests/fixtures/action-ledger-coverage.html` and follow `docs/ACTION_LEDGER_FIXTURE_VALIDATION.md`.
 
 - [ ] Confirm the latest Vercel deployment succeeds and inspect the first build error if it fails.
-- [ ] Run a full TypeScript/build check in the repository environment.
+- [ ] Run a full TypeScript/build check in the repository environment (`pnpm test:dom-discovery` + `pnpm build` if env allows).
 - [ ] Test a fixture app where a tab reveals additional controls without changing the URL.
 - [ ] Test a modal that reveals controls and verify sibling actions run before the modal is dismissed.
 - [ ] Test a route with Login, Sign Up, and Forgot Password branches and verify no branch disappears from the queue.
 - [ ] Test a form with prefilled data, missing data, invalid email, and valid submission.
 - [ ] Test an email/OTP checkpoint and verify the run pauses, resumes, and records the confirmation.
-- [ ] Confirm the History view preserves previous outcomes after a failed action is retried.
+- [ ] Confirm the History view preserves previous outcomes after a failed action is retried (browser confirmation of unit-tested behavior).
 - [ ] Confirm the run never reports full coverage while any discovered action is still untested.
 
 ## Merge rule
