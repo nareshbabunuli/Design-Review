@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
 import { detectInteractionPatterns, generateCandidateTests, type PatternState } from "../lib/ai-automation/interaction-pattern-engine"
 import { classifyAction } from "../lib/ai-automation/safety-guard"
 import { expectFor } from "../lib/ai-automation/outcome-verifier"
@@ -79,7 +81,7 @@ test("hash links to a different route still expect navigation", () => {
 
 
 test("shared session recorder owns pause/resume segment controls", () => {
-  const recorderSource = require("node:fs").readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/visual-recorder.ts"), "utf8")
+  const recorderSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/visual-recorder.ts"), "utf8")
   assert.match(recorderSource, /async pause\(job\?: AutomationJob\)/)
   assert.match(recorderSource, /async resume\(job\?: AutomationJob\)/)
   assert.match(recorderSource, /recordingSegments/)
@@ -87,17 +89,15 @@ test("shared session recorder owns pause/resume segment controls", () => {
 })
 
 test("full app and feature workflow engines use the shared recorder job control", () => {
-  const fs = require("node:fs")
-  const fullApp = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/full-app-engine.ts"), "utf8")
-  const feature = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/feature-workflow-engine.ts"), "utf8")
+  const fullApp = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/full-app-engine.ts"), "utf8")
+  const feature = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/feature-workflow-engine.ts"), "utf8")
   assert.match(fullApp, /videoRecorder\.start\(job\)/)
   assert.match(feature, /videoRecorder\.start\(job\)/)
 })
 
 
 test("autonomous runner uses the same shared session recorder", () => {
-  const fs = require("node:fs")
-  const source = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/autonomous-runner.ts"), "utf8")
+  const source = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/autonomous-runner.ts"), "utf8")
   assert.match(source, /new SessionVideoRecorder\(page, job\.projectId, job\.id\)/)
   assert.match(source, /await recorder\.start\(job\)/)
 })
