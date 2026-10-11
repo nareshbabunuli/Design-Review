@@ -76,3 +76,20 @@ test("hash links to a different route still expect navigation", () => {
     currentUrl: "https://app.example.test/",
   }), ["navigated"])
 })
+
+
+test("shared session recorder owns pause/resume segment controls", () => {
+  const recorderSource = require("node:fs").readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/visual-recorder.ts"), "utf8")
+  assert.match(recorderSource, /async pause\(job\?: AutomationJob\)/)
+  assert.match(recorderSource, /async resume\(job\?: AutomationJob\)/)
+  assert.match(recorderSource, /recordingSegments/)
+  assert.match(recorderSource, /setInterval\(\(\) =>/)
+})
+
+test("full app and feature workflow engines use the shared recorder job control", () => {
+  const fs = require("node:fs")
+  const fullApp = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/full-app-engine.ts"), "utf8")
+  const feature = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/feature-workflow-engine.ts"), "utf8")
+  assert.match(fullApp, /videoRecorder\.start\(job\)/)
+  assert.match(feature, /videoRecorder\.start\(job\)/)
+})
