@@ -269,3 +269,14 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - The Feature / Workflow Testing start handler now reads the selected role from the saved-flow prompt tag and sends it as the job's `role` metadata instead of always using the global journey-role selector.
 - Saved-flow persistence now tracks which target-app key has actually loaded before writing local storage. This prevents a previous app's flow list from being written into the new target app's key while its saved flows are still loading.
 - **Verification:** code committed; no confirmed CI run for these latest commits yet. Manual refresh/switch-target checks and a role-specific run remain pending.
+
+
+## Session video controls — 2026-10-11
+
+- [x] Added live Pause, Resume, and Stop recording controls to the existing autonomous test-runner toolbar. Stopping the recording does not stop the test.
+- [x] Recording controls use the existing authenticated `/api/ai-automation/status` action endpoint and the existing `SessionVideoRecorder` segment lifecycle.
+- [x] Added in-page video masking for password, token, API-key, secret, credential, payment-card, and explicitly marked sensitive fields. Masking changes only presentation; it does not rewrite submitted values.
+- [x] Paused recordings are finalized as multiple segments and uploaded through the existing Supabase Storage flow; no Supabase schema migration is expected.
+- [ ] Verify latest GitHub Actions run for typecheck and DOM-discovery tests.
+- [ ] Manual browser verification remains required: pause/resume creates separate playable segments; stop recording leaves testing running; secret values are unreadable in the captured video; the report exposes the recording URL/segments.
+- [ ] Video recording requires the existing `designs` Supabase Storage bucket and appropriate upload permissions. If the bucket is private or lacks policies, recording upload must be verified against the deployed project configuration.
