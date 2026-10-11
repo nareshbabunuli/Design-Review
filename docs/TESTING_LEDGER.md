@@ -254,3 +254,10 @@ Run on an isolated local fixture page. Do not submit forms or trigger real exter
 - Added session-local saved-flow cards so a project can draft distinct named flows, reload their prompts, and start each flow separately. Each run prompt is tagged with the selected role and workflow name for the planner/report trace.
 - Prototype limitation: saved flows currently live in component state only (not persisted to the database/project after refresh); role-tagging is prompt context, not an authorization boundary. Use dedicated test accounts and verify credentials handling in the runner before relying on role-specific access assertions.
 - CI must pass before treating the prototype as ready to demo. Persistent project-level workflow storage and role-specific credential profiles remain follow-up work.
+
+### 2026-10-11 — Recording controls hardening
+
+- The existing shared `SessionVideoRecorder` is used by the autonomous runner and supports pause/resume as separate segments; all successfully uploaded segment URLs are retained in the job/report.
+- The status endpoint now rejects invalid recording transitions: pause is allowed only while recording, resume only while paused, and a stopped recording cannot be restarted during the same run.
+- The UI exposes pause, resume, and stop-recording controls while a test is running. Stopping the recording does not cancel the test job.
+- **Verification:** code committed; latest CI status and live browser behavior still need confirmation. Recording depends on the installed recorder package and configured Supabase Storage permissions; upload failure remains best-effort and is logged rather than reported as a successful video.
