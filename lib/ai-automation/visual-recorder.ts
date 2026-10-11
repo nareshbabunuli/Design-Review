@@ -89,7 +89,25 @@ const OVERLAY_SCRIPT = `
       box-shadow: 0 0 14px rgba(2, 132, 199, 0.5) !important;
       transition: outline 0.15s ease-in-out !important;
     }
-  \`;
+
+    /* Video privacy: mask secrets without changing submitted field values. */
+    input[type="password"], input[autocomplete*="password" i],
+    input[name*="password" i], input[id*="password" i],
+    input[name*="token" i], input[id*="token" i],
+    input[name*="api-key" i], input[name*="api_key" i],
+    input[id*="api-key" i], input[id*="api_key" i],
+    input[name*="secret" i], input[id*="secret" i],
+    input[name*="credential" i], input[id*="credential" i],
+    input[autocomplete*="cc-number" i], input[autocomplete*="cc-csc" i],
+    input[data-sensitive="true"], textarea[data-sensitive="true"],
+    [data-qa-secret="true"] {
+      -webkit-text-security: disc !important;
+      color: transparent !important;
+      text-shadow: none !important;
+      caret-color: transparent !important;
+    }
+    [data-sensitive="true"], [data-qa-secret="true"] { filter: blur(8px) !important; }
+  \\`;
   document.head.appendChild(style);
 
   // 1. Mouse cursor element
