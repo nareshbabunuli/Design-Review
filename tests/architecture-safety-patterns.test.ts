@@ -93,3 +93,11 @@ test("full app and feature workflow engines use the shared recorder job control"
   assert.match(fullApp, /videoRecorder\.start\(job\)/)
   assert.match(feature, /videoRecorder\.start\(job\)/)
 })
+
+
+test("autonomous runner uses the same shared session recorder", () => {
+  const fs = require("node:fs")
+  const source = fs.readFileSync(require("node:path").join(process.cwd(), "lib/ai-automation/autonomous-runner.ts"), "utf8")
+  assert.match(source, /new SessionVideoRecorder\(page, job\.projectId, job\.id\)/)
+  assert.match(source, /await recorder\.start\(job\)/)
+})
