@@ -25,6 +25,7 @@ import {
   Ban,
   Maximize2,
   ChevronRight,
+  Video,
 } from "lucide-react"
 import type {
   AutomationJob,
