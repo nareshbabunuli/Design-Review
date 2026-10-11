@@ -4,7 +4,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { detectInteractionPatterns, generateCandidateTests, type PatternState } from "../lib/ai-automation/interaction-pattern-engine"
 import { classifyAction } from "../lib/ai-automation/safety-guard"
-import { expectFor } from "../lib/ai-automation/outcome-verifier"
+import { expectFor } from "../lib/ai-automation/outcome-semantics"
 
 const baseState: PatternState = {
   stateKey: "fixture-home",
