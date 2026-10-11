@@ -25,9 +25,6 @@ import {
   Ban,
   Maximize2,
   ChevronRight,
-  Pause,
-  CircleStop,
-  Video,
 } from "lucide-react"
 import type {
   AutomationJob,
@@ -149,8 +146,6 @@ export default function FeatureWorkflowView({
   const [analyzedSpec, setAnalyzedSpec] = useState<FeatureWorkflowSpec | null>(null)
   const [previewPlan, setPreviewPlan] = useState<FullAppTestPlan | null>(null)
   const [selectedScreenshotModal, setSelectedScreenshotModal] = useState<string | null>(null)
-  const [recordingActionBusy, setRecordingActionBusy] = useState(false)
-  const [recordingActionError, setRecordingActionError] = useState<string | null>(null)
 
   // Determine active plan (from current live job or locally generated preview)
   const activePlan = useMemo(() => {
@@ -196,27 +191,6 @@ export default function FeatureWorkflowView({
       console.error("Failed to analyze workflow:", err)
     } finally {
       setIsAnalyzing(false)
-    }
-  }
-
-  const handleRecordingAction = async (action: "pause_recording" | "resume_recording" | "stop_recording") => {
-    if (!job?.id || recordingActionBusy) return
-    setRecordingActionBusy(true)
-    setRecordingActionError(null)
-    try {
-      const response = await fetch("/api/ai-automation/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, action }),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Could not update recording state.")
-      }
-    } catch (error: any) {
-      setRecordingActionError(error?.message || "Could not update recording state.")
-    } finally {
-      setRecordingActionBusy(false)
     }
   }
 
@@ -274,50 +248,6 @@ export default function FeatureWorkflowView({
             </div>
           )}
         </div>
-
-        {/* Recording controls for autonomous sessions. Stopping video does not stop the test. */}
-        {isRunning && job?.id &&
-          ((job as any).recordingControl === "recording" || (job as any).recordingControl === "paused") && (
-          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1">
-            <span className="flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300">
-              <Video className="h-3.5 w-3.5 text-rose-400" />
-              {(job as any).recordingControl === "paused" ? "Recording paused" : "Recording"}
-            </span>
-            {(job as any).recordingControl === "recording" ? (
-              <button
-                type="button"
-                disabled={recordingActionBusy}
-                onClick={() => handleRecordingAction("pause_recording")}
-                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/10 disabled:opacity-50"
-                aria-label="Pause video recording"
-              >
-                <Pause className="h-3 w-3" /> Pause
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={recordingActionBusy}
-                onClick={() => handleRecordingAction("resume_recording")}
-                className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 px-2 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-50"
-                aria-label="Resume video recording"
-              >
-                <Play className="h-3 w-3" /> Resume
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={recordingActionBusy}
-              onClick={() => handleRecordingAction("stop_recording")}
-              className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 px-2 py-1 text-[10px] font-semibold text-rose-200 hover:bg-rose-500/10 disabled:opacity-50"
-              aria-label="Stop video recording but continue testing"
-            >
-              <CircleStop className="h-3 w-3" /> Stop recording
-            </button>
-          </div>
-        )}
-        {recordingActionError && (
-          <span role="alert" className="max-w-[220px] text-[10px] text-rose-300">{recordingActionError}</span>
-        )}
 
         {/* Action Button: Run / Stop */}
         <div className="flex items-center gap-2">
