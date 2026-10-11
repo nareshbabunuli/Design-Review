@@ -901,6 +901,37 @@ export default function FeatureWorkflowView({
               <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs">
                 <span className="font-bold text-white block">Executive Summary</span>
                 <p className="text-slate-300 leading-relaxed">{job.report.summary}</p>
+                {(job.report.recordingUrl || job.recordingUrl || (job.recordingSegments && job.recordingSegments.length > 0)) && (
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <span className="font-semibold text-slate-200 text-[11px] flex items-center gap-1.5">
+                      <Video className="h-3.5 w-3.5 text-indigo-400" /> Session recording
+                    </span>
+                    {(job.report.recordingUrl || job.recordingUrl) && (
+                      <video
+                        controls
+                        preload="metadata"
+                        src={job.report.recordingUrl || job.recordingUrl}
+                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
+                        aria-label="Recorded browser test session"
+                      />
+                    )}
+                    {job.recordingSegments && job.recordingSegments.length > 1 && (
+                      <div className="flex flex-wrap gap-2">
+                        {job.recordingSegments.map((url, index) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-indigo-300 underline underline-offset-2 hover:text-indigo-200"
+                          >
+                            Open recording segment {index + 1}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {job.report.recommendations && job.report.recommendations.length > 0 && (
                   <div className="pt-2 border-t border-slate-800 space-y-1">
                     <span className="font-semibold text-slate-400 text-[11px] block">Recommendations:</span>
