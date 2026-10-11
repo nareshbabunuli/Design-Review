@@ -2874,7 +2874,7 @@ export async function executeFullAppTestingJob(
     // Start session video recorder (with visible mouse cursor, ripples & interaction highlights)
     if (params.recordVideo !== false) {
       videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
-      await videoRecorder.start()
+      await videoRecorder.start(job)
       appendLog(job, "info", "🎥 Session journey recording active with visible cursor & interaction overlay.")
     } else {
       await installVisualOverlay(page)
