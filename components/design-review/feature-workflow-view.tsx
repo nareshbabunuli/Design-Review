@@ -276,7 +276,7 @@ export default function FeatureWorkflowView({
         </div>
 
         {/* Recording controls for autonomous sessions. Stopping video does not stop the test. */}
-        {isRunning && job?.mode === "autonomous" && job?.id &&
+        {isRunning && job?.id &&
           ((job as any).recordingControl === "recording" || (job as any).recordingControl === "paused") && (
           <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1">
             <span className="flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300">
