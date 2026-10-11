@@ -312,6 +312,7 @@ export class SessionVideoRecorder {
   private state: "recording" | "paused" | "stopped" = "stopped"
   private finalizedUrl = ""
   private finalized = false
+  private finalizationPromise: Promise<string> | null = null
 
   constructor(page: Page, projectId: string, jobId: string) {
     this.page = page
@@ -380,7 +381,13 @@ export class SessionVideoRecorder {
     await this.transition
   }
 
-  async stop(job?: AutomationJob): Promise<string> {
+  stop(job?: AutomationJob): Promise<string> {
+    if (this.finalizationPromise) return this.finalizationPromise
+    this.finalizationPromise = this.finalize(job)
+    return this.finalizationPromise
+  }
+
+  private async finalize(job?: AutomationJob): Promise<string> {
     if (this.finalized) return this.finalizedUrl
     if (this.monitor) { clearInterval(this.monitor); this.monitor = null }
     await this.transition.catch(() => {})
