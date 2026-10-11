@@ -15,21 +15,25 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+          run_install: false
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - name: Install dependencies without downloading browser binaries
-        run: npm install --ignore-scripts --legacy-peer-deps --package-lock=false
+          cache: pnpm
+      - name: Install dependencies from the committed lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
         env:
           PUPPETEER_SKIP_DOWNLOAD: "true"
       - name: Type-check application
-        run: npx tsc --noEmit --pretty false
+        run: pnpm exec tsc --noEmit --pretty false
       - name: Install Chromium for isolated browser fixtures
-        run: npx puppeteer browsers install chrome
+        run: pnpm exec puppeteer browsers install chrome
         env:
           PUPPETEER_SKIP_DOWNLOAD: "true"
-
       - name: Run DOM discovery browser fixtures
-        run: npm run test:dom-discovery
+        run: pnpm run test:dom-discovery
