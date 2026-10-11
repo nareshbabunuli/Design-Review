@@ -175,7 +175,11 @@ const OVERLAY_SCRIPT = `
     window.__qaMoveCursor(rect.left + rect.width / 2, rect.top + rect.height / 2);
 
     if (val) {
-      typingBadge.textContent = 'Typing: ' + val;
+      var sensitiveField = /password|token|api[-_ ]?key|secret|credential|private[-_ ]?key|bearer|cvv|cvc|card[-_ ]?number/i.test([
+        el.type || '', el.name || '', el.id || '', el.getAttribute('placeholder') || '',
+        el.getAttribute('autocomplete') || '', el.getAttribute('data-sensitive') || ''
+      ].join(' '));
+      typingBadge.textContent = sensitiveField ? 'Typing: ••••••••' : 'Typing: ' + val;
       typingBadge.style.left = (rect.left) + 'px';
       typingBadge.style.top = (rect.bottom + 6) + 'px';
       typingBadge.style.display = 'block';
