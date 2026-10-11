@@ -769,6 +769,3 @@ export async function verifyModalCloseAndFocus(
   }
 }
 
-
-// Backward-compatible named exports for the full-app engine.
-export { ConsoleRecorder, NetworkRecorder }
