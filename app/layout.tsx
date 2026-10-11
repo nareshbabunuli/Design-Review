@@ -1,4 +1,5 @@
 import { Analytics } from '@vercel/analytics/next'
+import Script from 'next/script'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
@@ -34,11 +35,12 @@ export default function RootLayout({
     <html lang="en" className="light bg-slate-100" suppressHydrationWarning>
       <head>
         <link rel="preload" href="/screenshots/dashboard-preview.png" as="image" type="image/png" />
-        <script
+        <Script
+          id="suppress-browser-extension-errors"
+          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
-                if (typeof window === 'undefined') return;
                 function isExtensionError(e) {
                   var str = (e && (e.message || (e.reason && e.reason.message) || e.filename || '')) + '';
                   var stack = (e && ((e.error && e.error.stack) || (e.reason && e.reason.stack) || '')) + '';
