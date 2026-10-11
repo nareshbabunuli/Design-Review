@@ -3,7 +3,7 @@ import path from "path"
 import os from "os"
 import type { Page, ElementHandle } from "puppeteer"
 import { createClient } from "@supabase/supabase-js"
-import { appendLog } from "./job-store"
+import { appendLog, saveJob } from "./job-store"
 import type { AutomationJob } from "./types"
 
 const OVERLAY_SCRIPT = `
@@ -310,6 +310,8 @@ export class SessionVideoRecorder {
   private transition: Promise<void> = Promise.resolve()
   private monitor: ReturnType<typeof setInterval> | null = null
   private state: "recording" | "paused" | "stopped" = "stopped"
+  private finalizedUrl = ""
+  private finalized = false
 
   constructor(page: Page, projectId: string, jobId: string) {
     this.page = page
@@ -336,6 +338,7 @@ export class SessionVideoRecorder {
       await installVisualOverlay(this.page)
       if (job) {
         ;(job as any).recordingControl = "recording"
+        saveJob(job)
         appendLog(job, "info", "Session video recording started.")
         this.monitor = setInterval(() => {
           const requested = (job as any).recordingControl
@@ -378,6 +381,7 @@ export class SessionVideoRecorder {
   }
 
   async stop(job?: AutomationJob): Promise<string> {
+    if (this.finalized) return this.finalizedUrl
     if (this.monitor) { clearInterval(this.monitor); this.monitor = null }
     await this.transition.catch(() => {})
     if (this.recorder) {
@@ -405,7 +409,10 @@ export class SessionVideoRecorder {
         appendLog(job, "success", `Session recording finalized with ${urls.length} segment(s).`)
       }
     }
-    return urls[0] || ""
+    this.finalizedUrl = urls[0] || ""
+    this.finalized = true
+    if (job) saveJob(job)
+    return this.finalizedUrl
   }
 
   getSegments(): string[] {
