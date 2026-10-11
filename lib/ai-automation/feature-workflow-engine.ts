@@ -580,7 +580,7 @@ export async function executeFeatureWorkflowJob(
     await page.setViewport({ width: 1440, height: 900 })
     if (params.recordVideo !== false) {
       videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
-      await videoRecorder.start()
+      await videoRecorder.start(job)
       appendLog(job, "info", "Session video recording enabled for this workflow run.")
     } else {
       appendLog(job, "info", "Session video recording disabled for this workflow run.")
