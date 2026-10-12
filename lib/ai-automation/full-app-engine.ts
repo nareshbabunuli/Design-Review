@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
-import puppeteer, { type Browser, type Page } from "puppeteer"
+import puppeteer, { type Browser, type Page, type ElementHandle } from "puppeteer"
 import {
   AutomationJob,
   AutomationIssue,
@@ -17,6 +17,7 @@ import {
   StepEvidence,
   AutomationVerdict,
   ActionLedgerEntry,
+  AgentAction,
 } from "./types"
 import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
@@ -58,8 +59,10 @@ import {
 } from "./types"
 import { executeChainedWorkflows } from "./workflow-chainer"
 import { buildAutomationReport } from "./evidence-reporter"
+import { humanClick, humanType, humanMouseMove } from "./human-actions"
 import {
   installVisualOverlay,
+  animateCursorTo,
   animateCursorToSelector,
   triggerClickAnimation,
   highlightInputTyping,
@@ -707,25 +710,15 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
     const userEl = userHandle.asElement() as any
     const passEl = passHandle.asElement() as any
 
-    // 3. Native keystrokes (triggers React / React Native Web onChangeText and state updates)
+    // 3. Human mouse movements & keystrokes (triggers visual overlay cursor & React Native Web updates)
     if (userEl && creds.username) {
-      await userEl.click({ count: 3 }).catch(() => {})
-      await page.keyboard.press("Backspace").catch(() => {})
-      await page.keyboard.down("Control").catch(() => {})
-      await page.keyboard.press("KeyA").catch(() => {})
-      await page.keyboard.up("Control").catch(() => {})
-      await page.keyboard.press("Backspace").catch(() => {})
-      await userEl.type(creds.username, { delay: 10 }).catch(() => {})
+      await humanClick(page, userEl).catch(() => {})
+      await humanType(page, userEl, creds.username, { label: "Email" }).catch(() => {})
     }
 
     if (passEl && creds.password) {
-      await passEl.click({ count: 3 }).catch(() => {})
-      await page.keyboard.press("Backspace").catch(() => {})
-      await page.keyboard.down("Control").catch(() => {})
-      await page.keyboard.press("KeyA").catch(() => {})
-      await page.keyboard.up("Control").catch(() => {})
-      await page.keyboard.press("Backspace").catch(() => {})
-      await passEl.type(creds.password, { delay: 10 }).catch(() => {})
+      await humanClick(page, passEl).catch(() => {})
+      await humanType(page, passEl, creds.password, { label: "Password", maskInBanner: true }).catch(() => {})
     }
 
     // Secondary fallback sync for controlled inputs with custom property descriptors
@@ -807,6 +800,7 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
     let clicked = false
 
     if (btnEl) {
+      await humanClick(page, btnEl).catch(() => {})
       // Dispatch pointer events for React Native Web / Touchables responder chains
       await page.evaluate((el: any) => {
         if (!el) return
@@ -818,9 +812,7 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
         el.dispatchEvent(new MouseEvent("mouseup", opts))
         el.dispatchEvent(new MouseEvent("click", opts))
         if (typeof el.click === "function") el.click()
-      }, btnHandle)
-
-      await btnEl.click().catch(() => {})
+      }, btnHandle).catch(() => {})
       clicked = true
     }
 
@@ -1159,7 +1151,21 @@ function queueUnplannedLedgerActions(
   // Keep dismiss/close controls last when a modal is discovered, so the queue
   // gets a chance to exercise the other controls before the view disappears.
   const candidates = ledger.entries
-    .filter((entry) => entry.status === "untested" && (!onlyScreenId || entry.screenId === onlyScreenId))
+    .filter((entry) => {
+      if (entry.status !== "untested") return false
+      if (onlyScreenId && entry.screenId !== onlyScreenId) return false
+      // If already authenticated, do not queue obsolete login wall actions (email/password/signin)
+      if (job.authState === "logged_in") {
+        const sc = testPlan.screens.find((s) => s.id === entry.screenId)
+        if (sc?.isLoginWall) {
+          // Login form already exercised by the authentication step; it no longer exists in the DOM.
+          entry.status = "skipped"
+          entry.error = "Covered by authentication step (login form no longer present after sign-in)."
+          return false
+        }
+      }
+      return true
+    })
     .sort((a, b) => {
       const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(a.name.trim())
       const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(b.name.trim())
@@ -2029,7 +2035,72 @@ export async function executeStructuredTestPlan(
         }
       }
 
-      // 2. Perform Action & Verify
+      // 2. Determine target coordinates for visual cursor animation & mirror overlay
+      let actionCoords: { x: number; y: number } | undefined
+      if (step.targetSelector) {
+        actionCoords = await page.evaluate((sel) => {
+          try {
+            const el = document.querySelector(sel) as HTMLElement | null
+            if (!el) return undefined
+            const r = el.getBoundingClientRect()
+            if (r.width <= 1 || r.height <= 1) return undefined
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+          } catch { return undefined }
+        }, step.targetSelector) || undefined
+      }
+
+      if (!actionCoords && step.targetName) {
+        actionCoords = await page.evaluate((name) => {
+          try {
+            const clean = (s: string) => (s || "").replace(/[^a-z0-9]/gi, "").toLowerCase()
+            const wanted = clean(name)
+            if (!wanted) return undefined
+            const all = Array.from(document.querySelectorAll("button, a, input, textarea, select, [role='button'], [tabindex], div, span")) as HTMLElement[]
+            for (const el of all) {
+              const r = el.getBoundingClientRect()
+              if (r.width <= 2 || r.height <= 2) continue
+              const t = clean(el.innerText || el.textContent || el.getAttribute("aria-label") || (el as any).placeholder || el.id || "")
+              if (t === wanted || (wanted.length > 3 && t.includes(wanted))) {
+                return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+              }
+            }
+            return undefined
+          } catch { return undefined }
+        }, step.targetName) || undefined
+      }
+
+      const actionTypeMap: AgentAction["type"] =
+        step.actionType === "fill" ? "type" :
+        step.actionType === "click" ? "click" :
+        step.actionType === "select" ? "click" :
+        step.actionType === "toggle" ? "click" :
+        step.actionType === "upload" ? "click" : "assert"
+
+      job.currentAction = {
+        id: `action-${step.id}`,
+        type: actionTypeMap,
+        target: step.targetName,
+        selector: step.targetSelector,
+        value: step.actionType === "fill" ? (step.syntheticValue || "") : undefined,
+        coordinates: actionCoords,
+        description: `Testing ${step.actionType}: "${step.targetName}"`,
+        status: "running",
+        timestamp: new Date().toISOString(),
+      }
+      saveJob(job)
+
+      if (actionCoords) {
+        await animateCursorTo(page, actionCoords.x, actionCoords.y, step.actionType).catch(() => {})
+      }
+
+      // Capture lightweight live preview frame for real-time simulator mirror
+      try {
+        const liveShot = await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })
+        job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(liveShot).toString("base64")}`
+        saveJob(job)
+      } catch {}
+
+      // 3. Perform Action & Verify
       let actionVerdict: AutomationVerdict = "passed"
       let observation = ""
 
@@ -2502,26 +2573,64 @@ export async function executeStructuredTestPlan(
           await highlightInputTyping(page, step.targetSelector, inputVal)
         }
         const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const before = await captureState(page)
-        const filled = await page.evaluate((target, val) => {
+        const inputHandle = await page.evaluateHandle((target) => {
           const findEl = (sel?: string) => {
             if (!sel || !sel.trim()) return null
             try { return document.querySelector(sel) } catch { return null }
           }
-          const el = (findEl(target.selector) ||
-            Array.from(document.querySelectorAll("input, textarea")).find(
-              (inp: any) =>
-                (inp.placeholder && inp.placeholder.toLowerCase().includes(target.name.toLowerCase())) ||
-                (inp.name && inp.name.toLowerCase().includes(target.name.toLowerCase())) ||
-                (inp.id && inp.id.toLowerCase().includes(target.name.toLowerCase()))
-            )) as HTMLInputElement | null
-          if (!el) return false
-          el.focus()
-          el.value = val
-          el.dispatchEvent(new Event("input", { bubbles: true }))
-          el.dispatchEvent(new Event("change", { bubbles: true }))
-          return true
-        }, targetArg, inputVal)
+          const isVisible = (e: HTMLElement) => {
+            const r = e.getBoundingClientRect()
+            const s = getComputedStyle(e)
+            return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden"
+          }
+          const inputs = Array.from(document.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']")) as HTMLElement[]
+          const clean = (s: string) => (s || "").replace(/[^a-z0-9]/gi, "").toLowerCase()
+          const wanted = clean(target.name)
+          const visibleInputs = inputs.filter(isVisible)
+          return (
+            findEl(target.selector) ||
+            visibleInputs.find((inp: any) => {
+              const p = clean(inp.placeholder)
+              const n = clean(inp.name)
+              const id = clean(inp.id)
+              const aria = clean(inp.getAttribute("aria-label"))
+              const testid = clean(inp.getAttribute("data-testid") || inp.getAttribute("data-test-id"))
+              return (
+                p === wanted || n === wanted || id === wanted || aria === wanted || testid === wanted ||
+                (wanted.length >= 3 && (p.includes(wanted) || n.includes(wanted) || aria.includes(wanted) || testid.includes(wanted)))
+              )
+            }) ||
+            (visibleInputs.length === 1 ? visibleInputs[0] : null) ||
+            null
+          )
+        }, targetArg)
+
+        const inputEl = inputHandle.asElement() as ElementHandle<Element> | null
+        let filled = false
+        if (inputEl) {
+          filled = await humanType(page, inputEl, inputVal, {
+            label: step.targetName,
+            maskInBanner: isSensitiveField,
+          })
+          if (!filled) {
+            filled = await page.evaluate((el: any, val: string) => {
+              if (!el) return false
+              el.focus()
+              const proto = el.tagName === "TEXTAREA"
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype
+              const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+              if (setter) {
+                setter.call(el, val)
+              } else {
+                el.value = val
+              }
+              el.dispatchEvent(new Event("input", { bubbles: true }))
+              el.dispatchEvent(new Event("change", { bubbles: true }))
+              return true
+            }, inputHandle, inputVal).catch(() => false)
+          }
+        }
 
         await settle(page, netRecorder, 1500)
         const after = await captureState(page)
@@ -3008,16 +3117,20 @@ export async function executeStructuredTestPlan(
       const currentScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
       const hasActiveModal = Boolean(newInv.modalTitle)
 
+      const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
+
       let currentScreen = testPlan.screens.find((screen) =>
         screen.path.split("#")[0] === currentNorm &&
-        screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase()
+        screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase() &&
+        (Boolean(screen.isLoginWall) === pageHasLoginWall)
       )
       let createdNewScreen = false
 
       if (!currentScreen && !hasActiveModal) {
         currentScreen = testPlan.screens.find((screen) =>
           screen.path.split("#")[0] === currentNorm &&
-          (!newInv.heading || screen.name.toLowerCase().includes(newInv.heading.toLowerCase()))
+          (!newInv.heading || screen.name.toLowerCase().includes(newInv.heading.toLowerCase())) &&
+          (Boolean(screen.isLoginWall) === pageHasLoginWall)
         )
       }
 
@@ -3227,6 +3340,7 @@ export async function executeFullAppTestingJob(
 ): Promise<void> {
   let browser: Browser | null = null
   let videoRecorder: SessionVideoRecorder | null = null
+  let liveFrameTimer: ReturnType<typeof setInterval> | null = null
 
   try {
     secretRedactor.registerMultiple([
@@ -3270,6 +3384,21 @@ export async function executeFullAppTestingJob(
       isMobile: isMobileVp,
       hasTouch: isMobileVp,
     })
+
+    // Live mirror: capture frames continuously so cursor moves / keystrokes are visible.
+    // In-memory only (job object is shared with the store); the frame endpoint reads it.
+    // ponytail: JPEG polling ~4fps; upgrade to CDP screencast if recorder stops using it.
+    let frameBusy = false
+    liveFrameTimer = setInterval(async () => {
+      if (frameBusy || page.isClosed()) return
+      frameBusy = true
+      try {
+        const buf = await page.screenshot({ type: "jpeg", quality: 40, fullPage: false })
+        job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+      } catch {} finally {
+        frameBusy = false
+      }
+    }, 250)
 
     // Safety environment inspection
     const isProd = isProductionLike(job.targetUrl)
@@ -3461,6 +3590,10 @@ export async function executeFullAppTestingJob(
     appendLog(job, "error", `Fatal Full App Testing failure: ${job.error}`)
     saveJob(job)
   } finally {
+    if (liveFrameTimer) {
+      clearInterval(liveFrameTimer)
+      liveFrameTimer = null
+    }
     if (browser) {
       try {
         await browser.close()

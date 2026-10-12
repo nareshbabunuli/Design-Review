@@ -411,6 +411,12 @@ export default function AISimulatorPage() {
 
   // Simulator device viewport state
   const [simulatorViewport, setSimulatorViewport] = useState<{ width: number; height: number }>({ width: 393, height: 852 })
+  const handleSimulatorViewportChange = useCallback((vp: { width: number; height: number }) => {
+    setSimulatorViewport((prev) => {
+      if (prev.width === vp.width && prev.height === vp.height) return prev
+      return { width: vp.width, height: vp.height }
+    })
+  }, [])
 
   // Local Project Route Scanner State
   const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
@@ -2271,6 +2277,21 @@ export default function AISimulatorPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (workspaceLayoutMode === "stage") {
+                        setWorkspaceLayoutMode("split")
+                      }
+                      window.dispatchEvent(new CustomEvent("run-simulator-dummy-test"))
+                    }}
+                    className="px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                    title="Run dummy test with mouse operations and form filling on login form"
+                  >
+                    <Play className="h-3 w-3 fill-current" />
+                    <span>Dummy Test: Form & Mouse</span>
+                  </button>
+
                   {currentJob?.status === "running" && (
                     <>
                       <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
@@ -2334,7 +2355,7 @@ export default function AISimulatorPage() {
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
                       liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
-                      onViewportChange={(vp) => setSimulatorViewport({ width: vp.width, height: vp.height })}
+                      onViewportChange={handleSimulatorViewportChange}
                     />
                   </div>
                 )}

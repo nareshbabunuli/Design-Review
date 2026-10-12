@@ -43,6 +43,7 @@ import {
   FolderKanban,
   PanelLeftClose,
   PanelLeftOpen,
+  Play,
 } from "lucide-react"
 import type { Project, Workflow } from "@/lib/design-review-types"
 import type { AgentAction } from "@/lib/ai-automation/types"
@@ -182,12 +183,14 @@ function LiveAgentCursorOverlay({
   isRunning,
   viewportWidth,
   viewportHeight,
+  bannerText,
 }: {
   action?: AgentAction | null
   workflow?: Workflow | null
   isRunning?: boolean
   viewportWidth: number
   viewportHeight: number
+  bannerText?: string | null
 }) {
   const [pos, setPos] = useState<{ x: number; y: number }>({
     x: Math.round(viewportWidth / 2),
@@ -283,6 +286,14 @@ function LiveAgentCursorOverlay({
       className="absolute inset-0 pointer-events-none z-30 overflow-hidden select-none"
       aria-hidden="true"
     >
+      {/* Top Action Banner for Live/Dummy Tests */}
+      {bannerText && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-full bg-slate-950/95 border border-amber-400/60 shadow-2xl backdrop-blur-md text-[11px] font-bold text-amber-200 pointer-events-none z-40 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          <span>{bannerText}</span>
+        </div>
+      )}
+
       <div
         className="absolute top-0 left-0 transition-transform duration-500 ease-out will-change-transform"
         style={{
@@ -481,13 +492,18 @@ export function WorkflowSimulator({
   const [frameFinish, setFrameFinish] = useState<FrameFinish>("titanium")
   const [showDeviceStatusBar, setShowDeviceStatusBar] = useState<boolean>(true)
 
+  const onViewportChangeRef = useRef(onViewportChange)
   useEffect(() => {
-    onViewportChange?.({
+    onViewportChangeRef.current = onViewportChange
+  }, [onViewportChange])
+
+  useEffect(() => {
+    onViewportChangeRef.current?.({
       width: viewportWidth,
       height: viewportHeight,
       presetId: selectedPresetId,
     })
-  }, [viewportWidth, viewportHeight, selectedPresetId, onViewportChange])
+  }, [viewportWidth, viewportHeight, selectedPresetId])
 
   // Live browser navigation
   const defaultUrl = useMemo(() => {
@@ -541,15 +557,6 @@ export function WorkflowSimulator({
     token?: string
   }>({ type: "login", username: "", password: "" })
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("simulator_auth_credentials")
-      if (saved) {
-        setAuthConfig(JSON.parse(saved))
-      }
-    } catch {}
-  }, [])
-
   // Fullscreen, Copy Figma states
   const [internalFullscreen, setInternalFullscreen] = useState<boolean>(false)
   const isFullscreen = isFullscreenProp ?? internalFullscreen
@@ -564,6 +571,84 @@ export function WorkflowSimulator({
     setToastQueue((prev: ToastItem[]) => [...prev, { id, message: msg }])
     setTimeout(() => setToastQueue((prev: ToastItem[]) => prev.filter((t) => t.id !== id)), 3200)
   }, [])
+
+  // Dummy Test State: Real Puppeteer live session mirror + cursor movement
+  const [isDummyTestRunning, setIsDummyTestRunning] = useState(false)
+  const [dummyLiveScreenshot, setDummyLiveScreenshot] = useState<string | null>(null)
+  const [dummyAction, setDummyAction] = useState<AgentAction | null>(null)
+  const [dummyBanner, setDummyBanner] = useState<string | null>(null)
+
+  const runDummyFormFillTest = useCallback(async () => {
+    if (isDummyTestRunning) return
+    setIsDummyTestRunning(true)
+    setIsLiveCanvas(true)
+    setDummyLiveScreenshot(null)
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+    const userEmail = "nareshbabu.nuli@gmail.com"
+    const userPass = "TestPass123!"
+
+    // Start background poller to stream live frames from Puppeteer
+    let isPolling = true
+    const pollFrames = async () => {
+      while (isPolling) {
+        try {
+          const res = await fetch("/api/ai-automation/dummy-test")
+          const data = await res.json()
+          if (data?.screenshot) {
+            setDummyLiveScreenshot(data.screenshot)
+          }
+          if (data?.banner) {
+            setDummyBanner(data.banner)
+          }
+          if (data?.status === "completed" || data?.status === "failed") {
+            break
+          }
+        } catch {}
+        await sleep(180)
+      }
+    }
+    const pollingPromise = pollFrames()
+
+    try {
+      setDummyBanner("⚡ Launching Real Browser Session...")
+      
+      const res = await fetch("/api/ai-automation/dummy-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUrl: currentUrl || "http://localhost:8081",
+          username: userEmail,
+          password: userPass,
+        }),
+      })
+
+      const result = await res.json()
+      if (result?.screenshot) {
+        setDummyLiveScreenshot(result.screenshot)
+      }
+      setDummyBanner("✓ Form Filled & Signed In Successfully!")
+      triggerToast("✓ Signed in with nareshbabu.nuli@gmail.com")
+      await sleep(3500)
+    } catch (err: any) {
+      setDummyBanner("Dummy test failed: " + (err?.message || "Error"))
+      await sleep(2000)
+    } finally {
+      isPolling = false
+      await pollingPromise.catch(() => {})
+      setIsDummyTestRunning(false)
+      setDummyBanner(null)
+      setDummyAction(null)
+    }
+  }, [isDummyTestRunning, currentUrl, triggerToast])
+
+  useEffect(() => {
+    const handler = () => {
+      void runDummyFormFillTest()
+    }
+    window.addEventListener("run-simulator-dummy-test", handler)
+    return () => window.removeEventListener("run-simulator-dummy-test", handler)
+  }, [runDummyFormFillTest])
 
   const toggleFullscreen = useCallback(() => {
     const next = !isFullscreen
@@ -2333,6 +2418,22 @@ export function WorkflowSimulator({
                   <span>{isLiveCanvas ? "Live App" : "Screenshot"}</span>
                 </button>
 
+                {/* Dummy Test Button: Mouse & Form Filling */}
+                <button
+                  type="button"
+                  onClick={runDummyFormFillTest}
+                  disabled={isDummyTestRunning}
+                  className={`flex px-2 py-0.5 rounded text-[10px] font-bold border items-center gap-1 transition cursor-pointer shrink-0 shadow-xs ${
+                    isDummyTestRunning
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/50 animate-pulse"
+                      : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 border-amber-400"
+                  }`}
+                  title="Run dummy test with mouse operations and form filling on login form"
+                >
+                  <Play className="w-3 h-3 fill-current" />
+                  <span>{isDummyTestRunning ? "Running Dummy…" : "Dummy Test"}</span>
+                </button>
+
                 {/* Capture button in Panel B for fullscreen mode */}
                 {isFullscreen && (
                   <button
@@ -2389,7 +2490,7 @@ export function WorkflowSimulator({
                       height: `${viewportHeight}px`,
                       maxWidth: "none",
                       maxHeight: "none",
-                      ...((isRunningTest && liveSessionScreenshotUrl) || (currentWorkflow?.designB && !isLiveCanvas)
+                      ...(((isRunningTest && liveSessionScreenshotUrl) || (isDummyTestRunning && dummyLiveScreenshot)) || (currentWorkflow?.designB && !isLiveCanvas)
                         ? {
                             opacity: 0,
                             pointerEvents: "none" as const,
@@ -2401,22 +2502,28 @@ export function WorkflowSimulator({
                     allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
                   />
 
-                  {/* Mirror the same Puppeteer-controlled page while full-app testing is active. */}
-                  {isRunningTest && liveSessionScreenshotUrl && (
+                  {/* Mirror the same Puppeteer-controlled page while full-app testing or dummy test is active. */}
+                  {((isRunningTest && liveSessionScreenshotUrl) || (isDummyTestRunning && dummyLiveScreenshot)) && (
                     <div className="absolute inset-0 z-20 w-full h-full bg-black overflow-hidden" aria-label="Live testing browser mirror">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={liveSessionScreenshotUrl}
+                        src={dummyLiveScreenshot || liveSessionScreenshotUrl}
                         alt="Live browser session"
                         className="block w-full h-full object-contain bg-black"
                       />
                       <div className="absolute left-2 top-2 rounded-md border border-emerald-400/40 bg-slate-950/85 px-2 py-1 text-[10px] font-semibold text-emerald-300 shadow-lg">
                         <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        Live testing session
+                        {isDummyTestRunning ? "Real Browser Session (Live)" : "Live testing session"}
                       </div>
                     </div>
                   )}
-                  {isRunningTest && !liveSessionScreenshotUrl && (
+                  {isDummyTestRunning && !dummyLiveScreenshot && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/90 text-xs text-slate-300">
+                      <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-ping mr-2" />
+                      Connecting to real browser login session…
+                    </div>
+                  )}
+                  {isRunningTest && !liveSessionScreenshotUrl && !isDummyTestRunning && (
                     <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/90 text-xs text-slate-300">
                       Connecting to live testing session…
                     </div>
@@ -2453,11 +2560,12 @@ export function WorkflowSimulator({
 
                   {/* Live AI Agent Visual Mouse Cursor Overlay */}
                   <LiveAgentCursorOverlay
-                    action={currentAction}
+                    action={dummyAction || currentAction}
                     workflow={currentWorkflow}
-                    isRunning={isRunningTest}
+                    isRunning={isRunningTest || isDummyTestRunning}
                     viewportWidth={viewportWidth}
                     viewportHeight={viewportHeight}
+                    bannerText={dummyBanner}
                   />
                 </DeviceFrame>
               </div>

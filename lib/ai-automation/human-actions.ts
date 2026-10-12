@@ -68,21 +68,21 @@ async function isVisibleHandle(el: ElementHandle<Element>): Promise<boolean> {
   }
 }
 
-export async function humanMouseMove(page: Page, x: number, y: number): Promise<void> {
+export async function humanMouseMove(page: Page, x: number, y: number, label?: string): Promise<void> {
   await installVisualOverlay(page).catch(() => {})
   try {
     await page.mouse.move(x, y, { steps: HUMAN_PACE.mouseSteps })
   } catch (err) {
     console.warn("[human-actions] mouse.move failed:", (err as Error)?.message)
   }
-  await animateCursorTo(page, x, y).catch(() => {})
+  await animateCursorTo(page, x, y, label).catch(() => {})
   await sleep(HUMAN_PACE.afterMoveMs)
 }
 
 export async function humanClick(
   page: Page,
   el: ElementHandle<Element>,
-  opts?: { double?: boolean },
+  opts?: { double?: boolean; label?: string },
 ): Promise<Point | null> {
   try {
     await el.evaluate((node) => {
@@ -113,7 +113,7 @@ export async function humanClick(
     return null
   }
 
-  await humanMouseMove(page, pt.x, pt.y)
+  await humanMouseMove(page, pt.x, pt.y, opts?.label || "clicking")
   await triggerClickAnimation(page, pt.x, pt.y).catch(() => {})
 
   try {
@@ -139,7 +139,7 @@ export async function humanType(
   text: string,
   opts?: { maskInBanner?: boolean; label?: string },
 ): Promise<boolean> {
-  const pt = await humanClick(page, el, { double: true })
+  const pt = await humanClick(page, el, { double: true, label: "typing" })
   if (!pt) {
     console.warn("[human-actions] humanType aborted — could not focus field")
     return false
@@ -170,6 +170,27 @@ export async function humanType(
       return false
     }
   }
+
+  // Ensure value took effect for React controlled inputs (call prototype value setter)
+  try {
+    await el.evaluate((node, val) => {
+      const inp = node as HTMLInputElement
+      if (inp && inp.value !== val) {
+        const proto = inp.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+        if (setter) {
+          setter.call(inp, val)
+        } else {
+          inp.value = val
+        }
+        inp.dispatchEvent(new Event("input", { bubbles: true }))
+        inp.dispatchEvent(new Event("change", { bubbles: true }))
+      }
+    }, text)
+  } catch {}
+
   await sleep(HUMAN_PACE.betweenFieldsMs)
   return true
 }

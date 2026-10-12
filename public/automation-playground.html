@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Automation Playground</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    pre, code, .font-mono {
+      font-family: 'Fira Code', monospace;
+    }
+    /* Simulated Cursor */
+    #virtual-cursor {
+      pointer-events: none;
+      transition: transform 0.05s linear;
+      z-index: 50;
+    }
+    /* Click Ripple Effect */
+    .click-ripple {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      margin-left: -14px;
+      margin-top: -14px;
+      border-radius: 9999px;
+      background: rgba(59, 130, 246, 0.4);
+      transform: scale(0);
+      animation: ripple-anim 0.45s ease-out forwards;
+      pointer-events: none;
+      z-index: 49;
+    }
+    @keyframes ripple-anim {
+      0% {
+        transform: scale(0.2);
+        opacity: 0.9;
+      }
+      100% {
+        transform: scale(2.4);
+        opacity: 0;
+      }
+    }
+    /* Custom Scrollbar for Terminals */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(71, 85, 105, 0.8);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(100, 116, 139, 1);
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-blue-600 selection:text-white">
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-bold text-base md:text-lg text-slate-100 flex items-center gap-2">
+            Playwright Command Sandbox
+            <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-medium border border-blue-500/20">Live Interactive</span>
+          </h1>
+          <p class="text-xs text-slate-400 hidden sm:block">Control mouse paths, keystroke intervals, and form interactions using scripted commands</p>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-2">
+        <button id="btn-export-py" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 shadow-sm">
+          <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Copy Python Script
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-3 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <!-- Left Column: Command Editor & Presets -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+      <!-- Script Control Card -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Command Script</span>
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs text-slate-400 mr-1">Presets:</span>
+            <button id="preset-full" class="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-300 transition">Auto Fill</button>
+            <button id="preset-mouse" class="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-300 transition">Mouse Orbit</button>
+            <button id="preset-reset" class="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-rose-400 transition">Clear Form</button>
+          </div>
+        </div>
+
+        <!-- Code Editor Area -->
+        <div class="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+          <div class="bg-slate-900/90 px-3 py-1.5 border-b border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+            <span>instructions.txt (JSON or line-commands)</span>
+            <span id="script-status" class="text-emerald-400 text-[10px] font-mono flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Ready
+            </span>
+          </div>
+          <textarea id="command-editor" class="w-full h-64 p-3 bg-transparent text-slate-200 font-mono text-xs leading-relaxed focus:outline-none focus:ring-0 resize-none" spellcheck="false"></textarea>
+        </div>
+
+        <!-- Controls: Speed Slider and Run Buttons -->
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <label for="exec-speed" class="text-xs text-slate-400 whitespace-nowrap">Speed:</label>
+            <input id="exec-speed" type="range" min="1" max="5" value="3" class="w-28 accent-blue-500 cursor-pointer">
+            <span id="speed-indicator" class="text-xs font-mono text-blue-400 w-8">1x</span>
+          </div>
+          
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <button id="btn-stop" disabled class="flex-1 sm:flex-none px-3.5 py-2 rounded-xl bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-semibold disabled:opacity-40 transition flex items-center justify-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+              Stop
+            </button>
+            <button id="btn-run" class="flex-1 sm:flex-none px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-blue-500/25 transition flex items-center justify-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              Execute Commands
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Execution Log Terminal -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col flex-1 min-h-[180px]">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Command Execution Log
+          </span>
+          <button id="btn-clear-logs" class="text-[11px] text-slate-500 hover:text-slate-300 transition">Clear</button>
+        </div>
+        <div id="terminal-logs" class="flex-1 overflow-y-auto max-h-48 font-mono text-[11px] leading-5 space-y-1 text-slate-300 pr-1">
+          <div class="text-slate-500">[System] Initialized automation runtime engine.</div>
+          <div class="text-slate-500">[System] Browser context attached to target viewport.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Simulated Browser Viewport -->
+    <div class="lg:col-span-7 flex flex-col">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col h-full border-t border-slate-700/80">
+        <!-- Mock Browser Window Header -->
+        <div class="bg-slate-850 px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900">
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+            <span class="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+            <span class="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+          </div>
+          
+          <div class="flex-1 max-w-md bg-slate-950 border border-slate-800 rounded-lg px-3 py-1 flex items-center gap-2 text-xs text-slate-400 font-mono shadow-inner">
+            <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span class="truncate text-slate-300">https://autodemo.local/checkout-registration</span>
+          </div>
+
+          <div class="ml-auto flex items-center gap-2 text-[11px] text-slate-400">
+            <span id="cursor-pos-badge" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-blue-400 border border-slate-700">X: 0, Y: 0</span>
+          </div>
+        </div>
+
+        <!-- Mock Webpage Body (Controlled Target) -->
+        <div id="browser-viewport" class="relative flex-1 bg-slate-950 p-6 md:p-8 overflow-hidden select-none">
+          <div id="virtual-cursor" class="absolute top-0 left-0" style="transform: translate(60px, 60px);">
+            <svg class="w-6 h-6 text-blue-400 filter drop-shadow-[0_4px_8px_rgba(37,99,235,0.6)]" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 0l16 12.279-6.951 1.17 4.325 8.817-3.596 1.734-4.35-8.879-5.428 5.163v-20.284z"/>
+            </svg>
+            <span id="cursor-tag" class="ml-4 -mt-2 inline-block px-1.5 py-0.5 rounded bg-blue-600/90 text-[10px] text-white font-mono shadow backdrop-blur opacity-0 transition-opacity">mouse</span>
+          </div>
+
+          <!-- Web Form Simulation -->
+          <div class="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative z-10">
+            <div class="border-b border-slate-800 pb-4 mb-4">
+              <h2 class="text-lg font-bold text-slate-100">Client Onboarding</h2>
+              <p class="text-xs text-slate-400">Simulate form filling via script commands</p>
+            </div>
+
+            <form id="target-form" onsubmit="event.preventDefault();" class="space-y-4">
+              <!-- Full Name Field -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1" for="input-name">Full Name</label>
+                <div class="relative">
+                  <input id="input-name" type="text" placeholder="e.g. Elena Rostova" class="w-full bg-slate-950 border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 transition focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-slate-600 text-[10px] font-mono">#input-name</div>
+                </div>
+              </div>
+
+              <!-- Email Field -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1" for="input-email">Corporate Email</label>
+                <div class="relative">
+                  <input id="input-email" type="email" placeholder="elena@company.com" class="w-full bg-slate-950 border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 transition focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-slate-600 text-[10px] font-mono">#input-email</div>
+                </div>
+              </div>
+
+              <!-- Role Selector -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1" for="select-role">Deployment Profile</label>
+                <div class="relative">
+                  <select id="select-role" class="w-full bg-slate-950 border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 transition focus:outline-none focus:ring-1 focus:ring-blue-500 appearance-none">
+                    <option value="">-- Choose Role --</option>
+                    <option value="lead-engineer">Lead Systems Engineer</option>
+                    <option value="devops">DevOps Automator</option>
+                    <option value="qa-analyst">QA Automation Architect</option>
+                  </select>
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Checkbox Options -->
+              <div class="pt-1">
+                <span class="block text-xs font-semibold text-slate-300 mb-2">Automation Preferences</span>
+                <div class="space-y-2">
+                  <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-white">
+                    <input id="check-headless" type="checkbox" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4">
+                    <span>Run in Headless Pipeline Mode</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-white">
+                    <input id="check-telemetry" type="checkbox" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500 h-4 w-4">
+                    <span>Capture Video & Trace Artifacts</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Submit Button -->
+              <div class="pt-2">
+                <button id="btn-submit" type="button" class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white text-xs font-semibold shadow-md transition flex items-center justify-center gap-2">
+                  <span>Register Application</span>
+                  <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                  </svg>
+                </button>
+              </div>
+            </form>
+
+            <!-- Success Notification inside Mock Window -->
+            <div id="mock-success-toast" class="mt-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-700/60 text-emerald-200 text-xs hidden items-center gap-2.5">
+              <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p class="font-semibold text-emerald-300">Form Submission Accepted</p>
+                <p class="text-[11px] text-emerald-400/80">Payload validated and recorded into system log.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Default Script Templates
+    const PRESETS = {
+      full: `// Move to Full Name and type text
+move #input-name
+click #input-name
+type "Ada Lovelace"
+
+// Move to Email and type
+move #input-email
+click #input-email
+type "ada@computing.org"
+
+// Select dropdown option
+move #select-role
+click #select-role
+select #select-role "qa-analyst"
+
+// Toggle preferences
+move #check-headless
+click #check-headless
+
+move #check-telemetry
+click #check-telemetry
+
+// Submit Form
+move #btn-submit
+click #btn-submit`,
+
+      mouse: `// Smooth orbital cursor motion demonstration
+move 80 80
+move 320 120
+move 400 280
+move 220 380
+move 100 260
+move 240 180`,
+
+      reset: `// Clear form inputs
+clear #input-name
+clear #input-email
+move 100 100`
+    };
+
+    // State Variables
+    let isRunning = false;
+    let abortExecution = false;
+    let currentCursorX = 60;
+    let currentCursorY = 60;
+
+    // DOM References
+    const editor = document.getElementById('command-editor');
+    const btnRun = document.getElementById('btn-run');
+    const btnStop = document.getElementById('btn-stop');
+    const btnClearLogs = document.getElementById('btn-clear-logs');
+    const btnExportPy = document.getElementById('btn-export-py');
+    const speedSlider = document.getElementById('exec-speed');
+    const speedIndicator = document.getElementById('speed-indicator');
+    const terminal = document.getElementById('terminal-logs');
+    const virtualCursor = document.getElementById('virtual-cursor');
+    const cursorTag = document.getElementById('cursor-tag');
+    const cursorPosBadge = document.getElementById('cursor-pos-badge');
+    const viewport = document.getElementById('browser-viewport');
+    const formSuccess = document.getElementById('mock-success-toast');
+
+    // Initialize Default Script
+    editor.value = PRESETS.full;
+
+    function log(message, type = 'info') {
+      const line = document.createElement('div');
+      const timeStr = new Date().toLocaleTimeString();
+      let color = 'text-slate-300';
+      
+      if (type === 'action') color = 'text-blue-400 font-medium';
+      if (type === 'success') color = 'text-emerald-400 font-medium';
+      if (type === 'warn') color = 'text-amber-400';
+      if (type === 'error') color = 'text-rose-400 font-semibold';
+
+      line.className = `${color} break-words`;
+      line.innerHTML = `<span class="text-slate-600">[${timeStr}]</span> ${escapeHtml(message)}`;
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+      );
+    }
+
+    function sleep(ms) {
+      const speedMult = parseFloat(speedSlider.value);
+      const adjusted = ms / speedMult;
+      return new Promise(resolve => setTimeout(resolve, adjusted));
+    }
+
+    // Update Speed Badge
+    speedSlider.addEventListener('input', () => {
+      speedIndicator.textContent = `${speedSlider.value}x`;
+    });
+
+    // Preset Buttons
+    document.getElementById('preset-full').addEventListener('click', () => {
+      editor.value = PRESETS.full;
+      log('Loaded "Auto Fill" automation preset');
+    });
+
+    document.getElementById('preset-mouse').addEventListener('click', () => {
+      editor.value = PRESETS.mouse;
+      log('Loaded "Mouse Orbit" automation preset');
+    });
+
+    document.getElementById('preset-reset').addEventListener('click', () => {
+      editor.value = PRESETS.reset;
+      resetMockForm();
+      log('Loaded "Clear Form" preset');
+    });
+
+    btnClearLogs.addEventListener('click', () => {
+      terminal.innerHTML = '<div class="text-slate-500">[System] Log cleared.</div>';
+    });
+
+    function updateCursorPosition(x, y) {
+      currentCursorX = x;
+      currentCursorY = y;
+      virtualCursor.style.transform = `translate(${x}px, ${y}px)`;
+      cursorPosBadge.textContent = `X: ${Math.round(x)}, Y: ${Math.round(y)}`;
+    }
+
+    async function smoothMoveTo(targetX, targetY, steps = 18) {
+      const startX = currentCursorX;
+      const startY = currentCursorY;
+      const dx = targetX - startX;
+      const dy = targetY - startY;
+
+      for (let i = 1; i <= steps; i++) {
+        if (abortExecution) break;
+        // Cubic easing for realistic hand motion
+        const progress = i / steps;
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const curX = startX + dx * ease;
+        const curY = startY + dy * ease;
+        updateCursorPosition(curX, curY);
+        await sleep(15);
+      }
+    }
+
+    function showClickEffect(x, y) {
+      const ripple = document.createElement('div');
+      ripple.className = 'click-ripple';
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+      viewport.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 500);
+    }
+
+    function getElementViewportOffset(element) {
+      const vpRect = viewport.getBoundingClientRect();
+      const elRect = element.getBoundingClientRect();
+      return {
+        x: elRect.left - vpRect.left + elRect.width / 2,
+        y: elRect.top - vpRect.top + elRect.height / 2
+      };
+    }
+
+    async function executeCommands() {
+      if (isRunning) return;
+
+      isRunning = true;
+      abortExecution = false;
+      btnRun.disabled = true;
+      btnStop.disabled = false;
+      cursorTag.style.opacity = '1';
+      document.getElementById('script-status').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span> Executing';
+
+      const rawScript = editor.value;
+      const lines = rawScript.split('\n');
+
+      log(`Beginning automation playback (${lines.length} lines)...`, 'info');
+
+      try {
+        for (let i = 0; i < lines.length; i++) {
+          if (abortExecution) {
+            log('Script playback cancelled by user.', 'warn');
+            break;
+          }
+
+          let line = lines[i].trim();
+          if (!line || line.startsWith('//') || line.startsWith('#')) {
+            continue; // Ignore blank lines & comments
+          }
+
+          log(`→ Executing: ${line}`, 'action');
+          await runSingleInstruction(line);
+          await sleep(150); // Natural delay between steps
+        }
+
+        if (!abortExecution) {
+          log('Playback completed successfully.', 'success');
+        }
+      } catch (err) {
+        log(`Error executing script: ${err.message}`, 'error');
+      } finally {
+        isRunning = false;
+        btnRun.disabled = false;
+        btnStop.disabled = true;
+        cursorTag.style.opacity = '0';
+        document.getElementById('script-status').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Ready';
+      }
+    }
+
+    async function runSingleInstruction(instruction) {
+      const parts = instruction.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+      if (!parts.length) return;
+
+      const verb = parts[0].toLowerCase();
+      const target = parts[1];
+
+      switch (verb) {
+        case 'move': {
+          if (!target) throw new Error('Missing parameter for move command');
+          
+          if (target.startsWith('#')) {
+            const el = document.querySelector(target);
+            if (!el) throw new Error(`Target selector "${target}" not found`);
+            const coords = getElementViewportOffset(el);
+            await smoothMoveTo(coords.x, coords.y);
+          } else {
+            // Coordinate based move: move <x> <y>
+            const x = parseFloat(parts[1]);
+            const y = parseFloat(parts[2]);
+            if (isNaN(x) || isNaN(y)) throw new Error('Invalid coordinates for move');
+            await smoothMoveTo(x, y);
+          }
+          break;
+        }
+
+        case 'click': {
+          if (!target) throw new Error('Missing target for click');
+          const el = document.querySelector(target);
+          if (!el) throw new Error(`Click target "${target}" not found`);
+          
+          const coords = getElementViewportOffset(el);
+          await smoothMoveTo(coords.x, coords.y, 8);
+          showClickEffect(coords.x, coords.y);
+
+          // Simulate real focus and click events
+          el.focus();
+          if (el.type === 'checkbox') {
+            el.checked = !el.checked;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          } else if (el.id === 'btn-submit') {
+            triggerFormSubmission();
+          } else {
+            el.click();
+          }
+          await sleep(100);
+          break;
+        }
+
+        case 'type': {
+          if (!parts[1]) throw new Error('Missing text string to type');
+          let text = parts[1];
+          if (text.startsWith('"') && text.endsWith('"')) {
+            text = text.substring(1, text.length - 1);
+          }
+
+          const activeEl = document.activeElement;
+          if (!activeEl || (activeEl.tagName !== 'INPUT' && activeEl.tagName !== 'TEXTAREA')) {
+            throw new Error('No input field focused. Use "click #element" prior to typing.');
+          }
+
+          for (let char of text) {
+            if (abortExecution) break;
+            activeEl.value += char;
+            activeEl.dispatchEvent(new Event('input', { bubbles: true }));
+            await sleep(55); // Typing cadence
+          }
+          break;
+        }
+
+        case 'select': {
+          const selector = parts[1];
+          let value = parts[2] || '';
+          if (value.startsWith('"') && value.endsWith('"')) {
+            value = value.substring(1, value.length - 1);
+          }
+
+          const el = document.querySelector(selector);
+          if (!el || el.tagName !== 'SELECT') throw new Error(`Invalid select element: ${selector}`);
+          
+          el.value = value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          break;
+        }
+
+        case 'clear': {
+          const el = document.querySelector(target);
+          if (el && 'value' in el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          break;
+        }
+
+        default:
+          throw new Error(`Unknown command keyword: "${verb}"`);
+      }
+    }
+
+    function resetMockForm() {
+      document.getElementById('input-name').value = '';
+      document.getElementById('input-email').value = '';
+      document.getElementById('select-role').value = '';
+      document.getElementById('check-headless').checked = false;
+      document.getElementById('check-telemetry').checked = false;
+      formSuccess.classList.add('hidden');
+      formSuccess.classList.remove('flex');
+    }
+
+    function triggerFormSubmission() {
+      const name = document.getElementById('input-name').value;
+      const email = document.getElementById('input-email').value;
+
+      formSuccess.classList.remove('hidden');
+      formSuccess.classList.add('flex');
+
+      log(`[Server] Received form payload: name="${name || 'Anonymous'}", email="${email || 'Not provided'}"`, 'success');
+    }
+
+    btnRun.addEventListener('click', executeCommands);
+    btnStop.addEventListener('click', () => {
+      abortExecution = true;
+    });
+
+    // Form button click directly by user
+    document.getElementById('btn-submit').addEventListener('click', () => {
+      triggerFormSubmission();
+    });
+
+    btnExportPy.addEventListener('click', () => {
+      const pythonScript = `from playwright.sync_api import sync_playwright
+import time
+
+def run():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=100)
+        page = browser.new_page(viewport={"width": 1280, "height": 720})
+        
+        page.goto("https://httpbin.org/forms/post")
+        
+        # Human-like mouse movements
+        page.mouse.move(100, 100)
+        page.mouse.move(400, 250, steps=25)
+        
+        # Form field typing
+        page.locator('input[name="custname"]').click()
+        page.keyboard.type("Ada Lovelace", delay=60)
+        
+        page.fill('input[name="custemail"]', "ada@computing.org")
+        page.check('input[value="medium"]')
+        
+        # Hover and click button
+        btn = page.locator("button:has-text('Submit')")
+        btn.hover()
+        btn.click()
+        
+        time.sleep(3)
+        browser.close()
+
+if __name__ == "__main__":
+    run()`;
+
+      // Copy using document.execCommand fallback for iframe compliance
+      const textarea = document.createElement('textarea');
+      textarea.value = pythonScript;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      const originalText = btnExportPy.innerHTML;
+      btnExportPy.innerHTML = `
+        <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+        Copied to Clipboard!
+      `;
+      setTimeout(() => {
+        btnExportPy.innerHTML = originalText;
+      }, 2000);
+    });
+
+    // Initialize initial cursor coordinates
+    window.addEventListener('load', () => {
+      updateCursorPosition(60, 60);
+    });
+  </script>
+</body>
+</html>

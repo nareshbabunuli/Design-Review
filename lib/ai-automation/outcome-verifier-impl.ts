@@ -519,7 +519,9 @@ export async function runWithLadder(
       } catch {}
     }
 
-    const handles = await page.$$("button, a, [role='button'], input[type='button'], input[type='submit'], [role='link'], [role='tab'], [role='menuitem']")
+    const handles = await page.$$(
+      "button, a, [role='button'], input[type='button'], input[type='submit'], [role='link'], [role='tab'], [role='menuitem'], [tabindex]:not([tabindex='-1']), [onclick], [data-testid], [aria-controls], div[class*='cursor'], div[class*='r-cursor'], div[class*='touchable'], div[class*='pressable'], span[class*='cursor']"
+    )
     let best: ElementHandle<Element> | null = null
     let bestScore = 0
 
@@ -531,9 +533,12 @@ export async function runWithLadder(
         if (r.width <= 1 || r.height <= 1 || s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return 0
         if ((e as HTMLButtonElement).disabled || e.getAttribute("aria-disabled") === "true") return 0
 
-        const norm = (v: string) => v.replace(/\\s+/g, " ").trim().toLowerCase()
+        const norm = (v: string) => v.replace(/\s+/g, " ").trim().toLowerCase()
+        const clean = (v: string) => v.replace(/[^a-z0-9]/gi, "").toLowerCase()
         const wanted = norm(name)
+        const wantedClean = clean(name)
         const text = norm(e.innerText || e.textContent || "")
+        const textClean = clean(e.innerText || e.textContent || "")
         const aria = norm(e.getAttribute("aria-label") || "")
         const title = norm(e.getAttribute("title") || "")
         const id = norm(e.id || "")
@@ -541,7 +546,9 @@ export async function runWithLadder(
 
         if (!wanted) return 0
         if (aria === wanted || text === wanted || title === wanted || id === wanted || testId === wanted) return 100
+        if (wantedClean && (wantedClean === textClean || clean(aria) === wantedClean || clean(title) === wantedClean)) return 95
         if (aria.includes(wanted) || text.includes(wanted)) return 70
+        if (wantedClean && textClean && (textClean.includes(wantedClean) || wantedClean.includes(textClean)) && Math.min(wantedClean.length, textClean.length) >= 2) return 65
         if (wanted.includes(text) && text.length > 2) return 55
         return 0
       }, handle, targetName)

@@ -9,6 +9,10 @@ import type { AutomationJob } from "./types"
 const OVERLAY_SCRIPT = `
 (function() {
   if (window.__qaOverlayInstalled) return;
+  if (!document.head || !document.documentElement) {
+    document.addEventListener('DOMContentLoaded', arguments.callee, { once: true });
+    return;
+  }
   window.__qaOverlayInstalled = true;
 
   const style = document.createElement('style');
@@ -23,28 +27,45 @@ const OVERLAY_SCRIPT = `
       pointer-events: none;
       z-index: 2147483647;
       transform: translate(-100px, -100px);
-      transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));
+      transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+      filter: drop-shadow(0 4px 10px rgba(37, 99, 235, 0.5));
     }
     #qa-visual-cursor svg {
-      width: 100%;
-      height: 100%;
+      width: 24px;
+      height: 24px;
       display: block;
+      color: #3b82f6;
+    }
+    #qa-cursor-tag {
+      margin-left: 18px;
+      margin-top: -8px;
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: rgba(37, 99, 235, 0.95);
+      color: #ffffff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+      white-space: nowrap;
+      transition: opacity 0.2s ease;
     }
     #qa-visual-ripple {
       position: fixed;
       top: 0;
       left: 0;
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      border: 3px solid #f43f5e;
-      background: rgba(244, 63, 94, 0.28);
+      width: 32px;
+      height: 32px;
+      margin-left: -16px;
+      margin-top: -16px;
+      border-radius: 9999px;
+      background: rgba(59, 130, 246, 0.45);
       pointer-events: none;
       z-index: 2147483646;
       opacity: 0;
-      transform: translate(-50%, -50%) scale(0.2);
-      transition: transform 0.35s ease-out, opacity 0.35s ease-out;
+      transform: scale(0.2);
+      transition: transform 0.45s ease-out, opacity 0.45s ease-out;
     }
     #qa-visual-banner {
       position: fixed;
@@ -120,9 +141,10 @@ const OVERLAY_SCRIPT = `
   const cursor = document.createElement('div');
   cursor.id = 'qa-visual-cursor';
   cursor.innerHTML = \`
-    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z" fill="#f43f5e" stroke="#ffffff" stroke-width="1.8"/>
+    <svg viewBox="0 0 24 24" fill="#3b82f6" stroke="#ffffff" stroke-width="1.2">
+      <path d="M4 0l16 12.279-6.951 1.17 4.325 8.817-3.596 1.734-4.35-8.879-5.428 5.163v-20.284z"/>
     </svg>
+    <span id="qa-cursor-tag">mouse</span>
   \`;
   document.documentElement.appendChild(cursor);
 
@@ -141,17 +163,21 @@ const OVERLAY_SCRIPT = `
   typingBadge.id = 'qa-visual-typing';
   document.documentElement.appendChild(typingBadge);
 
-  window.__qaMoveCursor = function(x, y) {
+  window.__qaMoveCursor = function(x, y, label) {
     cursor.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+    var tag = document.getElementById('qa-cursor-tag');
+    if (tag && label) tag.textContent = label;
   };
 
   window.__qaClickRipple = function(x, y) {
     ripple.style.transition = 'none';
-    ripple.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(0.2)';
+    ripple.style.left = x + 'px';
+    ripple.style.top = y + 'px';
+    ripple.style.transform = 'scale(0.2)';
     ripple.style.opacity = '0.9';
     void ripple.offsetWidth;
-    ripple.style.transition = 'transform 0.35s ease-out, opacity 0.35s ease-out';
-    ripple.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(1.6)';
+    ripple.style.transition = 'transform 0.45s ease-out, opacity 0.45s ease-out';
+    ripple.style.transform = 'scale(2.4)';
     ripple.style.opacity = '0';
   };
 
@@ -211,14 +237,14 @@ export async function installVisualOverlay(page: Page): Promise<void> {
 /**
  * Smoothly animates the visual cursor to coordinates (x, y)
  */
-export async function animateCursorTo(page: Page, x: number, y: number): Promise<void> {
+export async function animateCursorTo(page: Page, x: number, y: number, label?: string): Promise<void> {
   try {
-    await page.evaluate((cx, cy) => {
+    await page.evaluate((cx, cy, clabel) => {
       if (typeof (window as any).__qaMoveCursor === "function") {
-        ;(window as any).__qaMoveCursor(cx, cy)
+        ;(window as any).__qaMoveCursor(cx, cy, clabel)
       }
-    }, x, y)
-    await new Promise((r) => setTimeout(r, 120))
+    }, x, y, label)
+    await new Promise((r) => setTimeout(r, 90))
   } catch {}
 }
 
