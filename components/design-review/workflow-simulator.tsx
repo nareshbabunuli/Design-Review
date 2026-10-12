@@ -233,8 +233,18 @@ function LiveAgentCursorOverlay({
       typeof effectiveAction.coordinates.x === "number" &&
       typeof effectiveAction.coordinates.y === "number"
     ) {
-      targetX = Math.max(16, Math.min(viewportWidth - 28, Math.round(effectiveAction.coordinates.x)))
-      targetY = Math.max(16, Math.min(viewportHeight - 28, Math.round(effectiveAction.coordinates.y)))
+      // Action coordinates come from the headless browser viewport, which can
+      // differ from the device frame used to render the live mirror.
+      const sourceWidth = effectiveAction.viewportWidth || viewportWidth
+      const sourceHeight = effectiveAction.viewportHeight || viewportHeight
+      targetX = Math.max(
+        16,
+        Math.min(viewportWidth - 28, Math.round((effectiveAction.coordinates.x / sourceWidth) * viewportWidth)),
+      )
+      targetY = Math.max(
+        16,
+        Math.min(viewportHeight - 28, Math.round((effectiveAction.coordinates.y / sourceHeight) * viewportHeight)),
+      )
     } else if (effectiveAction?.type === "back") {
       targetX = 26
       targetY = 56
