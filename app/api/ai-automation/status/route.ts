@@ -254,9 +254,9 @@ export async function POST(req: NextRequest) {
       }
       if (!instruction) return NextResponse.json({ error: "Enter a plan change first." }, { status: 400 })
 
-      const removeMatch = instruction.match(/(?:remove|delete|drop)\s+(?:step\s*)#?(\\d+)/i)
-      const renameMatch = instruction.match(/(?:rename|change)\s+(?:step\s*)#?(\\d+)\s+(?:to|as)\s+(.+)/i)
-      const expectedMatch = instruction.match(/(?:change|update|set)\s+(?:the\s+)?expected(?:\s+result)?\s+(?:for\s+)?(?:step\s*)#?(\\d+)\s+(?:to|as)\s+(.+)/i)
+      const removeMatch = instruction.match(/(?:remove|delete|drop)\s+(?:step\s*)#?(\d+)/i)
+      const renameMatch = instruction.match(/(?:rename|change)\s+(?:step\s*)#?(\d+)\s+(?:to|as)\s+(.+)/i)
+      const expectedMatch = instruction.match(/(?:change|update|set)\s+(?:the\s+)?expected(?:\s+result)?\s+(?:for\s+)?(?:step\s*)#?(\d+)\s+(?:to|as)\s+(.+)/i)
       let message = ""
 
       if (removeMatch) {
