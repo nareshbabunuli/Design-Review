@@ -190,6 +190,7 @@ const DEFAULT_AI_PROJECT: Project = {
 export default function AISimulatorPage() {
   const supabase = createClient()
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<Project[]>([DEFAULT_AI_PROJECT])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(DEFAULT_AI_PROJECT.id)
@@ -1227,14 +1228,20 @@ export default function AISimulatorPage() {
     }
   }
 
-  // Auth session check
+  // Require a valid Supabase session before rendering the simulator.
   useEffect(() => {
     let mounted = true
     supabase.auth.getSession().then(({ data: { session } }: { data: { session: Session | null } }) => {
       if (!mounted) return
       if (session?.user) {
         setUser({ id: session.user.id, email: session.user.email })
+        setAuthLoading(false)
+      } else {
+        setUser(null)
+        window.location.replace("/")
       }
+    }).catch(() => {
+      if (mounted) window.location.replace("/")
     })
 
     const {
@@ -1243,8 +1250,10 @@ export default function AISimulatorPage() {
       if (!mounted) return
       if (session?.user) {
         setUser({ id: session.user.id, email: session.user.email })
+        setAuthLoading(false)
       } else {
         setUser(null)
+        window.location.replace("/")
       }
     })
 
@@ -1253,6 +1262,18 @@ export default function AISimulatorPage() {
       subscription.unsubscribe()
     }
   }, [supabase.auth])
+
+  // Never expose simulator content while authentication is unresolved or absent.
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+          <div className="h-8 w-8 rounded-full border-2 border-slate-700 border-t-indigo-500 animate-spin" />
+          <p className="text-sm">Checking authentication…</p>
+        </div>
+      </div>
+    )
+  }
 
   // Load projects from database (silent refresh prevents tearing down the screen)
   const loadWorkspace = useCallback(async (showFullLoader = false) => {
