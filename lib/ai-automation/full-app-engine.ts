@@ -1322,6 +1322,9 @@ export async function discoverAndMapApp(
     }
     screens.push(node)
     pathScreenMap.set(curPath, id)
+    // Publish the same live browser frame the crawler is currently inspecting.
+    if (shot) job.currentScreenshotUrl = shot
+    job.currentUrl = page.url()
     mergeScreenActionsIntoLedger(job, node)
     saveJob(job)
     appendLog(
@@ -1470,6 +1473,8 @@ export async function discoverAndMapApp(
                 discoveredAt: new Date().toISOString(),
               }
               screens.push(tabNode)
+              if (shot) job.currentScreenshotUrl = shot
+              job.currentUrl = page.url()
               mergeScreenActionsIntoLedger(job, tabNode)
               saveJob(job)
               addTransition(startId, tabNode.id, `Switch to "${tab.name}" Tab`, "click")
