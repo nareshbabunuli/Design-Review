@@ -1434,6 +1434,14 @@ export default function AISimulatorPage() {
     })
   }, [currentJob?.id, currentJob?.sessionEvents])
 
+  // Reflect backend browser navigation in the visible simulator as well as the map/chat.
+  useEffect(() => {
+    const sessionUrl = currentJob?.currentUrl
+    if (!sessionUrl || sessionUrl === targetUrl) return
+    setTargetUrl(sessionUrl)
+    localStorage.setItem("ai_target_app_url", sessionUrl)
+  }, [currentJob?.currentUrl, targetUrl])
+
   // Chronological action history (from first step to latest)
   const chronologicalActions = useMemo(() => {
     if (!currentJob?.actionHistory) return []
