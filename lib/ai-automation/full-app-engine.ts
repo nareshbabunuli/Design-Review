@@ -338,6 +338,36 @@ async function fillFormVisibly(
   return { attempted: tasks.length, failed }
 }
 
+async function clickFormSubmitVisibly(job: AutomationJob, page: Page, formSelector: string, targetName: string): Promise<boolean> {
+  const marker = `qa-human-submit-${job.id}-${Date.now()}`
+  const selector = await page.evaluate((sel, markerValue) => {
+    const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+    if (!form) return ""
+    const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"]), [role="button"]') as HTMLElement | null
+    if (!submit) return ""
+    submit.setAttribute("data-qa-human-submit", markerValue)
+    return `[data-qa-human-submit="${markerValue}"]`
+  }, formSelector, marker)
+  if (!selector) return false
+
+  const submit = await page.$(selector).catch(() => null)
+  const box = await submit?.boundingBox().catch(() => null)
+  await publishLiveAction(job, page, {
+    type: "click",
+    description: `Submitting ${targetName}`,
+    target: targetName,
+    selector,
+  })
+  if (box) {
+    await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    await publishLiveFrame(job, page)
+  }
+  const clicked = submit ? Boolean(await humanClick(page, submit)) : false
+  if (job.currentAction) job.currentAction.status = clicked ? "passed" : "failed"
+  await publishLiveFrame(job, page)
+  return clicked
+}
+
 export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
   cardNumber: "4242 4242 4242 4242",
   cardHolder: "Test Automation User",
@@ -2507,128 +2537,25 @@ export async function executeStructuredTestPlan(
             appendLog(job, "info", `[DATA] Reusing ${existingValuesReused} existing valid field value(s); sensitive fields are excluded.`)
           }
 
-          // Fill missing/invalid fields with synthetic data (or use explicit API payload/test card).
-          await page.evaluate(
-            (sel, testData, payload, paymentCreds) => {
-              const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-              if (!form) return
-
-              form.querySelectorAll("input, textarea, select").forEach((field: any) => {
-                const type = (field.type || "").toLowerCase()
-                const name = (field.name || field.id || "").toLowerCase()
-                const placeholder = (field.placeholder || "").toLowerCase()
-                const existingValue = typeof field.value === "string" ? field.value.trim() : ""
-                const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder)
-
-                if (payload && payload[field.name || field.id]) {
-                  field.value = payload[field.name || field.id]
-                  field.dispatchEvent(new Event("input", { bubbles: true }))
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (field.tagName.toLowerCase() === "select") {
-                  // Keep a valid, already-selected option. Otherwise move off a
-                  // placeholder option when a real option is available.
-                  if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
-                  if (field.options && field.options.length > 1) {
-                    field.selectedIndex = 1
-                  } else if (field.options && field.options.length > 0) {
-                    field.selectedIndex = 0
-                  }
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (type === "checkbox" || type === "radio") {
-                  field.checked = true
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
-
-                // Preserve existing valid non-sensitive app data instead of
-                // overwriting it with synthetic values on every submission.
-                if (!sensitive && existingValue && field.checkValidity()) return
-
-                // Payment card field auto-filling
-                if (paymentCreds) {
-                  if (
-                    /card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) ||
-                    /card\s*number/i.test(placeholder)
-                  ) {
-                    field.value = paymentCreds.cardNumber || "4242 4242 4242 4242"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/cvv|cvc|security[-_]?code/i.test(name) || /cvv|cvc|security\s*code/i.test(placeholder)) {
-                    field.value = paymentCreds.cvv || "123"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/exp|expiration|expiry/i.test(name) || /exp|mm\/yy/i.test(placeholder)) {
-                    field.value = paymentCreds.expiryDate || "12/34"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/zip|postal/i.test(name) || /zip|postal/i.test(placeholder)) {
-                    field.value = paymentCreds.zipCode || "90210"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                }
-
-                if (type === "email" || /email/i.test(name) || /email/i.test(placeholder)) {
-                  field.value = testData.email || "qa-test@example.com"
-                } else if (type === "password" || /pass/i.test(name)) {
-                  field.value = testData.password || "Password123!"
-                } else if (type === "tel" || /phone/i.test(name)) {
-                  field.value = testData.phone || "+15551234567"
-                } else if (type === "number" || /amount|count|age|qty/i.test(name)) {
-                  field.value = "10"
-                } else if (type === "url" || /url|website/i.test(name)) {
-                  field.value = "https://example.com"
-                } else {
-                  field.value = testData.fullName || "Jane Doe"
-                }
-
-                field.dispatchEvent(new Event("input", { bubbles: true }))
-                field.dispatchEvent(new Event("change", { bubbles: true }))
-              })
-            },
+          // Fill missing/invalid fields with visible mouse and keyboard input.
+          const fillResult = await fillFormVisibly(
+            job,
+            page,
             formSel,
             SYNTHETIC_TEST_DATA,
             step.fieldPayload || null,
-            activePaymentCreds || null
+            activePaymentCreds || null,
           )
-
-          if (formSel) {
-            await highlightInputTyping(
-              page,
-              `${formSel} input:not([type="hidden"])`,
-              activePaymentCreds ? "Test Card Loaded" : "Synthetic Data"
-            )
+          if (fillResult.failed > 0) {
+            appendLog(job, "warn", `[FORM] ${fillResult.failed}/${fillResult.attempted} field interaction(s) could not be completed with visible input.`)
           }
           await showActionBanner(page, `Submitting Form: "${step.targetName}"`)
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit with a real pointer click so the same action is visible in the mirror and recording.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, step.targetName)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 8000)
           const afterState = await captureState(page)
