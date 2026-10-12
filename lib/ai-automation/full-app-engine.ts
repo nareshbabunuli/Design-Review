@@ -187,7 +187,7 @@ async function findVisibleInput(
       const haystack = [label, el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("name"), el.id]
         .filter(Boolean).join(" ").toLowerCase()
       const normalizedTarget = String(targetName).toLowerCase().trim()
-      return haystack.includes(normalizedTarget) || normalizedTarget.split(/\\s+/).some((token) => token.length > 2 && haystack.includes(token))
+      return haystack.includes(normalizedTarget) || normalizedTarget.split(/\s+/).some((token) => token.length > 2 && haystack.includes(token))
     }, name).catch(() => false)
     if (matches && await candidate.boundingBox()) return candidate
   }
