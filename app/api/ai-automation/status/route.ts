@@ -125,7 +125,10 @@ export async function POST(req: NextRequest) {
       if (!text) return NextResponse.json({ error: "Missing session input" }, { status: 400 })
       emitSessionEvent(job, "user_input", {
         message: "User input received by the active testing session.",
-        payload: { inputId: `${job.sessionId || job.id}:input:${Date.now()}`, text },
+        payload: {
+          inputId: `${job.sessionId || job.id}:input:${Date.now()}`,
+          text: text.replace(/\b(password|pass|pwd|token|api[_ -]?key)\s*[:=]\s*\S+/gi, "$1: ****"),
+        },
       })
       return NextResponse.json({
         success: true,
