@@ -2843,32 +2843,52 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "select") {
-        await showActionBanner(page, `Select "${step.syntheticValue}" -> ${step.targetName}`)
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const selected = await page.evaluate((target, val) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
+        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) || await page.$("select")
+        if (!target || !(await target.boundingBox())) {
+          actionVerdict = "failed"
+          observation = `Could not locate visible dropdown "${step.targetName}".`
+        } else {
+          const selector = step.targetSelector || await target.evaluate((el) => {
+            const node = el as HTMLElement
+            if (!node.id) node.id = `qa-live-select-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => "")
+          await publishLiveAction(job, page, {
+            type: "click",
+            description: `Selecting ${step.targetName}`,
+            target: step.targetName,
+            selector,
+            value: step.syntheticValue,
+          })
+          const box = await target.boundingBox()
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
           }
-          const sel = (findEl(target.selector) || document.querySelector("select")) as HTMLSelectElement | null
-          if (!sel) return false
-          sel.focus()
-          const opt = Array.from(sel.options).find((o) => o.text.includes(val) || o.value.includes(val))
-          if (opt) {
-            sel.value = opt.value
-            sel.dispatchEvent(new Event("change", { bubbles: true }))
-            return true
+          const optionIndex = await target.evaluate((node, val) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.text.includes(val) || option.value.includes(val)), step.syntheticValue || "").catch(() => -1)
+          const focused = await humanClick(page, target)
+          let selected = false
+          if (focused && optionIndex >= 0) {
+            try {
+              await page.keyboard.press("Home")
+              for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
+              await page.keyboard.press("Enter")
+              selected = await target.evaluate((node, val) => {
+                const el = node as HTMLSelectElement
+                const option = el.options[el.selectedIndex]
+                return Boolean(option && (option.value === val || option.text.includes(val)))
+              }, step.syntheticValue || "").catch(() => false)
+            } catch {}
           }
-          return false
-        }, targetArg, step.syntheticValue || "")
-
-        await settle(page, netRecorder, 1000)
-        actionVerdict = selected ? "passed" : "failed"
-        observation = selected ? `Selected option "${step.syntheticValue}".` : `Failed to select option.`
+          actionVerdict = selected ? "passed" : "failed"
+          observation = selected ? `Selected option "${step.syntheticValue}" using keyboard input.` : `Failed to select option "${step.syntheticValue}" with visible keyboard input.`
+          if (job.currentAction) job.currentAction.status = selected ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+        }
 
         step.evidence = {
           expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: selected ? "value_changed" : "no_effect",
+          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
           verdict: actionVerdict,
           reason: observation,
           retriesUsed: 0,
@@ -2877,29 +2897,48 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "toggle") {
-        await showActionBanner(page, `Toggle "${step.targetName}"`)
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const toggled = await page.evaluate((target) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
+        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
+          (await page.$('input[type="checkbox"], [role="switch"]'))
+        if (!target || !(await target.boundingBox())) {
+          actionVerdict = "failed"
+          observation = `Could not locate visible toggle "${step.targetName}".`
+        } else {
+          const selector = step.targetSelector || await target.evaluate((el) => {
+            const node = el as HTMLElement
+            if (!node.id) node.id = `qa-live-toggle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => "")
+          const before = await target.evaluate((node) => {
+            const el = node as HTMLInputElement
+            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
+          }).catch(() => false)
+          await publishLiveAction(job, page, {
+            type: "click",
+            description: `Toggling ${step.targetName}`,
+            target: step.targetName,
+            selector,
+          })
+          const box = await target.boundingBox()
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
           }
-          const el = (findEl(target.selector) ||
-            Array.from(document.querySelectorAll('input[type="checkbox"], [role="switch"]')).find(
-              (c: any) => c.name?.includes(target.name) || c.id?.includes(target.name)
-            )) as HTMLInputElement | null
-          if (!el) return false
-          el.click()
-          return true
-        }, targetArg)
-
-        await settle(page, netRecorder, 1000)
-        actionVerdict = toggled ? "passed" : "failed"
-        observation = toggled ? `Toggled state of "${step.targetName}".` : `Could not find toggle.`
+          const clicked = Boolean(await humanClick(page, target))
+          await settle(page, netRecorder, 500)
+          const after = await target.evaluate((node) => {
+            const el = node as HTMLInputElement
+            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
+          }).catch(() => before)
+          const toggled = clicked && after !== before
+          actionVerdict = toggled ? "passed" : "failed"
+          observation = toggled ? `Toggled "${step.targetName}" with a real mouse click.` : `Could not confirm a state change for "${step.targetName}".`
+          if (job.currentAction) job.currentAction.status = toggled ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+        }
 
         step.evidence = {
           expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: toggled ? "value_changed" : "no_effect",
+          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
           verdict: actionVerdict,
           reason: observation,
           retriesUsed: 0,
