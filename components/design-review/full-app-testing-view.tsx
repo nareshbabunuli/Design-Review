@@ -782,9 +782,9 @@ export default function FullAppTestingView({
                         </h5>
 
                         <div className="space-y-1.5 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
-                          {selectedScreen.actionableElements.map((elem) => (
+                          {selectedScreen.actionableElements.map((elem, index) => (
                             <div
-                              key={elem.id}
+                              key={`${elem.id}-${index}`}
                               className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/80 flex items-center justify-between text-xs"
                             >
                               <div className="min-w-0 pr-3">
