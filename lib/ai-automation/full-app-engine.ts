@@ -4,6 +4,7 @@ import os from "os"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import {
   AutomationJob,
+  AgentAction,
   AutomationIssue,
   DiscoveredScreen,
   ActionableElement,
@@ -66,6 +67,7 @@ import {
   showActionBanner,
   SessionVideoRecorder,
 } from "./visual-recorder"
+import { humanClick, humanMouseMove, humanType, performVisibleLogin } from "./human-actions"
 import {
   createDummyFileBuffer,
   resolveUploadFolder,
@@ -107,6 +109,85 @@ async function takeSecureScreenshot(page: Page, options: { type: "jpeg"; quality
   } finally {
     await unmask()
   }
+}
+
+/** Publish the real Puppeteer action so the live mirror and cursor overlay follow the same session. */
+async function publishLiveAction(
+  job: AutomationJob,
+  page: Page,
+  details: {
+    type: AgentAction["type"]
+    description: string
+    target?: string
+    selector?: string
+    value?: string
+    sensitive?: boolean
+  },
+): Promise<void> {
+  let coordinates: { x: number; y: number } | undefined
+  if (details.selector) {
+    try {
+      const el = await page.$(details.selector)
+      const box = await el?.boundingBox()
+      if (box) coordinates = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }
+    } catch {}
+  }
+
+  job.currentAction = {
+    id: `full-app-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: details.type,
+    description: details.description,
+    thought: "Executing the planned browser action with real mouse and keyboard input.",
+    target: details.target,
+    selector: details.selector,
+    value: details.sensitive ? undefined : details.value,
+    coordinates,
+    status: "running",
+    timestamp: new Date().toISOString(),
+  }
+  job.currentUrl = page.url()
+  saveJob(job)
+}
+
+/** Refresh the image mirror from the exact browser page that is being tested. */
+async function publishLiveFrame(job: AutomationJob, page: Page): Promise<void> {
+  try {
+    const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 45 })
+    job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+    job.currentUrl = page.url()
+    saveJob(job)
+  } catch (err) {
+    appendLog(job, "warn", `Live browser frame could not be refreshed: ${(err as Error)?.message || err}`)
+  }
+}
+
+/** Find the visible field represented by a planned selector, with a semantic fallback. */
+async function findVisibleInput(
+  page: Page,
+  selector: string | undefined,
+  name: string,
+): Promise<import("puppeteer").ElementHandle<Element> | null> {
+  if (selector) {
+    try {
+      const matches = await page.$(selector)
+      for (const match of matches) {
+        if (await match.boundingBox()) return match
+      }
+    } catch {}
+  }
+
+  const candidates = await page.$("input:not([type=hidden]), textarea, [contenteditable=true]")
+  for (const candidate of candidates) {
+    const matches = await candidate.evaluate((node, targetName) => {
+      const el = node as HTMLInputElement
+      const label = el.labels ? Array.from(el.labels).map((item) => item.textContent || "").join(" ") : ""
+      const haystack = [label, el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("name"), el.id]
+        .filter(Boolean).join(" ").toLowerCase()
+      return haystack.includes(String(targetName).toLowerCase())
+    }, name).catch(() => false)
+    if (matches && await candidate.boundingBox()) return candidate
+  }
+  return null
 }
 
 export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
