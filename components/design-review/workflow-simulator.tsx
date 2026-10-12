@@ -102,6 +102,8 @@ export interface WorkflowSimulatorProps {
   onToggleHideLeftView?: (val?: boolean) => void
   currentAction?: AgentAction | null
   isRunningTest?: boolean
+  /** Latest screenshot from the controlled automation browser while a session is running. */
+  liveSessionScreenshotUrl?: string
 }
 
 interface Annotation {
@@ -375,6 +377,7 @@ export function WorkflowSimulator({
   onToggleHideLeftView,
   currentAction,
   isRunningTest = false,
+  liveSessionScreenshotUrl,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
 
@@ -2368,21 +2371,44 @@ export function WorkflowSimulator({
                     title="Live App Preview"
                     className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
                     style={
-                      !currentWorkflow?.designB || isLiveCanvas
-                        ? {}
-                        : {
-                            position: "absolute",
-                            opacity: 0,
-                            pointerEvents: "none",
-                            zIndex: -1,
-                          }
+                      isRunningTest && liveSessionScreenshotUrl
+                        ? { position: "absolute", opacity: 0, pointerEvents: "none", zIndex: -1 }
+                        : !currentWorkflow?.designB || isLiveCanvas
+                          ? {}
+                          : {
+                              position: "absolute",
+                              opacity: 0,
+                              pointerEvents: "none",
+                              zIndex: -1,
+                            }
                     }
                     sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
                     allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
                   />
 
+                  {/* Mirror the same Puppeteer-controlled page while full-app testing is active. */}
+                  {isRunningTest && liveSessionScreenshotUrl && (
+                    <div className="absolute inset-0 z-20 w-full h-full bg-black overflow-hidden" aria-label="Live testing browser mirror">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={liveSessionScreenshotUrl}
+                        alt="Live browser session"
+                        className="block w-full h-full object-fill"
+                      />
+                      <div className="absolute left-2 top-2 rounded-md border border-emerald-400/40 bg-slate-950/85 px-2 py-1 text-[10px] font-semibold text-emerald-300 shadow-lg">
+                        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Live testing session
+                      </div>
+                    </div>
+                  )}
+                  {isRunningTest && !liveSessionScreenshotUrl && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/90 text-xs text-slate-300">
+                      Connecting to live testing session…
+                    </div>
+                  )}
+
                   {/* Area Selection Box Overlay for live screen */}
-                  {(!currentWorkflow?.designB || isLiveCanvas) && (
+                  {(!isRunningTest && (!currentWorkflow?.designB || isLiveCanvas)) && (
                     <AreaSelectionOverlay
                       isActive={isAreaSelectionActive}
                       containerWidth={viewportWidth}
