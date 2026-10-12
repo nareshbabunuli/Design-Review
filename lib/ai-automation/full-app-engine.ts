@@ -154,13 +154,37 @@ async function publishLiveAction(
 
 /** Refresh the image mirror from the exact browser page that is being tested. */
 async function publishLiveFrame(job: AutomationJob, page: Page): Promise<void> {
+  let overlayState: Array<{ id: string; visibility: string; opacity: string }> = []
   try {
+    // The UI draws its own smoothly animated cursor above the screenshot mirror.
+    // Hide the recording-only DOM cursor while capturing this frame to avoid double cursors.
+    overlayState = await page.evaluate(() => {
+      const ids = ["qa-visual-cursor", "qa-visual-ripple", "qa-visual-banner", "qa-visual-typing"]
+      return ids.flatMap((id) => {
+        const el = document.getElementById(id)
+        if (!el) return []
+        const state = { id, visibility: el.style.visibility, opacity: el.style.opacity }
+        el.style.visibility = "hidden"
+        return [state]
+      })
+    }).catch(() => [])
     const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 45 })
     job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
     job.currentUrl = page.url()
     saveJob(job)
   } catch (err) {
     appendLog(job, "warn", `Live browser frame could not be refreshed: ${(err as Error)?.message || err}`)
+  } finally {
+    if (overlayState.length > 0) {
+      await page.evaluate((states) => {
+        for (const state of states) {
+          const el = document.getElementById(state.id)
+          if (!el) continue
+          el.style.visibility = state.visibility
+          el.style.opacity = state.opacity
+        }
+      }, overlayState).catch(() => {})
+    }
   }
 }
 
