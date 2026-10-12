@@ -18,9 +18,10 @@ import {
   AutomationVerdict,
   ActionLedgerEntry,
 } from "./types"
-import { saveJob, getJob, appendLog } from "./job-store"
+import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
+import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
 
 import {
   SYNTHETIC_TEST_DATA,
@@ -1815,6 +1816,107 @@ export async function executeStructuredTestPlan(
   const isPaymentPermitted = options?.allowTestPayments === true
 
   for (let i = 0; i < testPlan.steps.length; i++) {
+    // Consume navigation requests only at a safe action boundary. Completed steps,
+    // the existing plan, evidence and recording remain attached to this session.
+    const pendingNavigation = job.pendingSessionNavigation
+    if (pendingNavigation) {
+      try {
+        const requestedUrl = assertSafeTargetUrlWithDevBypass(pendingNavigation.url)
+        if (requestedUrl !== page.url()) {
+          await page.goto(requestedUrl, { waitUntil: "domcontentloaded", timeout: 20000 })
+          await waitForSpaPageReady(page, 2500)
+          const landedUrl = page.url() || requestedUrl
+          const origin = new URL(landedUrl).origin
+          const routePath = normalizePath(landedUrl, origin)
+          const inventory = await extractActionableInventory(page)
+          const screenName = deriveScreenName(routePath, inventory.heading, inventory.modalTitle)
+          let activeScreen = testPlan.screens.find((screen) =>
+            screen.path.split("#")[0] === routePath &&
+            screen.name.trim().toLowerCase() === screenName.trim().toLowerCase()
+          )
+          let createdByNavigation = false
+          if (!activeScreen) {
+            const screenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
+            activeScreen = {
+              id: screenId,
+              name: screenName,
+              url: landedUrl,
+              path: routePath,
+              actionableElements: [],
+              forms: [],
+              isNewDiscovery: true,
+              discoveredAt: new Date().toISOString(),
+            }
+            testPlan.screens.push(activeScreen)
+            testPlan.transitions.push({
+              id: `tr-${testPlan.transitions.length + 1}`,
+              fromScreenId: testPlan.steps[Math.max(0, i - 1)]?.screenId || testPlan.screens[0]?.id || screenId,
+              toScreenId: screenId,
+              action: "Navigate from shared session URL",
+              actionType: "navigation",
+            })
+            createdByNavigation = true
+          }
+
+          const knownKeys = new Set(activeScreen.actionableElements.map((element) => {
+            const key = stableActionKeyForScreen(activeScreen!, element)
+            element.actionKey = key
+            return key
+          }))
+          for (const element of inventory.actionableElements) {
+            const key = stableActionKeyForScreen(activeScreen, element)
+            element.actionKey = key
+            if (!knownKeys.has(key)) {
+              activeScreen.actionableElements.push(element)
+              knownKeys.add(key)
+            }
+          }
+          const knownForms = new Set(activeScreen.forms.map((form) => [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()))
+          for (const form of inventory.forms) {
+            const key = [form.id, form.selector || "", form.name || ""].join("|").toLowerCase()
+            if (!knownForms.has(key)) {
+              activeScreen.forms.push(form)
+              knownForms.add(key)
+            }
+          }
+          activeScreen.url = landedUrl
+          mergeScreenActionsIntoLedger(job, activeScreen)
+          linkTestPlanStepsToLedger(job, testPlan)
+          queueUnplannedLedgerActions(job, testPlan, activeScreen.id, i - 1)
+          prioritizePendingStepsForScreen(testPlan, activeScreen.id, i - 1)
+          job.targetUrl = landedUrl
+          job.currentUrl = landedUrl
+          testPlan.targetUrl = landedUrl
+          job.flowGraph = buildFigmaWorkflowMap(testPlan)
+          job.fullAppTestPlan = testPlan
+          emitSessionEvent(job, "navigation_completed", {
+            url: landedUrl,
+            message: `Browser navigated to ${landedUrl}; existing test progress and evidence were preserved.`,
+            payload: { requestId: pendingNavigation.requestId, screenId: activeScreen.id },
+          })
+          if (createdByNavigation) {
+            emitSessionEvent(job, "screen_discovered", {
+              url: landedUrl,
+              message: `Discovered screen ${activeScreen.name} from session navigation.`,
+              payload: { screenId: activeScreen.id, path: activeScreen.path },
+            })
+          }
+          saveJob(job)
+        } else {
+          emitSessionEvent(job, "navigation_completed", {
+            url: requestedUrl,
+            message: `Session is already at ${requestedUrl}; duplicate navigation ignored.`,
+            payload: { requestId: pendingNavigation.requestId, unchanged: true },
+          })
+        }
+      } catch (navigationError: any) {
+        appendLog(job, "error", `Session navigation failed: ${navigationError?.message || "Unable to navigate"}`)
+      } finally {
+        job.pendingSessionNavigation = undefined
+        saveJob(job)
+      }
+    }
+
     const step = testPlan.steps[i]
 
     // Pre-verified steps (e.g. login authentication verified during discovery)
@@ -3133,6 +3235,8 @@ export async function executeFullAppTestingJob(
     if (params.recordVideo !== false) {
       videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
       await videoRecorder.start(job)
+      job.recordingControl = "recording"
+      emitSessionEvent(job, "recording", { message: "Continuous session recording started.", payload: { state: "recording" } })
       appendLog(job, "info", "🎥 Session journey recording active with visible cursor & interaction overlay.")
     } else {
       await installVisualOverlay(page)
@@ -3241,6 +3345,8 @@ export async function executeFullAppTestingJob(
         job.recordingUrl = recUrl
         if (job.report) job.report.recordingUrl = recUrl
       }
+      job.recordingControl = "stopped"
+      emitSessionEvent(job, "recording", { message: recUrl ? "Session recording finalized." : "Session recording stopped without a published URL.", payload: { state: "stopped", recordingUrl: recUrl || undefined } })
     }
 
     // Preserve an explicit incomplete-coverage failure from the execution phase.
