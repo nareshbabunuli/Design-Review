@@ -209,10 +209,11 @@ async function fillFormVisibly(
   testData: typeof SYNTHETIC_TEST_DATA,
   payload?: Record<string, unknown> | null,
   paymentCreds?: TestPaymentCredentials | null,
+  forceInvalidFormat = false,
 ): Promise<{ attempted: number; failed: number }> {
   const markerPrefix = `qa-human-${job.id}-${Date.now()}`
   const tasks = await page.evaluate(
-    (sel, data, formPayload, payment, prefix) => {
+    (sel, data, formPayload, payment, prefix, invalidFormat) => {
       const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
       if (!form) return [] as VisibleFormFillTask[]
       const tasks: VisibleFormFillTask[] = []
@@ -237,6 +238,14 @@ async function fillFormVisibly(
         if (["submit", "button", "hidden", "file", "reset"].includes(type)) return
 
         const key = String(field.name || field.id || "")
+        if (invalidFormat && (type === "email" || /email/i.test(name + " " + placeholder + " " + label))) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Email", value: "invalid-email-format", kind: "type", sensitive })
+          return
+        }
+        if (invalidFormat && (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label))) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Phone", value: "not-a-valid-phone-number", kind: "type", sensitive })
+          return
+        }
         if (formPayload && key && Object.prototype.hasOwnProperty.call(formPayload, key)) {
           tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Form field", value: String(formPayload[key] ?? ""), kind: tag === "select" ? "select" : "type", sensitive })
           return
@@ -290,6 +299,7 @@ async function fillFormVisibly(
     payload || null,
     paymentCreds || null,
     markerPrefix,
+    forceInvalidFormat,
   )
 
   let failed = 0
@@ -2338,19 +2348,11 @@ export async function executeStructuredTestPlan(
             await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Empty Validation Check]")
           }
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit using a real mouse click so validation is visible in the session.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, `${step.targetName} (empty validation)`)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 2000)
           const calls = netRecorder.getCapturedCalls()
@@ -2401,45 +2403,25 @@ export async function executeStructuredTestPlan(
             consoleErrors: consoleRecorder.getErrors(),
           }
         } else if (formVariant === "invalid_format") {
-          // Fill valid dummy data for normal fields, invalid for email/phone
-          await page.evaluate((sel, testData) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            form.querySelectorAll("input, textarea").forEach((field: any) => {
-              const type = (field.type || "").toLowerCase()
-              const name = (field.name || field.id || "").toLowerCase()
-
-              if (type === "email" || name.includes("email")) {
-                field.value = "invalid-email-format"
-              } else if (type === "tel" || name.includes("phone")) {
-                field.value = "not-a-valid-phone-number"
-              } else if (type === "checkbox" || type === "radio") {
-                field.checked = true
-              } else if (type !== "submit" && type !== "button" && type !== "hidden") {
-                field.value = testData.fullName || "Jane Doe"
-              }
-              field.dispatchEvent(new Event("input", { bubbles: true }))
-              field.dispatchEvent(new Event("change", { bubbles: true }))
-            })
-          }, formSel, SYNTHETIC_TEST_DATA)
-
-          if (formSel) {
-            await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Invalid Format Check]")
+          // Use real keyboard input for invalid email/phone values and normal synthetic data elsewhere.
+          const invalidFill = await fillFormVisibly(
+            job,
+            page,
+            formSel,
+            SYNTHETIC_TEST_DATA,
+            null,
+            null,
+            true,
+          )
+          if (invalidFill.failed > 0) {
+            appendLog(job, "warn", `[FORM] ${invalidFill.failed}/${invalidFill.attempted} invalid-format field interaction(s) could not be completed.`)
           }
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit using a real mouse click so validation is visible in the session.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, `${step.targetName} (invalid format)`)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 2000)
           const calls = netRecorder.getCapturedCalls()
