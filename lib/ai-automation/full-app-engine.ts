@@ -354,7 +354,11 @@ async function clickFormSubmitVisibly(job: AutomationJob, page: Page, formSelect
   const selector = await page.evaluate((sel, markerValue) => {
     const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
     if (!form) return ""
-    const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"]), [role="button"]') as HTMLElement | null
+    const submit = (
+      form.querySelector('button[type="submit"], input[type="submit"]') ||
+      form.querySelector('button:not([type="button"])') ||
+      form.querySelector('[role="button"]')
+    ) as HTMLElement | null
     if (!submit) return ""
     submit.setAttribute("data-qa-human-submit", markerValue)
     return `[data-qa-human-submit="${markerValue}"]`
