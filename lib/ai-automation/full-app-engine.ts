@@ -3163,8 +3163,37 @@ export async function executeStructuredTestPlan(
           })
         }
       } else if (step.actionType === "verify") {
-        actionVerdict = "passed"
-        observation = step.actualResult || `Verified: ${step.expectedResult || step.targetName}`
+        // Chat-added verification steps must be backed by visible browser evidence;
+        // never mark a generic assertion as passed merely because it was in the plan.
+        const visibleEvidence = await page.evaluate((query) => {
+          const needle = String(query || "").trim().toLowerCase()
+          if (!needle) return false
+          const bodyText = (document.body?.innerText || "").toLowerCase()
+          if (bodyText.includes(needle)) return true
+          const candidates = Array.from(document.querySelectorAll(
+            "button, a, input, textarea, select, [role=button], [role=tab], [aria-label], [title], label"
+          ))
+          return candidates.some((node) => {
+            const element = node as HTMLElement
+            const rect = element.getBoundingClientRect()
+            const style = window.getComputedStyle(element)
+            if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return false
+            const description = [
+              element.innerText,
+              element.getAttribute("aria-label"),
+              element.getAttribute("title"),
+              element.getAttribute("placeholder"),
+              element.getAttribute("name"),
+              element.getAttribute("id"),
+              (element as HTMLInputElement).value,
+            ].filter(Boolean).join(" ").toLowerCase()
+            return description.includes(needle)
+          })
+        }, step.targetName).catch(() => false)
+        actionVerdict = visibleEvidence ? "passed" : "failed"
+        observation = visibleEvidence
+          ? `Visible UI evidence found for "${step.targetName}".`
+          : `No visible UI evidence found for "${step.targetName}". Expected: ${step.expectedResult}`
       }
 
       // 3. Record Verdict
