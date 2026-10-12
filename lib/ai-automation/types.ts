@@ -599,6 +599,8 @@ export type AutomationJob = {
   sessionEvents?: SessionEvent[]
   /** Navigation requested by the UI; consumed at a safe browser action boundary. */
   pendingSessionNavigation?: PendingSessionNavigation
+  /** Canonical live URL shared by every session view; screen URLs remain route-specific. */
+  currentUrl?: string
   targetUrl: string
   projectId: string
   status: AutomationJobStatus
