@@ -4,7 +4,7 @@ import os from "os"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import {
   AutomationJob,
-  AgentAction,
+  type AgentAction,
   AutomationIssue,
   DiscoveredScreen,
   ActionableElement,
@@ -186,7 +186,8 @@ async function findVisibleInput(
       const label = el.labels ? Array.from(el.labels).map((item) => item.textContent || "").join(" ") : ""
       const haystack = [label, el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("name"), el.id]
         .filter(Boolean).join(" ").toLowerCase()
-      return haystack.includes(String(targetName).toLowerCase())
+      const normalizedTarget = String(targetName).toLowerCase().trim()
+      return haystack.includes(normalizedTarget) || normalizedTarget.split(/\\s+/).some((token) => token.length > 2 && haystack.includes(token))
     }, name).catch(() => false)
     if (matches && await candidate.boundingBox()) return candidate
   }
@@ -2682,6 +2683,9 @@ export async function executeStructuredTestPlan(
 
           await settle(page, netRecorder, 500)
 
+          if (job.currentAction) job.currentAction.status = filled ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+
           if (filled) {
             actionVerdict = "passed"
             observation = isSensitiveField
@@ -2884,6 +2888,14 @@ export async function executeStructuredTestPlan(
 
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
+        if (job.currentAction) {
+          job.currentAction.status = ladderResult.verdict === "passed" || ladderResult.verdict === "suspected_non_functional"
+            ? "passed"
+            : ladderResult.verdict === "blocked" || ladderResult.verdict === "skipped_unsafe"
+              ? "blocked"
+              : "failed"
+        }
+        await publishLiveFrame(job, page)
 
         if (ladderResult.observedEffect === "modal_opened") {
           appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
