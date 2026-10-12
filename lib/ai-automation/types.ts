@@ -647,6 +647,8 @@ export type AutomationJob = {
   /** Systematic Full App Testing & Feature Workflow architecture */
   fullAppTestPlan?: FullAppTestPlan
   testingPhase?: "discovery" | "planning" | "files" | "executing" | "reporting"
+  /** Plan review gate: execution cannot begin until the user approves the reviewed plan. */
+  planApprovalState?: "awaiting_review" | "approved" | "rejected"
   dummyTestFiles?: Record<string, { name: string; url: string; type: string }>
   /** Feature / Workflow Testing mode fields */
   workflowName?: string
