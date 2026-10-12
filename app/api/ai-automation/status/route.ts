@@ -254,9 +254,9 @@ export async function POST(req: NextRequest) {
       }
       if (!instruction) return NextResponse.json({ error: "Enter a plan change first." }, { status: 400 })
 
-      const removeMatch = instruction.match(/(?:remove|delete|drop)\\s+(?:step\\s*)#?(\\d+)/i)
-      const renameMatch = instruction.match(/(?:rename|change)\\s+(?:step\\s*)#?(\\d+)\\s+(?:to|as)\\s+(.+)/i)
-      const expectedMatch = instruction.match(/(?:change|update|set)\\s+(?:the\\s+)?expected(?:\\s+result)?\\s+(?:for\\s+)?(?:step\\s*)#?(\\d+)\\s+(?:to|as)\\s+(.+)/i)
+      const removeMatch = instruction.match(/(?:remove|delete|drop)\s+(?:step\s*)#?(\\d+)/i)
+      const renameMatch = instruction.match(/(?:rename|change)\s+(?:step\s*)#?(\\d+)\s+(?:to|as)\s+(.+)/i)
+      const expectedMatch = instruction.match(/(?:change|update|set)\s+(?:the\s+)?expected(?:\s+result)?\s+(?:for\s+)?(?:step\s*)#?(\\d+)\s+(?:to|as)\s+(.+)/i)
       let message = ""
 
       if (removeMatch) {
@@ -277,8 +277,8 @@ export async function POST(req: NextRequest) {
         if (!step) return NextResponse.json({ error: `I couldn't find step ${number}.` }, { status: 422 })
         step.expectedResult = expectedMatch[2].trim()
         message = `Updated the expected result for step ${number}.`
-      } else if (/^(?:add|include|create)\\s+(?:a\\s+)?(?:test|step|check)\\s+(?:for|to check|that checks)\\s+/i.test(instruction)) {
-        const targetName = instruction.replace(/^(?:add|include|create)\\s+(?:a\\s+)?(?:test|step|check)\\s+(?:for|to check|that checks)\\s+/i, "").trim()
+      } else if (/^(?:add|include|create)\s+(?:a\s+)?(?:test|step|check)\s+(?:for|to check|that checks)\s+/i.test(instruction)) {
+        const targetName = instruction.replace(/^(?:add|include|create)\s+(?:a\s+)?(?:test|step|check)\s+(?:for|to check|that checks)\s+/i, "").trim()
         if (!targetName) return NextResponse.json({ error: "Describe what the new test should check." }, { status: 400 })
         const normalized = targetName.toLowerCase()
         const screen = plan.screens.find((item) =>
