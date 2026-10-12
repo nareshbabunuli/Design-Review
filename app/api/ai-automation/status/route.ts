@@ -8,6 +8,8 @@ import {
 } from "@/lib/auth/require-project-access"
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 import { setJobSecrets, clearJobSecrets } from "@/lib/ai-automation/job-secret-vault"
+import { emitSessionEvent } from "@/lib/ai-automation/job-store"
+import { assertSafeTargetUrlWithDevBypass } from "@/lib/security/url-guard"
 
 async function assertJobAccess(job: { projectId?: string; userId?: string }) {
   const user = await requireUser()
@@ -68,6 +70,68 @@ export async function POST(req: NextRequest) {
     await assertJobAccess(job as any)
     if (job.projectId) {
       await requireProjectAccess(job.projectId, "edit")
+    }
+
+    if (action === "navigate_session") {
+      if (job.status !== "running" && job.status !== "queued") {
+        return NextResponse.json({ error: "Navigation requires an active testing session" }, { status: 409 })
+      }
+      const requestedUrl = assertSafeTargetUrlWithDevBypass(String(body.url || ""))
+      const currentUrl = job.currentUrl || job.targetUrl
+      const pendingUrl = job.pendingSessionNavigation?.url
+      if (requestedUrl === currentUrl && !pendingUrl) {
+        return NextResponse.json({
+          success: true,
+          unchanged: true,
+          job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+        })
+      }
+      if (requestedUrl === pendingUrl) {
+        return NextResponse.json({
+          success: true,
+          queued: true,
+          unchanged: true,
+          job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+        })
+      }
+
+      job.sessionId ||= job.id
+      job.currentUrl = requestedUrl
+      job.targetUrl = requestedUrl
+      if (job.fullAppTestPlan) job.fullAppTestPlan.targetUrl = requestedUrl
+      job.pendingSessionNavigation = {
+        requestId: `${job.sessionId}:nav:${Date.now()}`,
+        url: requestedUrl,
+        requestedAt: new Date().toISOString(),
+      }
+      emitSessionEvent(job, "navigation_requested", {
+        url: requestedUrl,
+        message: `Navigation requested: ${requestedUrl}`,
+        payload: { requestId: job.pendingSessionNavigation.requestId },
+      })
+      return NextResponse.json({
+        success: true,
+        queued: true,
+        message: "Navigation queued for the next safe browser action boundary.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "session_input") {
+      if (job.status !== "running" && job.status !== "queued") {
+        return NextResponse.json({ error: "There is no active testing session to receive input" }, { status: 409 })
+      }
+      const text = typeof body.text === "string" ? body.text.trim() : ""
+      if (!text) return NextResponse.json({ error: "Missing session input" }, { status: 400 })
+      emitSessionEvent(job, "user_input", {
+        message: "User input received by the active testing session.",
+        payload: { inputId: `${job.sessionId || job.id}:input:${Date.now()}`, text },
+      })
+      return NextResponse.json({
+        success: true,
+        message: "Input delivered to the active session.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
     }
 
     if (
