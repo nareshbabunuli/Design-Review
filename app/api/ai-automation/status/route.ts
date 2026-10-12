@@ -311,7 +311,6 @@ export async function POST(req: NextRequest) {
       plan.coverage.totalActions = plan.steps.length
       plan.coverage.totalScreens = plan.screens.length
       job.fullAppTestPlan = plan
-      job.flowGraph = job.flowGraph // Keep the mapped graph intact; step edits do not change discovered routes.
       job.planApprovalState = "awaiting_review"
       job.currentStep = "Plan updated. Review the changes, continue chatting if needed, then approve execution."
       saveJob(job)
