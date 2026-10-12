@@ -558,8 +558,47 @@ export type FullAppTestPlan = {
   }
 }
 
+/** Events shared by the browser, map, chat, runner and recording views. */
+export type SessionEventType =
+  | "session_started"
+  | "navigation_requested"
+  | "navigation_completed"
+  | "browser_action"
+  | "screen_discovered"
+  | "test_result"
+  | "progress"
+  | "user_input"
+  | "recording"
+  | "evidence"
+  | "error"
+  | "session_stopped"
+
+export type SessionEvent = {
+  id: string
+  sequence: number
+  sessionId: string
+  type: SessionEventType
+  timestamp: string
+  url?: string
+  message?: string
+  payload?: Record<string, unknown>
+}
+
+export type PendingSessionNavigation = {
+  requestId: string
+  url: string
+  requestedAt: string
+}
+
 export type AutomationJob = {
   id: string
+  /** Stable identity for the shared live-testing session; defaults to the job ID. */
+  sessionId?: string
+  /** Monotonic cursor and bounded event history consumed by every live view. */
+  sessionEventSequence?: number
+  sessionEvents?: SessionEvent[]
+  /** Navigation requested by the UI; consumed at a safe browser action boundary. */
+  pendingSessionNavigation?: PendingSessionNavigation
   targetUrl: string
   projectId: string
   status: AutomationJobStatus
