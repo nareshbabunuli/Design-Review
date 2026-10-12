@@ -5,6 +5,7 @@ import type {
   AutomationVerdict,
   StepEvidence,
   NetworkCallEvidence,
+  ResourceIssueEvidence,
 } from "./types"
 
 /** Built-in analytics / telemetry / tracking host regexes to filter out */
@@ -221,7 +222,9 @@ export class NetworkRecorder {
   private customNoise: RegExp[]
   private inFlight = new Set<HTTPRequest>()
   private calls: NetworkCallEvidence[] = []
+  private resourceIssues: ResourceIssueEvidence[] = []
   private requestHandler: (req: HTTPRequest) => void
+  private requestFailedHandler: (req: HTTPRequest) => void
   private responseHandler: (res: HTTPResponse) => void
 
   constructor(page: Page, targetUrl: string, noiseHosts: string[] = []) {
@@ -234,17 +237,41 @@ export class NetworkRecorder {
     this.customNoise = noiseHosts.map((h) => new RegExp(`(^|\\.)${h.replace(/\./g, "\\.")}$`, "i"))
 
     this.requestHandler = (req: HTTPRequest) => {
-      const type = req.resourceType()
-      if (type !== "xhr" && type !== "fetch") return
-
       const url = req.url()
       if (this.isNoise(url)) return
 
-      this.inFlight.add(req)
+      const type = req.resourceType()
+      if (type === "xhr" || type === "fetch") this.inFlight.add(req)
+    }
+
+    this.requestFailedHandler = (req: HTTPRequest) => {
+      const url = req.url()
+      if (this.isNoise(url)) return
+      this.resourceIssues.push({
+        url,
+        resourceType: req.resourceType(),
+        method: req.method().toUpperCase(),
+        errorText: req.failure()?.errorText || "Request failed",
+        timestamp: new Date().toISOString(),
+      })
     }
 
     this.responseHandler = (res: HTTPResponse) => {
       const req = res.request()
+      const status = res.status()
+      const url = req.url()
+      const resourceType = req.resourceType()
+
+      if (!this.isNoise(url) && status >= 400) {
+        this.resourceIssues.push({
+          url,
+          resourceType,
+          method: req.method().toUpperCase(),
+          status,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
       if (!this.inFlight.has(req)) return
       this.inFlight.delete(req)
 
@@ -260,8 +287,8 @@ export class NetworkRecorder {
 
       this.calls.push({
         method,
-        url: req.url(),
-        status: res.status(),
+        url,
+        status,
         isMutating,
         headers,
         postData,
@@ -269,6 +296,7 @@ export class NetworkRecorder {
     }
 
     this.page.on("request", this.requestHandler)
+    this.page.on("requestfailed", this.requestFailedHandler)
     this.page.on("response", this.responseHandler)
   }
 
@@ -301,8 +329,13 @@ export class NetworkRecorder {
     return [...this.calls]
   }
 
+  public getResourceIssues(): ResourceIssueEvidence[] {
+    return [...this.resourceIssues]
+  }
+
   public cleanup(): void {
     this.page.off("request", this.requestHandler)
+    this.page.off("requestfailed", this.requestFailedHandler)
     this.page.off("response", this.responseHandler)
     this.inFlight.clear()
   }
@@ -772,7 +805,7 @@ export async function verifyModalCloseAndFocus(
 
 
 // Detects common empty-data states that can indicate a broken page or API response.
-export async function detectEmptyDataSurfaces(page: Page): Promise<Array<{ selector: string; text: string }>> {
+export async function detectEmptyDataSurfaces(page: Page): Promise<Array<{ selector: string; text: string; name: string; headers: string[] }>> {
   return page.evaluate(() => {
     const candidates = Array.from(document.querySelectorAll(
       'main, [role="main"], [data-testid*="list"], [data-testid*="table"], table, ul, [role="grid"], [role="list"]'
@@ -784,7 +817,10 @@ export async function detectEmptyDataSurfaces(page: Page): Promise<Array<{ selec
       const text = (el.innerText || "").trim();
       const hasItems = el.querySelectorAll('tr, [role="row"], li, [role="listitem"], [data-testid*="item"]').length > 0;
       if (!hasItems && /^(loading\.\.\.|no .* found|no data|nothing here|no results)$/i.test(text)) {
-        return [{ selector: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), text: text.slice(0, 180) }];
+        const heading = el.querySelector("caption, h1, h2, h3, [aria-label]") as HTMLElement | null;
+        const name = (el.getAttribute("aria-label") || heading?.innerText || heading?.getAttribute("aria-label") || el.id || el.getAttribute("data-testid") || el.tagName.toLowerCase()).trim();
+        const headers = Array.from(el.querySelectorAll("th, [role='columnheader']")).map((header) => (header.textContent || "").trim()).filter(Boolean);
+        return [{ selector: el.tagName.toLowerCase() + (el.id ? "#" + el.id : ""), text: text.slice(0, 180), name, headers }];
       }
       return [];
     });
@@ -807,7 +843,7 @@ export async function detectBrokenDomAssets(page: Page): Promise<Array<{ url: st
     })
     .map((node) => {
       const el = node as HTMLImageElement | HTMLSourceElement;
-      const url = el.currentSrc || el.src || el.getAttribute("src") || "";
+      const url = (el as HTMLImageElement).currentSrc || el.src || el.getAttribute("src") || "";
       const alt = (el as HTMLImageElement).alt || "";
       return {
         url,
