@@ -78,6 +78,12 @@ export async function POST(req: NextRequest) {
       }
       const requestedUrl = assertSafeTargetUrlWithDevBypass(String(body.url || ""))
       const currentUrl = job.currentUrl || job.targetUrl
+      const currentOrigin = new URL(job.targetUrl).origin
+      if (new URL(requestedUrl).origin !== currentOrigin) {
+        return NextResponse.json({
+          error: "Navigation within an active session must stay on the current target origin. Start a separate session to test another application.",
+        }, { status: 400 })
+      }
       const pendingUrl = job.pendingSessionNavigation?.url
       if (requestedUrl === currentUrl && !pendingUrl) {
         return NextResponse.json({
@@ -123,6 +129,34 @@ export async function POST(req: NextRequest) {
       }
       const text = typeof body.text === "string" ? body.text.trim() : ""
       if (!text) return NextResponse.json({ error: "Missing session input" }, { status: 400 })
+
+      // Explicit navigation requests in chat update the same session rather than
+      // creating a new automation job. Relative paths resolve against its current URL.
+      const navigationMatch = text.match(/\b(?:navigate|go|open|visit)\s+(?:to\s+)?(https?:\/\/[^\s]+|\/[^\s]*)/i)
+      if (navigationMatch) {
+        const currentUrl = job.currentUrl || job.targetUrl
+        const requestedUrl = assertSafeTargetUrlWithDevBypass(new URL(navigationMatch[1], currentUrl).href)
+        if (new URL(requestedUrl).origin !== new URL(job.targetUrl).origin) {
+          return NextResponse.json({ error: "Session navigation must stay on the current target origin." }, { status: 400 })
+        }
+        if (requestedUrl !== (job.pendingSessionNavigation?.url || job.currentUrl || job.targetUrl)) {
+          job.sessionId ||= job.id
+          job.currentUrl = requestedUrl
+          job.targetUrl = requestedUrl
+          if (job.fullAppTestPlan) job.fullAppTestPlan.targetUrl = requestedUrl
+          job.pendingSessionNavigation = {
+            requestId: `${job.sessionId}:nav:${Date.now()}`,
+            url: requestedUrl,
+            requestedAt: new Date().toISOString(),
+          }
+          emitSessionEvent(job, "navigation_requested", {
+            url: requestedUrl,
+            message: `Chat requested navigation to ${requestedUrl}`,
+            payload: { requestId: job.pendingSessionNavigation.requestId, source: "chat" },
+          })
+        }
+      }
+
       emitSessionEvent(job, "user_input", {
         message: "User input received by the active testing session.",
         payload: {
