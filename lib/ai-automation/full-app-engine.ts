@@ -3094,6 +3094,13 @@ export async function executeStructuredTestPlan(
           hasScreenshot: Boolean(step.screenshotUrl),
         },
       })
+      if (step.screenshotUrl) {
+        emitSessionEvent(job, "evidence", {
+          url: currentUrl,
+          message: `Screenshot evidence captured for ${step.id}.`,
+          payload: { stepId: step.id, screenId: resolvedScreen.id, capturedAt: step.evidenceTimestamp },
+        })
+      }
       if (queuedNow > 0 || prioritizedNow > 0) {
         appendLog(
           job,
