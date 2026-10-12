@@ -2316,6 +2316,7 @@ export default function AISimulatorPage() {
                       }}
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
+                      liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
                     />
                   </div>
                 )}
