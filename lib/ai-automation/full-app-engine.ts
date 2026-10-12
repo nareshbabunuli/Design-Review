@@ -2793,11 +2793,23 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "click") {
+        await publishLiveAction(job, page, {
+          type: "click",
+          description: `Clicking ${step.targetName}`,
+          target: step.targetName,
+          selector: step.targetSelector,
+        })
         await showActionBanner(page, `Click "${step.targetName}"`)
         if (step.targetSelector) {
-          const coords = await animateCursorToSelector(page, step.targetSelector)
-          if (coords) {
-            await triggerClickAnimation(page, coords.x, coords.y)
+          const clickTarget = await page.$(step.targetSelector).catch(() => null)
+          const box = await clickTarget?.boundingBox().catch(() => null)
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
+            await triggerClickAnimation(page, box.x + box.width / 2, box.y + box.height / 2)
+          } else {
+            const coords = await animateCursorToSelector(page, step.targetSelector)
+            if (coords) await triggerClickAnimation(page, coords.x, coords.y)
           }
         }
 
