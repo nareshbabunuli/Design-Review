@@ -2968,7 +2968,12 @@ export async function executeStructuredTestPlan(
           quality: isCritical ? 80 : 50,
         })
         step.screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+        // Keep only the latest browser frame on the job for the live simulator mirror.
+        // The full-resolution step screenshot remains attached to test evidence.
+        job.currentScreenshotUrl = step.screenshotUrl
+        job.currentUrl = page.url()
         step.evidenceTimestamp = new Date().toISOString()
+        saveJob(job)
       } catch {}
 
       // Commit the final ledger outcome only after checkpoints and the evidence
@@ -3307,6 +3312,11 @@ export async function executeFullAppTestingJob(
     await waitForSpaPageReady(page, 4500)
     if (page.url().startsWith("http://") || page.url().startsWith("https://")) {
       job.currentUrl = page.url()
+      try {
+        const preview = await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })
+        job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(preview).toString("base64")}`
+        saveJob(job)
+      } catch {}
       emitSessionEvent(job, "navigation_completed", {
         url: job.currentUrl,
         message: `Browser opened ${job.currentUrl}.`,
