@@ -176,6 +176,12 @@ export async function POST(req: NextRequest) {
       clearJobSecrets(jobId)
       const stopped = cancelJob(jobId)
       const updated = getJob(jobId)
+      if (stopped && updated) {
+        emitSessionEvent(updated, "session_stopped", {
+          message: "Testing session stopped; the active browser and recording are being finalized.",
+          payload: { reason: "user_requested" },
+        })
+      }
       return NextResponse.json({
         success: stopped,
         message: stopped ? "Job stopped" : "Job not found or already completed",
