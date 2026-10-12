@@ -1263,18 +1263,6 @@ export default function AISimulatorPage() {
     }
   }, [supabase.auth])
 
-  // Never expose simulator content while authentication is unresolved or absent.
-  if (authLoading || !user) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
-          <div className="h-8 w-8 rounded-full border-2 border-slate-700 border-t-indigo-500 animate-spin" />
-          <p className="text-sm">Checking authentication…</p>
-        </div>
-      </div>
-    )
-  }
-
   // Load projects from database (silent refresh prevents tearing down the screen)
   const loadWorkspace = useCallback(async (showFullLoader = false) => {
     if (showFullLoader && projects.length === 0) setLoading(true)
@@ -1971,6 +1959,18 @@ export default function AISimulatorPage() {
     },
     [activeProject]
   )
+
+  // Never expose simulator content while authentication is unresolved or absent.
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+          <div className="h-8 w-8 rounded-full border-2 border-slate-700 border-t-indigo-500 animate-spin" />
+          <p className="text-sm">Checking authentication…</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-900 text-slate-100">
