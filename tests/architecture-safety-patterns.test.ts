@@ -101,3 +101,28 @@ test("autonomous runner uses the same shared session recorder", () => {
   assert.match(source, /new SessionVideoRecorder\(page, job\.projectId, job\.id\)/)
   assert.match(source, /await recorder\.start\(job\)/)
 })
+
+
+test("full-app testing shares one session URL and preserves route-specific map URLs", () => {
+  const pageSource = fs.readFileSync(path.join(process.cwd(), "app/ai-simulator/page.tsx"), "utf8")
+  const statusSource = fs.readFileSync(path.join(process.cwd(), "app/api/ai-automation/status/route.ts"), "utf8")
+  const storeSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/job-store.ts"), "utf8")
+  const engineSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/full-app-engine.ts"), "utf8")
+
+  assert.match(pageSource, /action: "navigate_session"/)
+  assert.match(pageSource, /currentUrl: cleanUrl/)
+  assert.doesNotMatch(pageSource, /const updatedScreens = \(prev\.fullAppTestPlan\?\.screens \|\| \[\]\)\.map/)
+  assert.match(statusSource, /pendingSessionNavigation/)
+  assert.match(storeSource, /export function emitSessionEvent/)
+  assert.match(engineSource, /navigation_completed/)
+  assert.match(engineSource, /job\.flowGraph = buildFigmaWorkflowMap\(testPlan\)/)
+})
+
+test("chat input is delivered to an active session instead of starting a second job", () => {
+  const pageSource = fs.readFileSync(path.join(process.cwd(), "app/ai-simulator/page.tsx"), "utf8")
+  const statusSource = fs.readFileSync(path.join(process.cwd(), "app/api/ai-automation/status/route.ts"), "utf8")
+
+  assert.match(pageSource, /action: "session_input"/)
+  assert.match(statusSource, /action === "session_input"/)
+  assert.match(pageSource, /session-event-\$\{event\.id\}/)
+})
