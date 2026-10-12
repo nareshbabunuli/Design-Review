@@ -220,6 +220,7 @@ export default function AISimulatorPage() {
 
   // Active Automation Job State
   const [currentJob, setCurrentJob] = useState<AutomationJob | null>(null)
+  const lastSessionEventSequenceRef = useRef<Record<string, number>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [botError, setBotError] = useState("")
   const [copiedReport, setCopiedReport] = useState(false)
@@ -512,32 +513,40 @@ export default function AISimulatorPage() {
   }, [])
 
   const handleSimulatorUrlChange = useCallback((newUrl: string) => {
-    if (!newUrl) return
     const cleanUrl = newUrl.trim()
+    if (!cleanUrl) return
+
     setTargetUrl(cleanUrl)
     localStorage.setItem("ai_target_app_url", cleanUrl)
 
-    // Synchronize active test job & Figma-style App Map screens with the newly navigated URL
+    // Update only the shared session URL. Discovered screens keep their own routes.
     setCurrentJob((prev) => {
-      if (!prev) return null
-      const updatedScreens = (prev.fullAppTestPlan?.screens || []).map((s) => ({
-        ...s,
-        url: cleanUrl,
-      }))
-      const updatedNodes = (prev.flowGraph?.nodes || []).map((n) => ({
-        ...n,
-        url: cleanUrl,
-      }))
+      if (!prev) return prev
       return {
         ...prev,
+        currentUrl: cleanUrl,
         targetUrl: cleanUrl,
-        flowGraph: prev.flowGraph ? { ...prev.flowGraph, nodes: updatedNodes } : undefined,
         fullAppTestPlan: prev.fullAppTestPlan
-          ? { ...prev.fullAppTestPlan, targetUrl: cleanUrl, screens: updatedScreens }
-          : undefined,
+          ? { ...prev.fullAppTestPlan, targetUrl: cleanUrl }
+          : prev.fullAppTestPlan,
       }
     })
-  }, [])
+
+    const activeJob = currentJob
+    if (activeJob?.id && (activeJob.status === "running" || activeJob.status === "queued")) {
+      void fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: activeJob.id, action: "navigate_session", url: cleanUrl }),
+      })
+        .then(async (res) => {
+          const data = await res.json()
+          if (!res.ok || !data.success) throw new Error(data.error || "Failed to navigate the active testing session.")
+          if (data.job) setCurrentJob(data.job)
+        })
+        .catch((err) => setBotError(err?.message || "Failed to synchronize session navigation."))
+    }
+  }, [currentJob?.id, currentJob?.status])
 
   // Laya fast health checker (runs only if explicitly enabled)
   useEffect(() => {
@@ -653,7 +662,7 @@ export default function AISimulatorPage() {
   }, [chatHistory.length])
 
   // Send natural language testing command to browser agent
-  const handleSendChatCommand = async (cmdText?: string, imageOverride?: string, fromQueue = false) => {
+  const handleSendChatCommand = async (cmdText?: string, imageOverride?: string, fromQueue = false, targetUrlOverride?: string) => {
     const textToSend = (cmdText || chatInput).trim()
     const imageToSend = imageOverride || attachedImage
     if ((!textToSend && !imageToSend) || isSendingChat) return
@@ -748,14 +757,39 @@ export default function AISimulatorPage() {
       }
     }
 
-    // Job already running: queue the message instead of starting a parallel job
-    if (!fromQueue && (currentJob?.status === "running" || currentJob?.status === "queued")) {
-      setCommandQueue((q) => [
-        ...q,
-        { id: `q-${Date.now()}`, text: textToSend, image: imageToSend || undefined },
-      ])
+    // Deliver user input to the active session instead of creating a competing job.
+    if (!fromQueue && currentJob?.id && (currentJob.status === "running" || currentJob.status === "queued")) {
+      const timestamp = new Date().toISOString()
+      const inputId = `user-session-${currentJob.id}-${Date.now()}`
+      setChatHistory((prev) => [...prev, {
+        id: inputId,
+        sender: "user",
+        text: textToSend,
+        timestamp,
+        status: "completed",
+        imageUrl: imageToSend || undefined,
+      }])
       setChatInput("")
       setAttachedImage(null)
+      try {
+        const res = await fetch("/api/ai-automation/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: currentJob.id, action: "session_input", text: textToSend }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.success) throw new Error(data.error || "The active session could not receive this input.")
+        if (data.job) setCurrentJob(data.job)
+      } catch (err: any) {
+        setBotError(err?.message || "Failed to deliver input to the active session.")
+        setChatHistory((prev) => [...prev, {
+          id: `agent-session-input-error-${Date.now()}`,
+          sender: "agent",
+          text: err?.message || "Failed to deliver input to the active session.",
+          timestamp: new Date().toISOString(),
+          status: "error",
+        }])
+      }
       return
     }
 
@@ -793,7 +827,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify({
           command: effectiveText,
           image: imageToSend || undefined,
-          targetUrl: targetUrl.trim() || "http://localhost:3001",
+          targetUrl: (targetUrlOverride || targetUrl).trim() || "http://localhost:3001",
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           credentials:
@@ -1369,6 +1403,36 @@ export default function AISimulatorPage() {
 
     return () => clearInterval(interval)
   }, [currentJob?.id, currentJob?.status, loadWorkspace])
+
+  // The shared session event stream feeds chat progress; sequence IDs prevent
+  // duplicate messages when the status poll returns the same event history.
+  useEffect(() => {
+    const job = currentJob
+    if (!job?.sessionEvents?.length) return
+    const sessionId = job.sessionId || job.id
+    const lastSeen = lastSessionEventSequenceRef.current[sessionId] || 0
+    const freshEvents = job.sessionEvents.filter((event) => event.sequence > lastSeen)
+    if (freshEvents.length === 0) return
+    lastSessionEventSequenceRef.current[sessionId] = Math.max(...freshEvents.map((event) => event.sequence))
+
+    const visibleEvents = freshEvents.filter((event) =>
+      ["session_started", "navigation_requested", "navigation_completed", "screen_discovered", "browser_action", "test_result", "progress", "recording", "evidence", "error", "session_stopped"].includes(event.type)
+    )
+    if (visibleEvents.length === 0) return
+    setChatHistory((prev) => {
+      const seen = new Set(prev.map((message) => message.id))
+      const additions = visibleEvents
+        .filter((event) => !seen.has(`session-event-${event.id}`) && event.message)
+        .map((event) => ({
+          id: `session-event-${event.id}`,
+          sender: "agent" as const,
+          text: event.message || "",
+          timestamp: event.timestamp,
+          status: (event.type === "error" ? "error" : "completed") as AgentChatMessage["status"],
+        }))
+      return additions.length ? [...prev, ...additions] : prev
+    })
+  }, [currentJob?.id, currentJob?.sessionEvents])
 
   // Chronological action history (from first step to latest)
   const chronologicalActions = useMemo(() => {
@@ -2908,8 +2972,8 @@ export default function AISimulatorPage() {
                                       key={idx}
                                       type="button"
                                       onClick={() => {
-                                        setTargetUrl(r.url)
-                                        handleSendChatCommand(`Test and inspect route ${r.path}`)
+                                        handleSimulatorUrlChange(r.url)
+                                        handleSendChatCommand(`Test and inspect route ${r.path}`, undefined, false, r.url)
                                       }}
                                       disabled={isSendingChat}
                                       className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition cursor-pointer disabled:opacity-50"
