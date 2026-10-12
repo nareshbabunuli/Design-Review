@@ -112,6 +112,302 @@ async function takeSecureScreenshot(page: Page, options: { type: "jpeg"; quality
   }
 }
 
+/** Publish the real Puppeteer action so the live mirror and cursor overlay follow the same session. */
+async function publishLiveAction(
+  job: AutomationJob,
+  page: Page,
+  details: {
+    type: AgentAction["type"]
+    description: string
+    target?: string
+    selector?: string
+    value?: string
+    sensitive?: boolean
+  },
+): Promise<void> {
+  let coordinates: { x: number; y: number } | undefined
+  if (details.selector) {
+    try {
+      const el = await page.$(details.selector)
+      const box = await el?.boundingBox()
+      if (box) coordinates = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }
+    } catch {}
+  }
+
+  const sourceViewport = page.viewport()
+  job.currentAction = {
+    id: `full-app-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: details.type,
+    description: details.description,
+    thought: "Executing the planned browser action with real mouse and keyboard input.",
+    target: details.target,
+    selector: details.selector,
+    value: details.sensitive ? undefined : details.value,
+    coordinates,
+    viewportWidth: sourceViewport?.width,
+    viewportHeight: sourceViewport?.height,
+    status: "running",
+    timestamp: new Date().toISOString(),
+  }
+  job.currentUrl = page.url()
+  saveJob(job)
+}
+
+/** Refresh the image mirror from the exact browser page that is being tested. */
+async function publishLiveFrame(job: AutomationJob, page: Page): Promise<void> {
+  let overlayState: Array<{ id: string; visibility: string; opacity: string }> = []
+  try {
+    // The UI draws its own smoothly animated cursor above the screenshot mirror.
+    // Hide the recording-only DOM cursor while capturing this frame to avoid double cursors.
+    overlayState = await page.evaluate(() => {
+      const ids = ["qa-visual-cursor", "qa-visual-ripple", "qa-visual-banner", "qa-visual-typing"]
+      return ids.flatMap((id) => {
+        const el = document.getElementById(id)
+        if (!el) return []
+        const state = { id, visibility: el.style.visibility, opacity: el.style.opacity }
+        el.style.visibility = "hidden"
+        return [state]
+      })
+    }).catch(() => [])
+    const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 45 })
+    job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+    job.currentUrl = page.url()
+    saveJob(job)
+  } catch (err) {
+    appendLog(job, "warn", `Live browser frame could not be refreshed: ${(err as Error)?.message || err}`)
+  } finally {
+    if (overlayState.length > 0) {
+      await page.evaluate((states) => {
+        for (const state of states) {
+          const el = document.getElementById(state.id)
+          if (!el) continue
+          el.style.visibility = state.visibility
+          el.style.opacity = state.opacity
+        }
+      }, overlayState).catch(() => {})
+    }
+  }
+}
+
+/** Find the visible field represented by a planned selector, with a semantic fallback. */
+async function findVisibleInput(
+  page: Page,
+  selector: string | undefined,
+  name: string,
+): Promise<import("puppeteer").ElementHandle<Element> | null> {
+  if (selector) {
+    try {
+      const matches = await page.$$(selector)
+      for (const match of matches) {
+        if (await match.boundingBox()) return match
+      }
+    } catch {}
+  }
+
+  const candidates = await page.$$("input:not([type=hidden]), textarea, [contenteditable=true]")
+  for (const candidate of candidates) {
+    const matches = await candidate.evaluate((node, targetName) => {
+      const el = node as HTMLInputElement
+      const label = el.labels ? Array.from(el.labels).map((item) => item.textContent || "").join(" ") : ""
+      const haystack = [label, el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("name"), el.id]
+        .filter(Boolean).join(" ").toLowerCase()
+      const normalizedTarget = String(targetName).toLowerCase().trim()
+      return haystack.includes(normalizedTarget) || normalizedTarget.split(/\s+/).some((token) => token.length > 2 && haystack.includes(token))
+    }, name).catch(() => false)
+    if (matches && await candidate.boundingBox()) return candidate
+  }
+  return null
+}
+
+type VisibleFormFillTask = {
+  selector: string
+  name: string
+  value: string
+  kind: "type" | "select" | "check"
+  sensitive: boolean
+}
+
+/** Fill a real form through visible pointer and keyboard input, publishing each action to the live mirror. */
+async function fillFormVisibly(
+  job: AutomationJob,
+  page: Page,
+  formSelector: string,
+  testData: typeof SYNTHETIC_TEST_DATA,
+  payload?: Record<string, unknown> | null,
+  paymentCreds?: TestPaymentCredentials | null,
+  forceInvalidFormat = false,
+): Promise<{ attempted: number; failed: number }> {
+  const markerPrefix = `qa-human-${job.id}-${Date.now()}`
+  const tasks = await page.evaluate(
+    (sel, data, formPayload, payment, prefix, invalidFormat) => {
+      const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+      if (!form) return [] as VisibleFormFillTask[]
+      const tasks: VisibleFormFillTask[] = []
+      const radioGroups = new Set<string>()
+      const mark = (field: Element, index: number) => {
+        const marker = `${prefix}-${index}`
+        field.setAttribute("data-qa-human-fill", marker)
+        return `[data-qa-human-fill="${marker}"]`
+      }
+
+      Array.from(form.querySelectorAll("input, textarea, select")).forEach((field: any, index) => {
+        const type = String(field.type || "").toLowerCase()
+        const tag = String(field.tagName || "").toLowerCase()
+        const name = String(field.name || field.id || "").toLowerCase()
+        const placeholder = String(field.placeholder || "").toLowerCase()
+        const label = field.labels ? Array.from(field.labels).map((x: any) => x.textContent || "").join(" ").toLowerCase() : ""
+        const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder + " " + label)
+        const existingValue = typeof field.value === "string" ? field.value.trim() : ""
+        const style = window.getComputedStyle(field)
+        const rect = field.getBoundingClientRect()
+        if (field.disabled || field.readOnly || rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
+        if (["submit", "button", "hidden", "file", "reset"].includes(type)) return
+
+        const key = String(field.name || field.id || "")
+        if (invalidFormat && (type === "email" || /email/i.test(name + " " + placeholder + " " + label))) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Email", value: "invalid-email-format", kind: "type", sensitive })
+          return
+        }
+        if (invalidFormat && (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label))) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Phone", value: "not-a-valid-phone-number", kind: "type", sensitive })
+          return
+        }
+        if (formPayload && key && Object.prototype.hasOwnProperty.call(formPayload, key)) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Form field", value: String(formPayload[key] ?? ""), kind: tag === "select" ? "select" : "type", sensitive })
+          return
+        }
+
+        if (tag === "select") {
+          if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
+          const option = Array.from(field.options || []).find((item: any, optionIndex: number) => optionIndex > 0 && !item.disabled) || Array.from(field.options || []).find((item: any) => !item.disabled)
+          if (option) tasks.push({ selector: mark(field, index), name: label || key || "Dropdown", value: String((option as any).value), kind: "select", sensitive: false })
+          return
+        }
+
+        if (type === "checkbox") {
+          if (!field.checked) tasks.push({ selector: mark(field, index), name: label || key || "Checkbox", value: "true", kind: "check", sensitive: false })
+          return
+        }
+
+        if (type === "radio") {
+          const groupKey = String(field.name || `radio-${index}`)
+          if (radioGroups.has(groupKey)) return
+          radioGroups.add(groupKey)
+          const group = Array.from(form.querySelectorAll('input[type="radio"]')).filter((radio: any) => String(radio.name || "") === String(field.name || ""))
+          if (group.some((radio: any) => radio.checked)) return
+          if (group[0] === field) tasks.push({ selector: mark(field, index), name: label || key || "Radio option", value: "true", kind: "check", sensitive: false })
+          return
+        }
+
+        if (!sensitive && existingValue && field.checkValidity()) return
+
+        let value = String(data.fullName || "QA Test User")
+        if (type === "email" || /email/i.test(name + " " + placeholder + " " + label)) value = String(data.email || "qa-test@example.com")
+        else if (type === "password" || /password|passcode/i.test(name + " " + placeholder + " " + label)) value = String(data.password || "QaTest!234")
+        else if (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label)) value = String(data.phone || "+15555550123")
+        else if (type === "number" || /amount|count|age|qty/i.test(name + " " + placeholder + " " + label)) value = "10"
+        else if (type === "url" || /url|website/i.test(name + " " + placeholder + " " + label)) value = "https://example.com"
+        else if (type === "date") value = new Date().toISOString().slice(0, 10)
+
+        if (payment) {
+          if (/card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) || /card\s*number/i.test(placeholder)) value = payment.cardNumber || "4242 4242 4242 4242"
+          else if (/cvv|cvc|security[-_]?code/i.test(name) || /cvv|cvc|security\s*code/i.test(placeholder)) value = payment.cvv || "123"
+          else if (/exp|expiration|expiry/i.test(name) || /exp|mm\/yy/i.test(placeholder)) value = payment.expiryDate || "12/34"
+          else if (/zip|postal/i.test(name + " " + placeholder)) value = payment.zipCode || "90210"
+        }
+
+        tasks.push({ selector: mark(field, index), name: label || placeholder || key || `${type || tag} field`, value, kind: "type", sensitive })
+      })
+      return tasks
+    },
+    formSelector,
+    testData,
+    payload || null,
+    paymentCreds || null,
+    markerPrefix,
+    forceInvalidFormat,
+  )
+
+  let failed = 0
+  for (const task of tasks) {
+    const field = await page.$(task.selector).catch(() => null)
+    const box = await field?.boundingBox().catch(() => null)
+    if (!field || !box) {
+      failed++
+      appendLog(job, "warn", `[FORM] Could not find visible field "${task.name}" for human-paced input.`)
+      continue
+    }
+
+    await publishLiveAction(job, page, {
+      type: task.kind === "type" ? "type" : "click",
+      description: task.kind === "type" ? `Typing into ${task.name}` : `Selecting ${task.name}`,
+      target: task.name,
+      selector: task.selector,
+      value: task.value,
+      sensitive: task.sensitive,
+    })
+    await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    await publishLiveFrame(job, page)
+
+    let ok = false
+    if (task.kind === "type") {
+      ok = await humanType(page, field, task.value, { label: task.name, maskInBanner: task.sensitive })
+    } else if (task.kind === "check") {
+      ok = Boolean(await humanClick(page, field))
+    } else {
+      const optionIndex = await field.evaluate((node, value) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.value === value), task.value).catch(() => -1)
+      if (optionIndex >= 0 && await humanClick(page, field)) {
+        try {
+          await page.keyboard.press("Home")
+          for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
+          await page.keyboard.press("Enter")
+          ok = await field.evaluate((node, value) => (node as HTMLSelectElement).value === value, task.value).catch(() => false)
+        } catch {}
+      }
+    }
+
+    if (!ok) failed++
+    if (job.currentAction) job.currentAction.status = ok ? "passed" : "failed"
+    await publishLiveFrame(job, page)
+  }
+
+  return { attempted: tasks.length, failed }
+}
+
+async function clickFormSubmitVisibly(job: AutomationJob, page: Page, formSelector: string, targetName: string): Promise<boolean> {
+  const marker = `qa-human-submit-${job.id}-${Date.now()}`
+  const selector = await page.evaluate((sel, markerValue) => {
+    const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+    if (!form) return ""
+    const submit = (
+      form.querySelector('button[type="submit"], input[type="submit"]') ||
+      form.querySelector('button:not([type="button"])') ||
+      form.querySelector('[role="button"]')
+    ) as HTMLElement | null
+    if (!submit) return ""
+    submit.setAttribute("data-qa-human-submit", markerValue)
+    return `[data-qa-human-submit="${markerValue}"]`
+  }, formSelector, marker)
+  if (!selector) return false
+
+  const submit = await page.$(selector).catch(() => null)
+  const box = await submit?.boundingBox().catch(() => null)
+  await publishLiveAction(job, page, {
+    type: "click",
+    description: `Submitting ${targetName}`,
+    target: targetName,
+    selector,
+  })
+  if (box) {
+    await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    await publishLiveFrame(job, page)
+  }
+  const clicked = submit ? Boolean(await humanClick(page, submit)) : false
+  if (job.currentAction) job.currentAction.status = clicked ? "passed" : "failed"
+  await publishLiveFrame(job, page)
+  return clicked
+}
+
 export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
   cardNumber: "4242 4242 4242 4242",
   cardHolder: "Test Automation User",
@@ -636,7 +932,7 @@ async function hasLoginWall(page: Page): Promise<boolean> {
 }
 
 /** Types creds into the login form, submits, returns true when the password field is gone. */
-async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
+async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): Promise<boolean> {
   try {
     // 1. Wait briefly for inputs to mount in SPA
     await page.waitForSelector('input[type="password"]', { timeout: 8000 }).catch(() => null)
@@ -712,13 +1008,57 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
 
     // 3. Human mouse movements & keystrokes (triggers visual overlay cursor & React Native Web updates)
     if (userEl && creds.username) {
-      await humanClick(page, userEl).catch(() => {})
-      await humanType(page, userEl, creds.username, { label: "Email" }).catch(() => {})
+      const userSelector = await userEl.evaluate((el: HTMLElement) => {
+        const marker = `login-user-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "type",
+        description: "Typing login username",
+        target: "Email / username",
+        selector: userSelector,
+        value: creds.username,
+      })
+      const userBox = await userEl.boundingBox().catch(() => null)
+      if (userBox) {
+        await humanMouseMove(page, userBox.x + userBox.width / 2, userBox.y + userBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
+      await userEl.click({ count: 3 }).catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await page.keyboard.down("Control").catch(() => {})
+      await page.keyboard.press("KeyA").catch(() => {})
+      await page.keyboard.up("Control").catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await userEl.type(creds.username, { delay: 10 }).catch(() => {})
     }
 
     if (passEl && creds.password) {
-      await humanClick(page, passEl).catch(() => {})
-      await humanType(page, passEl, creds.password, { label: "Password", maskInBanner: true }).catch(() => {})
+      const passSelector = await passEl.evaluate((el: HTMLElement) => {
+        const marker = `login-password-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "type",
+        description: "Typing login password",
+        target: "Password",
+        selector: passSelector,
+        sensitive: true,
+      })
+      const passBox = await passEl.boundingBox().catch(() => null)
+      if (passBox) {
+        await humanMouseMove(page, passBox.x + passBox.width / 2, passBox.y + passBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
+      await passEl.click({ count: 3 }).catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await page.keyboard.down("Control").catch(() => {})
+      await page.keyboard.press("KeyA").catch(() => {})
+      await page.keyboard.up("Control").catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await passEl.type(creds.password, { delay: 10 }).catch(() => {})
     }
 
     // Secondary fallback sync for controlled inputs with custom property descriptors
@@ -800,20 +1140,44 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
     let clicked = false
 
     if (btnEl) {
-      await humanClick(page, btnEl).catch(() => {})
-      // Dispatch pointer events for React Native Web / Touchables responder chains
-      await page.evaluate((el: any) => {
-        if (!el) return
-        const rect = el.getBoundingClientRect()
-        const opts = { bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 }
-        el.dispatchEvent(new PointerEvent("pointerdown", opts))
-        el.dispatchEvent(new MouseEvent("mousedown", opts))
-        el.dispatchEvent(new PointerEvent("pointerup", opts))
-        el.dispatchEvent(new MouseEvent("mouseup", opts))
-        el.dispatchEvent(new MouseEvent("click", opts))
-        if (typeof el.click === "function") el.click()
-      }, btnHandle).catch(() => {})
-      clicked = true
+      const submitSelector = await btnEl.evaluate((el: HTMLElement) => {
+        const marker = `login-submit-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "click",
+        description: "Clicking login submit",
+        target: "Sign in",
+        selector: submitSelector,
+      })
+      const submitBox = await btnEl.boundingBox().catch(() => null)
+      if (submitBox) {
+        await humanMouseMove(page, submitBox.x + submitBox.width / 2, submitBox.y + submitBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
+      const humanClickPoint = await humanClick(page, btnEl).catch(() => null)
+      clicked = Boolean(humanClickPoint)
+      if (clicked) {
+        if (job.currentAction) job.currentAction.status = "passed"
+        await publishLiveFrame(job, page)
+      } else {
+        // Fallback for React Native Web / touchable controls that ignore native mouse input.
+        await page.evaluate((el: any) => {
+          if (!el) return
+          const rect = el.getBoundingClientRect()
+          const opts = { bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 }
+          el.dispatchEvent(new PointerEvent("pointerdown", opts))
+          el.dispatchEvent(new MouseEvent("mousedown", opts))
+          el.dispatchEvent(new PointerEvent("pointerup", opts))
+          el.dispatchEvent(new MouseEvent("mouseup", opts))
+          el.dispatchEvent(new MouseEvent("click", opts))
+          if (typeof el.click === "function") el.click()
+        }, btnHandle)
+
+        await btnEl.click().catch(() => {})
+        clicked = true
+      }
     }
 
     if (!clicked) {
@@ -922,7 +1286,7 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
     job.currentStep = "Logging in with provided credentials..."
     saveJob(job)
 
-    if (await attemptLogin(page, active)) {
+    if (await attemptLogin(job, page, active)) {
       if (creds) Object.assign(creds, { username: active.username, password: active.password })
       job.authState = "logged_in"
       job.authPrompt = undefined
@@ -2150,19 +2514,11 @@ export async function executeStructuredTestPlan(
             await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Empty Validation Check]")
           }
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit using a real mouse click so validation is visible in the session.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, `${step.targetName} (empty validation)`)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 2000)
           const calls = netRecorder.getCapturedCalls()
@@ -2213,45 +2569,25 @@ export async function executeStructuredTestPlan(
             consoleErrors: consoleRecorder.getErrors(),
           }
         } else if (formVariant === "invalid_format") {
-          // Fill valid dummy data for normal fields, invalid for email/phone
-          await page.evaluate((sel, testData) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            form.querySelectorAll("input, textarea").forEach((field: any) => {
-              const type = (field.type || "").toLowerCase()
-              const name = (field.name || field.id || "").toLowerCase()
-
-              if (type === "email" || name.includes("email")) {
-                field.value = "invalid-email-format"
-              } else if (type === "tel" || name.includes("phone")) {
-                field.value = "not-a-valid-phone-number"
-              } else if (type === "checkbox" || type === "radio") {
-                field.checked = true
-              } else if (type !== "submit" && type !== "button" && type !== "hidden") {
-                field.value = testData.fullName || "Jane Doe"
-              }
-              field.dispatchEvent(new Event("input", { bubbles: true }))
-              field.dispatchEvent(new Event("change", { bubbles: true }))
-            })
-          }, formSel, SYNTHETIC_TEST_DATA)
-
-          if (formSel) {
-            await highlightInputTyping(page, `${formSel} input:not([type="hidden"])`, "[Invalid Format Check]")
+          // Use real keyboard input for invalid email/phone values and normal synthetic data elsewhere.
+          const invalidFill = await fillFormVisibly(
+            job,
+            page,
+            formSel,
+            SYNTHETIC_TEST_DATA,
+            null,
+            null,
+            true,
+          )
+          if (invalidFill.failed > 0) {
+            appendLog(job, "warn", `[FORM] ${invalidFill.failed}/${invalidFill.attempted} invalid-format field interaction(s) could not be completed.`)
           }
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit using a real mouse click so validation is visible in the session.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, `${step.targetName} (invalid format)`)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 2000)
           const calls = netRecorder.getCapturedCalls()
@@ -2349,128 +2685,25 @@ export async function executeStructuredTestPlan(
             appendLog(job, "info", `[DATA] Reusing ${existingValuesReused} existing valid field value(s); sensitive fields are excluded.`)
           }
 
-          // Fill missing/invalid fields with synthetic data (or use explicit API payload/test card).
-          await page.evaluate(
-            (sel, testData, payload, paymentCreds) => {
-              const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-              if (!form) return
-
-              form.querySelectorAll("input, textarea, select").forEach((field: any) => {
-                const type = (field.type || "").toLowerCase()
-                const name = (field.name || field.id || "").toLowerCase()
-                const placeholder = (field.placeholder || "").toLowerCase()
-                const existingValue = typeof field.value === "string" ? field.value.trim() : ""
-                const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder)
-
-                if (payload && payload[field.name || field.id]) {
-                  field.value = payload[field.name || field.id]
-                  field.dispatchEvent(new Event("input", { bubbles: true }))
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (field.tagName.toLowerCase() === "select") {
-                  // Keep a valid, already-selected option. Otherwise move off a
-                  // placeholder option when a real option is available.
-                  if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
-                  if (field.options && field.options.length > 1) {
-                    field.selectedIndex = 1
-                  } else if (field.options && field.options.length > 0) {
-                    field.selectedIndex = 0
-                  }
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (type === "checkbox" || type === "radio") {
-                  field.checked = true
-                  field.dispatchEvent(new Event("change", { bubbles: true }))
-                  return
-                }
-
-                if (type === "submit" || type === "button" || type === "hidden" || type === "file") return
-
-                // Preserve existing valid non-sensitive app data instead of
-                // overwriting it with synthetic values on every submission.
-                if (!sensitive && existingValue && field.checkValidity()) return
-
-                // Payment card field auto-filling
-                if (paymentCreds) {
-                  if (
-                    /card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) ||
-                    /card\s*number/i.test(placeholder)
-                  ) {
-                    field.value = paymentCreds.cardNumber || "4242 4242 4242 4242"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/cvv|cvc|security[-_]?code/i.test(name) || /cvv|cvc|security\s*code/i.test(placeholder)) {
-                    field.value = paymentCreds.cvv || "123"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/exp|expiration|expiry/i.test(name) || /exp|mm\/yy/i.test(placeholder)) {
-                    field.value = paymentCreds.expiryDate || "12/34"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                  if (/zip|postal/i.test(name) || /zip|postal/i.test(placeholder)) {
-                    field.value = paymentCreds.zipCode || "90210"
-                    field.dispatchEvent(new Event("input", { bubbles: true }))
-                    field.dispatchEvent(new Event("change", { bubbles: true }))
-                    return
-                  }
-                }
-
-                if (type === "email" || /email/i.test(name) || /email/i.test(placeholder)) {
-                  field.value = testData.email || "qa-test@example.com"
-                } else if (type === "password" || /pass/i.test(name)) {
-                  field.value = testData.password || "Password123!"
-                } else if (type === "tel" || /phone/i.test(name)) {
-                  field.value = testData.phone || "+15551234567"
-                } else if (type === "number" || /amount|count|age|qty/i.test(name)) {
-                  field.value = "10"
-                } else if (type === "url" || /url|website/i.test(name)) {
-                  field.value = "https://example.com"
-                } else {
-                  field.value = testData.fullName || "Jane Doe"
-                }
-
-                field.dispatchEvent(new Event("input", { bubbles: true }))
-                field.dispatchEvent(new Event("change", { bubbles: true }))
-              })
-            },
+          // Fill missing/invalid fields with visible mouse and keyboard input.
+          const fillResult = await fillFormVisibly(
+            job,
+            page,
             formSel,
             SYNTHETIC_TEST_DATA,
             step.fieldPayload || null,
-            activePaymentCreds || null
+            activePaymentCreds || null,
           )
-
-          if (formSel) {
-            await highlightInputTyping(
-              page,
-              `${formSel} input:not([type="hidden"])`,
-              activePaymentCreds ? "Test Card Loaded" : "Synthetic Data"
-            )
+          if (fillResult.failed > 0) {
+            appendLog(job, "warn", `[FORM] ${fillResult.failed}/${fillResult.attempted} field interaction(s) could not be completed with visible input.`)
           }
           await showActionBanner(page, `Submitting Form: "${step.targetName}"`)
 
-          // Click submit
-          await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
-            if (!form) return
-            const submit = form.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])') as HTMLElement | null
-            if (submit) {
-              submit.click()
-            } else if (typeof form.requestSubmit === "function") {
-              form.requestSubmit()
-            } else {
-              form.submit()
-            }
-          }, formSel)
+          // Submit with a real pointer click so the same action is visible in the mirror and recording.
+          const submittedByMouse = await clickFormSubmitVisibly(job, page, formSel, step.targetName)
+          if (!submittedByMouse) {
+            appendLog(job, "warn", `[FORM] No visible submit button could be clicked for "${step.targetName}".`)
+          }
 
           const settleMs = await settle(page, netRecorder, 8000)
           const afterState = await captureState(page)
@@ -2565,95 +2798,79 @@ export async function executeStructuredTestPlan(
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
           else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
         }
-        const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|cvv|security code/i.test(step.targetName)
+        const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(step.targetName)
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
-        await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
-        if (step.targetSelector) {
-          // Keep the actual value for the browser interaction; only UI/log evidence is masked.
-          await highlightInputTyping(page, step.targetSelector, inputVal)
-        }
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const inputHandle = await page.evaluateHandle((target) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
-          }
-          const isVisible = (e: HTMLElement) => {
-            const r = e.getBoundingClientRect()
-            const s = getComputedStyle(e)
-            return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden"
-          }
-          const inputs = Array.from(document.querySelectorAll("input, textarea, [contenteditable='true'], [role='textbox']")) as HTMLElement[]
-          const clean = (s: string) => (s || "").replace(/[^a-z0-9]/gi, "").toLowerCase()
-          const wanted = clean(target.name)
-          const visibleInputs = inputs.filter(isVisible)
-          return (
-            findEl(target.selector) ||
-            visibleInputs.find((inp: any) => {
-              const p = clean(inp.placeholder)
-              const n = clean(inp.name)
-              const id = clean(inp.id)
-              const aria = clean(inp.getAttribute("aria-label"))
-              const testid = clean(inp.getAttribute("data-testid") || inp.getAttribute("data-test-id"))
-              return (
-                p === wanted || n === wanted || id === wanted || aria === wanted || testid === wanted ||
-                (wanted.length >= 3 && (p.includes(wanted) || n.includes(wanted) || aria.includes(wanted) || testid.includes(wanted)))
-              )
-            }) ||
-            (visibleInputs.length === 1 ? visibleInputs[0] : null) ||
-            null
-          )
-        }, targetArg)
+        const field = await findVisibleInput(page, step.targetSelector, step.targetName)
+        const fieldSelector = step.targetSelector || undefined
 
-        const inputEl = inputHandle.asElement() as ElementHandle<Element> | null
-        let filled = false
-        if (inputEl) {
-          filled = await humanType(page, inputEl, inputVal, {
+        if (!field) {
+          actionVerdict = "failed"
+          observation = `Could not locate a visible input field "${step.targetName}" for real keyboard typing.`
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: 0,
+            networkCalls: netRecorder.getCapturedCalls(),
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        } else {
+          const box = await field.boundingBox()
+          const resolvedSelector = await field.evaluate((el) => {
+            const node = el as HTMLElement
+            if (!node.id) node.id = `qa-live-field-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => fieldSelector || "")
+
+          await publishLiveAction(job, page, {
+            type: "type",
+            description: `Typing into ${step.targetName}`,
+            target: step.targetName,
+            selector: resolvedSelector || undefined,
+            value: inputVal,
+            sensitive: isSensitiveField,
+          })
+
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            // Publish a frame after the real pointer reaches the field so the
+            // visible browser mirror does not wait until the whole test step ends.
+            await publishLiveFrame(job, page)
+          }
+
+          await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
+          const filled = await humanType(page, field, inputVal, {
             label: step.targetName,
             maskInBanner: isSensitiveField,
           })
-          if (!filled) {
-            filled = await page.evaluate((el: any, val: string) => {
-              if (!el) return false
-              el.focus()
-              const proto = el.tagName === "TEXTAREA"
-                ? window.HTMLTextAreaElement.prototype
-                : window.HTMLInputElement.prototype
-              const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
-              if (setter) {
-                setter.call(el, val)
-              } else {
-                el.value = val
-              }
-              el.dispatchEvent(new Event("input", { bubbles: true }))
-              el.dispatchEvent(new Event("change", { bubbles: true }))
-              return true
-            }, inputHandle, inputVal).catch(() => false)
+
+          await settle(page, netRecorder, 500)
+
+          if (job.currentAction) job.currentAction.status = filled ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+
+          if (filled) {
+            actionVerdict = "passed"
+            observation = isSensitiveField
+              ? `Filled sensitive field "${step.targetName}" with native keyboard input (value redacted from evidence).`
+              : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}" using native keyboard input.`
+          } else {
+            actionVerdict = "failed"
+            observation = `Could not type into visible field "${step.targetName}".`
           }
-        }
 
-        await settle(page, netRecorder, 1500)
-        const after = await captureState(page)
-
-        if (filled) {
-          actionVerdict = "passed"
-          observation = isSensitiveField
-            ? `Filled sensitive field "${step.targetName}" (value redacted from evidence).`
-            : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}".`
-        } else {
-          actionVerdict = "failed"
-          observation = `Could not locate input field "${step.targetName}".`
-        }
-
-        step.evidence = {
-          expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: filled ? "value_changed" : "no_effect",
-          verdict: actionVerdict,
-          reason: observation,
-          retriesUsed: 0,
-          settleDurationMs: 250,
-          networkCalls: netRecorder.getCapturedCalls(),
-          consoleErrors: consoleRecorder.getErrors(),
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: filled ? "value_changed" : "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: 500,
+            networkCalls: netRecorder.getCapturedCalls(),
+            consoleErrors: consoleRecorder.getErrors(),
+          }
         }
       } else if (step.actionType === "upload") {
         const fileType = step.fileTypeRequired || "image"
@@ -2734,32 +2951,52 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "select") {
-        await showActionBanner(page, `Select "${step.syntheticValue}" -> ${step.targetName}`)
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const selected = await page.evaluate((target, val) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
+        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) || await page.$("select")
+        if (!target || !(await target.boundingBox())) {
+          actionVerdict = "failed"
+          observation = `Could not locate visible dropdown "${step.targetName}".`
+        } else {
+          const selector = step.targetSelector || await target.evaluate((el) => {
+            const node = el as HTMLElement
+            if (!node.id) node.id = `qa-live-select-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => "")
+          await publishLiveAction(job, page, {
+            type: "click",
+            description: `Selecting ${step.targetName}`,
+            target: step.targetName,
+            selector,
+            value: step.syntheticValue,
+          })
+          const box = await target.boundingBox()
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
           }
-          const sel = (findEl(target.selector) || document.querySelector("select")) as HTMLSelectElement | null
-          if (!sel) return false
-          sel.focus()
-          const opt = Array.from(sel.options).find((o) => o.text.includes(val) || o.value.includes(val))
-          if (opt) {
-            sel.value = opt.value
-            sel.dispatchEvent(new Event("change", { bubbles: true }))
-            return true
+          const optionIndex = await target.evaluate((node, val) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.text.includes(val) || option.value.includes(val)), step.syntheticValue || "").catch(() => -1)
+          const focused = await humanClick(page, target)
+          let selected = false
+          if (focused && optionIndex >= 0) {
+            try {
+              await page.keyboard.press("Home")
+              for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
+              await page.keyboard.press("Enter")
+              selected = await target.evaluate((node, val) => {
+                const el = node as HTMLSelectElement
+                const option = el.options[el.selectedIndex]
+                return Boolean(option && (option.value === val || option.text.includes(val)))
+              }, step.syntheticValue || "").catch(() => false)
+            } catch {}
           }
-          return false
-        }, targetArg, step.syntheticValue || "")
-
-        await settle(page, netRecorder, 1000)
-        actionVerdict = selected ? "passed" : "failed"
-        observation = selected ? `Selected option "${step.syntheticValue}".` : `Failed to select option.`
+          actionVerdict = selected ? "passed" : "failed"
+          observation = selected ? `Selected option "${step.syntheticValue}" using keyboard input.` : `Failed to select option "${step.syntheticValue}" with visible keyboard input.`
+          if (job.currentAction) job.currentAction.status = selected ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+        }
 
         step.evidence = {
           expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: selected ? "value_changed" : "no_effect",
+          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
           verdict: actionVerdict,
           reason: observation,
           retriesUsed: 0,
@@ -2768,29 +3005,48 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "toggle") {
-        await showActionBanner(page, `Toggle "${step.targetName}"`)
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const toggled = await page.evaluate((target) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
+        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
+          (await page.$('input[type="checkbox"], [role="switch"]'))
+        if (!target || !(await target.boundingBox())) {
+          actionVerdict = "failed"
+          observation = `Could not locate visible toggle "${step.targetName}".`
+        } else {
+          const selector = step.targetSelector || await target.evaluate((el) => {
+            const node = el as HTMLElement
+            if (!node.id) node.id = `qa-live-toggle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => "")
+          const before = await target.evaluate((node) => {
+            const el = node as HTMLInputElement
+            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
+          }).catch(() => false)
+          await publishLiveAction(job, page, {
+            type: "click",
+            description: `Toggling ${step.targetName}`,
+            target: step.targetName,
+            selector,
+          })
+          const box = await target.boundingBox()
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
           }
-          const el = (findEl(target.selector) ||
-            Array.from(document.querySelectorAll('input[type="checkbox"], [role="switch"]')).find(
-              (c: any) => c.name?.includes(target.name) || c.id?.includes(target.name)
-            )) as HTMLInputElement | null
-          if (!el) return false
-          el.click()
-          return true
-        }, targetArg)
-
-        await settle(page, netRecorder, 1000)
-        actionVerdict = toggled ? "passed" : "failed"
-        observation = toggled ? `Toggled state of "${step.targetName}".` : `Could not find toggle.`
+          const clicked = Boolean(await humanClick(page, target))
+          await settle(page, netRecorder, 500)
+          const after = await target.evaluate((node) => {
+            const el = node as HTMLInputElement
+            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
+          }).catch(() => before)
+          const toggled = clicked && after !== before
+          actionVerdict = toggled ? "passed" : "failed"
+          observation = toggled ? `Toggled "${step.targetName}" with a real mouse click.` : `Could not confirm a state change for "${step.targetName}".`
+          if (job.currentAction) job.currentAction.status = toggled ? "passed" : "failed"
+          await publishLiveFrame(job, page)
+        }
 
         step.evidence = {
           expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: toggled ? "value_changed" : "no_effect",
+          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
           verdict: actionVerdict,
           reason: observation,
           retriesUsed: 0,
@@ -2799,11 +3055,23 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "click") {
+        await publishLiveAction(job, page, {
+          type: "click",
+          description: `Clicking ${step.targetName}`,
+          target: step.targetName,
+          selector: step.targetSelector,
+        })
         await showActionBanner(page, `Click "${step.targetName}"`)
         if (step.targetSelector) {
-          const coords = await animateCursorToSelector(page, step.targetSelector)
-          if (coords) {
-            await triggerClickAnimation(page, coords.x, coords.y)
+          const clickTarget = await page.$(step.targetSelector).catch(() => null)
+          const box = await clickTarget?.boundingBox().catch(() => null)
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            await publishLiveFrame(job, page)
+            await triggerClickAnimation(page, box.x + box.width / 2, box.y + box.height / 2)
+          } else {
+            const coords = await animateCursorToSelector(page, step.targetSelector)
+            if (coords) await triggerClickAnimation(page, coords.x, coords.y)
           }
         }
 
@@ -2824,6 +3092,14 @@ export async function executeStructuredTestPlan(
 
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
+        if (job.currentAction) {
+          job.currentAction.status = ladderResult.verdict === "passed" || ladderResult.verdict === "suspected_non_functional"
+            ? "passed"
+            : ladderResult.verdict === "blocked" || ladderResult.verdict === "skipped_unsafe"
+              ? "blocked"
+              : "failed"
+        }
+        await publishLiveFrame(job, page)
 
         if (ladderResult.observedEffect === "modal_opened") {
           appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
@@ -2985,8 +3261,9 @@ export async function executeStructuredTestPlan(
           screenUrl: diagnosticUrl,
           screenTitle: step.screenName,
           type: "broken_asset",
-          severity: asset.resourceType === "media" ? "high" : "medium",
-          description: `Broken visible ${asset.resourceType} asset: ${safeAssetUrl}. ${asset.description}`,
+          // detectBrokenDomAssets currently returns image assets only.
+          severity: "medium",
+          description: `Broken visible image asset: ${safeAssetUrl}. ${asset.description}`,
           expected: "Visible images and media should load and decode successfully.",
           actual: asset.description,
           timestamp: diagnosticTimestamp,
