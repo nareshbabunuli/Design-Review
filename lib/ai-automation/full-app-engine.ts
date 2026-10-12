@@ -3286,6 +3286,14 @@ export async function executeFullAppTestingJob(
     // PHASE 1: Systematic Discovery & Mapping
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
     await waitForSpaPageReady(page, 4500)
+    if (/^https?:\\/\\//i.test(page.url())) {
+      job.currentUrl = page.url()
+      emitSessionEvent(job, "navigation_completed", {
+        url: job.currentUrl,
+        message: `Browser opened ${job.currentUrl}.`,
+        payload: { phase: "discovery" },
+      })
+    }
 
     const sessionCreds: { username?: string; password?: string } = { ...(params.credentials || {}) }
     const discovery = await discoverAndMapApp(job, page, job.targetUrl, {
@@ -3399,6 +3407,11 @@ export async function executeFullAppTestingJob(
         job.recordingUrl = recUrl
         if (job.report) job.report.recordingUrl = recUrl
       }
+      job.recordingControl = "stopped"
+      emitSessionEvent(job, "recording", {
+        message: recUrl ? "Session recording finalized after an error." : "Session recording stopped after an error.",
+        payload: { state: "stopped", recordingUrl: recUrl || undefined },
+      })
     }
     job.status = "failed"
     job.error = secretRedactor.redact(err?.message || "Execution exception occurred during Full App Testing")
