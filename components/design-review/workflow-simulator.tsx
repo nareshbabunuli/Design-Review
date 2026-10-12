@@ -2369,17 +2369,24 @@ export function WorkflowSimulator({
                     ref={iframeRef}
                     src={currentUrl}
                     title="Live App Preview"
-                    className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
-                    style={
-                      !currentWorkflow?.designB || isLiveCanvas
-                        ? {}
-                        : {
-                            position: "absolute",
+                    className="absolute inset-0 block border-0 bg-white dark:bg-[#0f1117]"
+                    style={{
+                      // Keep the browsing context at the selected device's real CSS
+                      // viewport. DeviceFrame scales the outer screen for presentation;
+                      // letting the iframe size itself to a scaled parent can make
+                      // responsive apps render as a tiny, desktop-width page.
+                      width: `${viewportWidth}px`,
+                      height: `${viewportHeight}px`,
+                      maxWidth: "none",
+                      maxHeight: "none",
+                      ...(currentWorkflow?.designB && !isLiveCanvas
+                        ? {
                             opacity: 0,
-                            pointerEvents: "none",
+                            pointerEvents: "none" as const,
                             zIndex: -1,
                           }
-                    }
+                        : {}),
+                    }}
                     sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
                     allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
                   />
