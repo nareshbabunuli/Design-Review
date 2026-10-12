@@ -3286,7 +3286,7 @@ export async function executeFullAppTestingJob(
     // PHASE 1: Systematic Discovery & Mapping
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
     await waitForSpaPageReady(page, 4500)
-    if (/^https?:\\/\\//i.test(page.url())) {
+    if (page.url().startsWith("http://") || page.url().startsWith("https://")) {
       job.currentUrl = page.url()
       emitSessionEvent(job, "navigation_completed", {
         url: job.currentUrl,
