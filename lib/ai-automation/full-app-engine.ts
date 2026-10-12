@@ -903,7 +903,7 @@ async function hasLoginWall(page: Page): Promise<boolean> {
 }
 
 /** Types creds into the login form, submits, returns true when the password field is gone. */
-async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
+async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): Promise<boolean> {
   try {
     // 1. Wait briefly for inputs to mount in SPA
     await page.waitForSelector('input[type="password"]', { timeout: 8000 }).catch(() => null)
@@ -979,6 +979,23 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
 
     // 3. Native keystrokes (triggers React / React Native Web onChangeText and state updates)
     if (userEl && creds.username) {
+      const userSelector = await userEl.evaluate((el: HTMLElement) => {
+        const marker = `login-user-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "type",
+        description: "Typing login username",
+        target: "Email / username",
+        selector: userSelector,
+        value: creds.username,
+      })
+      const userBox = await userEl.boundingBox().catch(() => null)
+      if (userBox) {
+        await humanMouseMove(page, userBox.x + userBox.width / 2, userBox.y + userBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
       await userEl.click({ count: 3 }).catch(() => {})
       await page.keyboard.press("Backspace").catch(() => {})
       await page.keyboard.down("Control").catch(() => {})
@@ -989,6 +1006,23 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
     }
 
     if (passEl && creds.password) {
+      const passSelector = await passEl.evaluate((el: HTMLElement) => {
+        const marker = `login-password-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "type",
+        description: "Typing login password",
+        target: "Password",
+        selector: passSelector,
+        sensitive: true,
+      })
+      const passBox = await passEl.boundingBox().catch(() => null)
+      if (passBox) {
+        await humanMouseMove(page, passBox.x + passBox.width / 2, passBox.y + passBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
       await passEl.click({ count: 3 }).catch(() => {})
       await page.keyboard.press("Backspace").catch(() => {})
       await page.keyboard.down("Control").catch(() => {})
@@ -1077,8 +1111,30 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
     let clicked = false
 
     if (btnEl) {
-      // Dispatch pointer events for React Native Web / Touchables responder chains
-      await page.evaluate((el: any) => {
+      const submitSelector = await btnEl.evaluate((el: HTMLElement) => {
+        const marker = `login-submit-${Date.now()}`
+        el.setAttribute("data-qa-human-login", marker)
+        return `[data-qa-human-login="${marker}"]`
+      }).catch(() => undefined)
+      await publishLiveAction(job, page, {
+        type: "click",
+        description: "Clicking login submit",
+        target: "Sign in",
+        selector: submitSelector,
+      })
+      const submitBox = await btnEl.boundingBox().catch(() => null)
+      if (submitBox) {
+        await humanMouseMove(page, submitBox.x + submitBox.width / 2, submitBox.y + submitBox.height / 2)
+        await publishLiveFrame(job, page)
+      }
+      const humanClickPoint = await humanClick(page, btnEl).catch(() => null)
+      clicked = Boolean(humanClickPoint)
+      if (clicked) {
+        if (job.currentAction) job.currentAction.status = "passed"
+        await publishLiveFrame(job, page)
+      } else {
+        // Fallback for React Native Web / touchable controls that ignore native mouse input.
+        await page.evaluate((el: any) => {
         if (!el) return
         const rect = el.getBoundingClientRect()
         const opts = { bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 }
@@ -1088,10 +1144,11 @@ async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
         el.dispatchEvent(new MouseEvent("mouseup", opts))
         el.dispatchEvent(new MouseEvent("click", opts))
         if (typeof el.click === "function") el.click()
-      }, btnHandle)
+        }, btnHandle)
 
-      await btnEl.click().catch(() => {})
-      clicked = true
+        await btnEl.click().catch(() => {})
+        clicked = true
+      }
     }
 
     if (!clicked) {
@@ -1200,7 +1257,7 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
     job.currentStep = "Logging in with provided credentials..."
     saveJob(job)
 
-    if (await attemptLogin(page, active)) {
+    if (await attemptLogin(job, page, active)) {
       if (creds) Object.assign(creds, { username: active.username, password: active.password })
       job.authState = "logged_in"
       job.authPrompt = undefined
