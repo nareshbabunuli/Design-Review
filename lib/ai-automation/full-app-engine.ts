@@ -3789,6 +3789,52 @@ export async function executeFullAppTestingJob(
       `📋 Test Plan Generated: ${testPlan.steps.length} test steps across ${testPlan.screens.length} screens (${testPlan.requiredFileTypes.length} file upload types detected).`
     )
 
+    // MAP & PLAN FIRST: keep the authenticated browser and recording alive while
+    // the user reviews the plan. Execution resumes only after explicit approval.
+    job.planApprovalState = "awaiting_review"
+    job.testingPhase = "planning"
+    job.currentStep = "Test plan ready. Review it in the Plan tab, chat to revise it, then approve execution."
+    job.progress = 35
+    saveJob(job)
+    emitSessionEvent(job, "progress", {
+      message: "Authenticated discovery is complete. The test plan is waiting for review and approval.",
+      payload: { phase: "plan_review", stepCount: testPlan.steps.length, screenCount: testPlan.screens.length },
+    })
+    appendLog(job, "info", "⏸️ Execution paused for plan review. Revise the plan in chat or approve it to continue this same browser session.")
+
+    while (job.status === "running" && job.planApprovalState !== "approved") {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const refreshed = getJob(job.id)
+      if (!refreshed) {
+        job.status = "failed"
+        job.error = "The testing job disappeared while waiting for plan approval."
+        saveJob(job)
+        return
+      }
+      if (refreshed.status !== "running") {
+        job.status = refreshed.status
+        return
+      }
+      if (refreshed.fullAppTestPlan && refreshed.fullAppTestPlan.id === testPlan.id) {
+        Object.assign(testPlan, refreshed.fullAppTestPlan)
+        job.fullAppTestPlan = testPlan
+      }
+      job.planApprovalState = refreshed.planApprovalState
+    }
+
+    if (job.status !== "running" || job.planApprovalState !== "approved") return
+    // Use the latest server-persisted revision, not the original generated plan.
+    const approvedJob = getJob(job.id)
+    if (approvedJob?.fullAppTestPlan?.id === testPlan.id) {
+      Object.assign(testPlan, approvedJob.fullAppTestPlan)
+      job.fullAppTestPlan = testPlan
+    }
+    job.testingPhase = "files"
+    job.currentStep = "Plan approved. Preparing test assets before execution..."
+    job.progress = 38
+    saveJob(job)
+    appendLog(job, "success", `✅ Plan approved with ${testPlan.steps.length} steps. Continuing in the existing browser session.`)
+
     // Resolve upload folder from params / user prompt mention / project conventions
     const uploadFilesDir = resolveUploadFolder({
       uploadFilesDir: params.uploadFilesDir || job.uploadFilesDir,
