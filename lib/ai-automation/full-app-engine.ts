@@ -172,14 +172,14 @@ async function findVisibleInput(
 ): Promise<import("puppeteer").ElementHandle<Element> | null> {
   if (selector) {
     try {
-      const matches = await page.$(selector)
+      const matches = await page.$$(selector)
       for (const match of matches) {
         if (await match.boundingBox()) return match
       }
     } catch {}
   }
 
-  const candidates = await page.$("input:not([type=hidden]), textarea, [contenteditable=true]")
+  const candidates = await page.$$("input:not([type=hidden]), textarea, [contenteditable=true]")
   for (const candidate of candidates) {
     const matches = await candidate.evaluate((node, targetName) => {
       const el = node as HTMLInputElement
