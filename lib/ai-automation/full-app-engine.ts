@@ -67,7 +67,7 @@ import {
   showActionBanner,
   SessionVideoRecorder,
 } from "./visual-recorder"
-import { humanClick, humanMouseMove, humanType, performVisibleLogin } from "./human-actions"
+import { humanClick, humanMouseMove, humanType } from "./human-actions"
 import {
   createDummyFileBuffer,
   resolveUploadFolder,
@@ -2577,55 +2577,77 @@ export async function executeStructuredTestPlan(
         }
         const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|cvv|security code/i.test(step.targetName)
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
-        await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
-        if (step.targetSelector) {
-          // Keep the actual value for the browser interaction; only UI/log evidence is masked.
-          await highlightInputTyping(page, step.targetSelector, inputVal)
-        }
-        const targetArg = { selector: step.targetSelector, name: step.targetName }
-        const before = await captureState(page)
-        const filled = await page.evaluate((target, val) => {
-          const findEl = (sel?: string) => {
-            if (!sel || !sel.trim()) return null
-            try { return document.querySelector(sel) } catch { return null }
-          }
-          const el = (findEl(target.selector) ||
-            Array.from(document.querySelectorAll("input, textarea")).find(
-              (inp: any) =>
-                (inp.placeholder && inp.placeholder.toLowerCase().includes(target.name.toLowerCase())) ||
-                (inp.name && inp.name.toLowerCase().includes(target.name.toLowerCase())) ||
-                (inp.id && inp.id.toLowerCase().includes(target.name.toLowerCase()))
-            )) as HTMLInputElement | null
-          if (!el) return false
-          el.focus()
-          el.value = val
-          el.dispatchEvent(new Event("input", { bubbles: true }))
-          el.dispatchEvent(new Event("change", { bubbles: true }))
-          return true
-        }, targetArg, inputVal)
+        const field = await findVisibleInput(page, step.targetSelector, step.targetName)
+        const fieldSelector = step.targetSelector || undefined
 
-        await settle(page, netRecorder, 1500)
-        const after = await captureState(page)
-
-        if (filled) {
-          actionVerdict = "passed"
-          observation = isSensitiveField
-            ? `Filled sensitive field "${step.targetName}" (value redacted from evidence).`
-            : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}".`
-        } else {
+        if (!field) {
           actionVerdict = "failed"
-          observation = `Could not locate input field "${step.targetName}".`
-        }
+          observation = `Could not locate a visible input field "${step.targetName}" for real keyboard typing.`
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: 0,
+            networkCalls: netRecorder.getCapturedCalls(),
+            consoleErrors: consoleRecorder.getErrors(),
+          }
+        } else {
+          const box = await field.boundingBox()
+          const resolvedSelector = fieldSelector || await field.evaluate((el) => {
+            const node = el as HTMLElement
+            if (node.id) return `#${CSS.escape(node.id)}`
+            if ((node as HTMLInputElement).name) return `[name="${CSS.escape((node as HTMLInputElement).name)}"]`
+            return ""
+          }).catch(() => "")
 
-        step.evidence = {
-          expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: filled ? "value_changed" : "no_effect",
-          verdict: actionVerdict,
-          reason: observation,
-          retriesUsed: 0,
-          settleDurationMs: 250,
-          networkCalls: netRecorder.getCapturedCalls(),
-          consoleErrors: consoleRecorder.getErrors(),
+          await publishLiveAction(job, page, {
+            type: "type",
+            description: `Typing into ${step.targetName}`,
+            target: step.targetName,
+            selector: resolvedSelector || undefined,
+            value: inputVal,
+            sensitive: isSensitiveField,
+          })
+
+          if (box) {
+            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            // Publish a frame after the real pointer reaches the field so the
+            // visible browser mirror does not wait until the whole test step ends.
+            await publishLiveFrame(job, page)
+          }
+
+          await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
+          const before = await captureState(page)
+          const filled = await humanType(page, field, inputVal, {
+            label: step.targetName,
+            maskInBanner: isSensitiveField,
+          })
+
+          await settle(page, netRecorder, 500)
+          const after = await captureState(page)
+
+          if (filled) {
+            actionVerdict = "passed"
+            observation = isSensitiveField
+              ? `Filled sensitive field "${step.targetName}" with native keyboard input (value redacted from evidence).`
+              : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}" using native keyboard input.`
+          } else {
+            actionVerdict = "failed"
+            observation = `Could not type into visible field "${step.targetName}".`
+          }
+
+          step.evidence = {
+            expectedEffects: ["value_changed", "content_changed"],
+            observedEffect: filled ? "value_changed" : "no_effect",
+            verdict: actionVerdict,
+            reason: observation,
+            retriesUsed: 0,
+            settleDurationMs: 500,
+            networkCalls: netRecorder.getCapturedCalls(),
+            consoleErrors: consoleRecorder.getErrors(),
+          }
         }
       } else if (step.actionType === "upload") {
         const fileType = step.fileTypeRequired || "image"
