@@ -133,6 +133,7 @@ async function publishLiveAction(
     } catch {}
   }
 
+  const sourceViewport = page.viewport()
   job.currentAction = {
     id: `full-app-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     type: details.type,
@@ -142,6 +143,8 @@ async function publishLiveAction(
     selector: details.selector,
     value: details.sensitive ? undefined : details.value,
     coordinates,
+    viewportWidth: sourceViewport?.width,
+    viewportHeight: sourceViewport?.height,
     status: "running",
     timestamp: new Date().toISOString(),
   }
@@ -2595,12 +2598,11 @@ export async function executeStructuredTestPlan(
           }
         } else {
           const box = await field.boundingBox()
-          const resolvedSelector = fieldSelector || await field.evaluate((el) => {
+          const resolvedSelector = await field.evaluate((el) => {
             const node = el as HTMLElement
-            if (node.id) return `#${CSS.escape(node.id)}`
-            if ((node as HTMLInputElement).name) return `[name="${CSS.escape((node as HTMLInputElement).name)}"]`
-            return ""
-          }).catch(() => "")
+            if (!node.id) node.id = `qa-live-field-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            return `#${CSS.escape(node.id)}`
+          }).catch(() => fieldSelector || "")
 
           await publishLiveAction(job, page, {
             type: "type",
@@ -2619,14 +2621,12 @@ export async function executeStructuredTestPlan(
           }
 
           await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
-          const before = await captureState(page)
           const filled = await humanType(page, field, inputVal, {
             label: step.targetName,
             maskInBanner: isSensitiveField,
           })
 
           await settle(page, netRecorder, 500)
-          const after = await captureState(page)
 
           if (filled) {
             actionVerdict = "passed"
