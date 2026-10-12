@@ -1910,6 +1910,18 @@ export async function executeStructuredTestPlan(
           })
         }
       } catch (navigationError: any) {
+        const actualUrl = page.url()
+        if (actualUrl.startsWith("http://") || actualUrl.startsWith("https://")) {
+          job.currentUrl = actualUrl
+          job.targetUrl = actualUrl
+          testPlan.targetUrl = actualUrl
+          job.fullAppTestPlan = testPlan
+        }
+        emitSessionEvent(job, "error", {
+          url: job.currentUrl || page.url(),
+          message: `Session navigation failed: ${navigationError?.message || "Unable to navigate"}`,
+          payload: { requestId: pendingNavigation.requestId, requestedUrl: pendingNavigation.url },
+        })
         appendLog(job, "error", `Session navigation failed: ${navigationError?.message || "Unable to navigate"}`)
       } finally {
         job.pendingSessionNavigation = undefined
