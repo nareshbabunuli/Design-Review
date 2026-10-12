@@ -229,6 +229,103 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    if (action === "approve_test_plan") {
+      if (job.status !== "running" || !job.fullAppTestPlan || job.planApprovalState !== "awaiting_review") {
+        return NextResponse.json({ error: "This job is not waiting for plan approval." }, { status: 409 })
+      }
+      job.planApprovalState = "approved"
+      saveJob(job)
+      emitSessionEvent(job, "user_input", {
+        message: "User approved the test plan. Execution will continue in the current browser session.",
+        payload: { action: "approve_test_plan", planId: job.fullAppTestPlan.id },
+      })
+      return NextResponse.json({
+        success: true,
+        message: "Plan approved. Continuing the current browser session.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "edit_test_plan") {
+      const instruction = typeof body.instruction === "string" ? body.instruction.trim() : ""
+      const plan = job.fullAppTestPlan
+      if (job.status !== "running" || !plan || job.planApprovalState !== "awaiting_review") {
+        return NextResponse.json({ error: "The plan can only be edited while it is waiting for review." }, { status: 409 })
+      }
+      if (!instruction) return NextResponse.json({ error: "Enter a plan change first." }, { status: 400 })
+
+      const removeMatch = instruction.match(/(?:remove|delete|drop)\\s+(?:step\\s*)#?(\\d+)/i)
+      const renameMatch = instruction.match(/(?:rename|change)\\s+(?:step\\s*)#?(\\d+)\\s+(?:to|as)\\s+(.+)/i)
+      const expectedMatch = instruction.match(/(?:change|update|set)\\s+(?:the\\s+)?expected(?:\\s+result)?\\s+(?:for\\s+)?(?:step\\s*)#?(\\d+)\\s+(?:to|as)\\s+(.+)/i)
+      let message = ""
+
+      if (removeMatch) {
+        const number = Number(removeMatch[1])
+        const index = plan.steps.findIndex((step, i) => step.stepIndex === number || i + 1 === number)
+        if (index < 0) return NextResponse.json({ error: `I couldn't find step ${number}. Use the visible step number.` }, { status: 422 })
+        const [removed] = plan.steps.splice(index, 1)
+        message = `Removed step ${number}: ${removed.targetName}.`
+      } else if (renameMatch) {
+        const number = Number(renameMatch[1])
+        const step = plan.steps.find((item, i) => item.stepIndex === number || i + 1 === number)
+        if (!step) return NextResponse.json({ error: `I couldn't find step ${number}.` }, { status: 422 })
+        step.targetName = renameMatch[2].trim()
+        message = `Renamed step ${number} to “${step.targetName}”.`
+      } else if (expectedMatch) {
+        const number = Number(expectedMatch[1])
+        const step = plan.steps.find((item, i) => item.stepIndex === number || i + 1 === number)
+        if (!step) return NextResponse.json({ error: `I couldn't find step ${number}.` }, { status: 422 })
+        step.expectedResult = expectedMatch[2].trim()
+        message = `Updated the expected result for step ${number}.`
+      } else if (/^(?:add|include|create)\\s+(?:a\\s+)?(?:test|step|check)\\s+(?:for|to check|that checks)\\s+/i.test(instruction)) {
+        const targetName = instruction.replace(/^(?:add|include|create)\\s+(?:a\\s+)?(?:test|step|check)\\s+(?:for|to check|that checks)\\s+/i, "").trim()
+        if (!targetName) return NextResponse.json({ error: "Describe what the new test should check." }, { status: 400 })
+        const normalized = targetName.toLowerCase()
+        const screen = plan.screens.find((item) =>
+          normalized.includes(item.name.toLowerCase()) ||
+          normalized.includes(item.path.toLowerCase()) ||
+          item.name.toLowerCase().includes(normalized)
+        ) || plan.screens[0]
+        if (!screen) return NextResponse.json({ error: "There are no discovered screens to attach this test to." }, { status: 422 })
+        const nextIndex = plan.steps.reduce((max, step) => Math.max(max, step.stepIndex), 0) + 1
+        plan.steps.push({
+          id: `plan-chat-${Date.now()}`,
+          screenId: screen.id,
+          screenName: screen.name,
+          stepIndex: nextIndex,
+          actionType: "verify",
+          targetName,
+          expectedResult: `Verify that ${targetName} works as expected.`,
+          status: "pending",
+        })
+        plan.coverage.totalActions = plan.steps.length
+        message = `Added “${targetName}” to the plan on ${screen.name}. Please check its expected result before approving.`
+      } else {
+        return NextResponse.json({
+          error: "I can apply these plan edits: “remove step 3”, “rename step 3 to Check signup validation”, “change expected result for step 3 to ...”, or “add a test for signup validation”.",
+        }, { status: 422 })
+      }
+
+      // Re-index after structural edits so displayed numbering stays unique and predictable.
+      plan.steps.forEach((step, index) => { step.stepIndex = index + 1 })
+      plan.coverage.totalActions = plan.steps.length
+      plan.coverage.totalScreens = plan.screens.length
+      job.fullAppTestPlan = plan
+      job.flowGraph = job.flowGraph // Keep the mapped graph intact; step edits do not change discovered routes.
+      job.planApprovalState = "awaiting_review"
+      job.currentStep = "Plan updated. Review the changes, continue chatting if needed, then approve execution."
+      saveJob(job)
+      emitSessionEvent(job, "user_input", {
+        message: `Plan updated: ${message}`,
+        payload: { action: "edit_test_plan", planId: plan.id, instruction },
+      })
+      return NextResponse.json({
+        success: true,
+        message,
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
     if (action === "provide_credentials") {
       if (!username || !password) {
         return NextResponse.json(
