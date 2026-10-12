@@ -52,6 +52,8 @@ interface FeatureWorkflowViewProps {
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
   fullPageView?: boolean
+  isFullStage?: boolean
+  onToggleFullStage?: () => void
 }
 
 const EXAMPLE_WORKFLOWS = [
@@ -107,6 +109,8 @@ export default function FeatureWorkflowView({
   testingMode = "feature_workflow",
   onSelectTestingMode,
   fullPageView = true,
+  isFullStage,
+  onToggleFullStage,
 }: FeatureWorkflowViewProps) {
   const [workflowInput, setWorkflowInput] = useState("")
   const [selectedRole, setSelectedRole] = useState("Customer")
@@ -671,7 +675,8 @@ export default function FeatureWorkflowView({
                   transitions={activePlan?.transitions}
                   plan={activePlan || undefined}
                   onViewScreenshot={(url) => setSelectedScreenshotModal(url)}
-                  isFullStage={true}
+                  isFullStage={isFullStage !== undefined ? isFullStage : true}
+                  onToggleFullStage={onToggleFullStage}
                 />
               </div>
             ) : (

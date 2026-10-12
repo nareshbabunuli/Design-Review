@@ -923,19 +923,34 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
           const passInput = await page.$('input[type="password"]')
 
           if (params.credentials?.username && userInput) {
-            await userInput.click({ count: 3 }).catch(() => {})
+            await (userInput as any).click({ count: 3 }).catch(() => {})
+            await page.keyboard.press("Backspace").catch(() => {})
             await userInput.type(params.credentials.username, { delay: 10 })
           }
           if (params.credentials?.password && passInput) {
-            await passInput.click({ count: 3 }).catch(() => {})
+            await (passInput as any).click({ count: 3 }).catch(() => {})
+            await page.keyboard.press("Backspace").catch(() => {})
             await passInput.type(params.credentials.password, { delay: 10 })
           }
 
           const submitSelector = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type="submit"]')) as (HTMLButtonElement | HTMLInputElement)[]
-            const btn = btns.find((b) => b.type === "submit" || /(sign in|login|log in|submit|continue)/i.test(b.textContent || b.value || ""))
+            const isVisible = (el: Element) => {
+              const rect = el.getBoundingClientRect()
+              const style = window.getComputedStyle(el)
+              return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+            }
+            const all = Array.from(
+              document.querySelectorAll(
+                'button, input[type="submit"], [role="button"], div[class*="cursor"], div[class*="r-cursor"], div[tabindex], div, a, span'
+              )
+            ) as HTMLElement[]
+            const btn =
+              all.find((b) => isVisible(b) && /^\s*(sign\s*in|log\s*in|login|continue|submit)\s*$/i.test(b.textContent || (b as any).value || "")) ||
+              all.find((b) => isVisible(b) && ((b as HTMLButtonElement).type === "submit" || b.getAttribute("type") === "submit")) ||
+              all.find((b) => isVisible(b) && /(sign in|login|log in|submit|continue)/i.test(b.textContent || (b as any).value || "") && (b.textContent || "").trim().length < 40)
             if (btn) {
-              btn.setAttribute("data-agent-auth-submit", "true")
+              const touchable = btn.closest('[class*="r-cursor"], [role="button"], button') || btn
+              touchable.setAttribute("data-agent-auth-submit", "true")
               return '[data-agent-auth-submit="true"]'
             }
             return null

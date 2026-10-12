@@ -81,6 +81,12 @@ export function resolveProjectDirectory(baseUrl = "http://localhost:3000", custo
       const landlordDir = path.resolve(cwd, "..", "landlord-accounting-portal")
       if (fs.existsSync(landlordDir)) return landlordDir
     }
+    if (urlObj.port === "8081") {
+      const hhDir = path.resolve(cwd, "..", "hh", "frontend")
+      if (fs.existsSync(hhDir)) return hhDir
+      const hhParent = path.resolve(cwd, "..", "hh")
+      if (fs.existsSync(hhParent)) return hhParent
+    }
   } catch {}
 
   return cwd

@@ -511,6 +511,34 @@ export default function AISimulatorPage() {
     fetchTestDataStatus(savedProject)
   }, [])
 
+  const handleSimulatorUrlChange = useCallback((newUrl: string) => {
+    if (!newUrl) return
+    const cleanUrl = newUrl.trim()
+    setTargetUrl(cleanUrl)
+    localStorage.setItem("ai_target_app_url", cleanUrl)
+
+    // Synchronize active test job & Figma-style App Map screens with the newly navigated URL
+    setCurrentJob((prev) => {
+      if (!prev) return null
+      const updatedScreens = (prev.fullAppTestPlan?.screens || []).map((s) => ({
+        ...s,
+        url: cleanUrl,
+      }))
+      const updatedNodes = (prev.flowGraph?.nodes || []).map((n) => ({
+        ...n,
+        url: cleanUrl,
+      }))
+      return {
+        ...prev,
+        targetUrl: cleanUrl,
+        flowGraph: prev.flowGraph ? { ...prev.flowGraph, nodes: updatedNodes } : undefined,
+        fullAppTestPlan: prev.fullAppTestPlan
+          ? { ...prev.fullAppTestPlan, targetUrl: cleanUrl, screens: updatedScreens }
+          : undefined,
+      }
+    })
+  }, [])
+
   // Laya fast health checker (runs only if explicitly enabled)
   useEffect(() => {
     if (!enableLaya) {
@@ -2125,10 +2153,10 @@ export default function AISimulatorPage() {
                         ? "bg-indigo-600 text-white shadow-xs font-semibold"
                         : "text-slate-400 hover:text-white hover:bg-slate-800/60"
                     }`}
-                    title="View Map and Test Plan in full width"
+                    title="View Stage tabs in full width (hide phone simulator)"
                   >
-                    <MapIcon className="h-3.5 w-3.5" />
-                    <span>App Map & Plan</span>
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    <span>Full Stage</span>
                   </button>
                 </div>
 
@@ -2174,6 +2202,7 @@ export default function AISimulatorPage() {
                       initialWorkflowId={activeWorkflowId}
                       initialLiveMode={true}
                       initialUrl={targetUrl}
+                      onUrlChange={handleSimulatorUrlChange}
                       isOwner={true}
                       canEdit={true}
                       userRole="owner"
@@ -2215,6 +2244,8 @@ export default function AISimulatorPage() {
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
                         fullPageView={true}
+                        isFullStage={workspaceLayoutMode === "stage"}
+                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
                       />
                     ) : (
                       <FullAppTestingView
@@ -2232,6 +2263,9 @@ export default function AISimulatorPage() {
                         isMapPageActive={stageViewMode === "map"}
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
+                        isFullStage={workspaceLayoutMode === "stage"}
+                        isBesideScreen={workspaceLayoutMode === "split"}
+                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
                       />
                     )}
                   </div>
@@ -2331,13 +2365,6 @@ export default function AISimulatorPage() {
                       </button>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setActiveDockTab("config")}
-                          className="px-2 py-0.5 rounded text-[10px] font-semibold text-purple-300 hover:text-white bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 transition cursor-pointer"
-                        >
-                          ⚙ Config
-                        </button>
                         <button
                           type="button"
                           onClick={() => {

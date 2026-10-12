@@ -20,6 +20,7 @@ import {
 } from "./types"
 import { saveJob, getJob, appendLog } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
+import { getJobSecrets } from "./job-secret-vault"
 
 import {
   SYNTHETIC_TEST_DATA,
@@ -570,62 +571,302 @@ export async function extractActionableInventory(page: Page): Promise<{
  */
 type LoginCreds = { username?: string; password?: string }
 
-/** True when a visible password field is on the page (login wall). */
+/** Waits for single-page applications (React/Next/Expo/SPA) to hydrate past initial splash/loading screens. */
+async function waitForSpaPageReady(page: Page, timeoutMs = 4000): Promise<void> {
+  try {
+    await page
+      .waitForFunction(
+        () => {
+          if (document.querySelector('input[type="password"], input[type="email"], input[type="text"]')) return true
+          const inputs = document.querySelectorAll("input, button, select, textarea, a[href]")
+          const hasContent = (document.body?.innerText || "").trim().length > 30
+          return inputs.length >= 2 || hasContent
+        },
+        { timeout: timeoutMs }
+      )
+      .catch(() => null)
+    await new Promise((r) => setTimeout(r, 800))
+  } catch {}
+}
+
+/** True when a visible password field or sign-in form is on the page (login wall). */
 async function hasLoginWall(page: Page): Promise<boolean> {
-  return page
-    .evaluate(() => {
+  try {
+    return await page.evaluate(() => {
+      const isVisible = (el: HTMLElement) => {
+        const rect = el.getBoundingClientRect()
+        const style = window.getComputedStyle(el)
+        return (
+          (el.offsetParent !== null || rect.height > 0) &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0"
+        )
+      }
+
       const pw = Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]
-      return pw.some((p) => p.offsetParent !== null)
+      if (pw.some(isVisible)) return true
+
+      // Fallback: visible email/username input + visible sign in button / sign in heading
+      const emailOrUser = (Array.from(
+        document.querySelectorAll(
+          'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[placeholder*="user" i]'
+        )
+      ) as HTMLInputElement[]).filter(isVisible)
+
+      if (emailOrUser.length === 0) return false
+
+      const bodyText = (document.body?.innerText || "").toLowerCase()
+      const hasSignInHeading = /sign\s*in\s*to|log\s*in\s*to|enter\s*your\s*(email|password)|forgot\s*password/i.test(bodyText)
+      const hasAuthButton = Array.from(
+        document.querySelectorAll('button, input[type="submit"], [role="button"], a, div[class*="cursor"], div[class*="r-cursor"], div[tabindex], div, span')
+      ).some((el) => isVisible(el as HTMLElement) && /^\s*(sign\s*in|log\s*in|login)\s*$/i.test(el.textContent?.trim() || ""))
+
+      return hasSignInHeading || hasAuthButton
     })
-    .catch(() => false)
+  } catch {
+    return false
+  }
 }
 
 /** Types creds into the login form, submits, returns true when the password field is gone. */
 async function attemptLogin(page: Page, creds: LoginCreds): Promise<boolean> {
   try {
-    const filled = await page.evaluate((u, p) => {
-      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(
-        (x) => x.offsetParent !== null
-      )
+    // 1. Wait briefly for inputs to mount in SPA
+    await page.waitForSelector('input[type="password"]', { timeout: 8000 }).catch(() => null)
+
+    const inputsFound = await page.evaluate(() => {
+      const isVisible = (el: HTMLElement) => {
+        const rect = el.getBoundingClientRect()
+        const style = window.getComputedStyle(el)
+        return (
+          (el.offsetParent !== null || rect.height > 0) &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden"
+        )
+      }
+
+      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(isVisible)
       if (!pw) return false
+
       const scope = pw.closest("form") || document
       const user = (Array.from(
-        scope.querySelectorAll('input[type="email"], input[type="text"], input[name*="user" i], input[name*="email" i], input:not([type])')
-      ) as HTMLInputElement[]).find((x) => x.offsetParent !== null)
-      const setVal = (el: HTMLInputElement, v: string) => {
+        scope.querySelectorAll(
+          'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[placeholder*="user" i], input[type="text"], input:not([type])'
+        )
+      ) as HTMLInputElement[]).find((x) => isVisible(x) && x.type !== "password")
+
+      return { hasPw: true, hasUser: Boolean(user) }
+    })
+
+    if (!inputsFound) return false
+
+    // 2. Obtain element handles for native CDP typing
+    const userHandle = await page.evaluateHandle(() => {
+      const isVisible = (el: HTMLElement) => {
+        const rect = el.getBoundingClientRect()
+        const style = window.getComputedStyle(el)
+        return (
+          (el.offsetParent !== null || rect.height > 0) &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden"
+        )
+      }
+      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(isVisible)
+      const scope = (pw && pw.closest("form")) || document
+      const inputs = Array.from(
+        scope.querySelectorAll(
+          'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[placeholder*="user" i], input[type="text"], input:not([type])'
+        )
+      ) as HTMLInputElement[]
+      return inputs.find((x) => isVisible(x) && x.type !== "password") || null
+    })
+
+    const passHandle = await page.evaluateHandle(() => {
+      const isVisible = (el: HTMLElement) => {
+        const rect = el.getBoundingClientRect()
+        const style = window.getComputedStyle(el)
+        return (
+          (el.offsetParent !== null || rect.height > 0) &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden"
+        )
+      }
+      return (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(isVisible) || null
+    })
+
+    const userEl = userHandle.asElement() as any
+    const passEl = passHandle.asElement() as any
+
+    // 3. Native keystrokes (triggers React / React Native Web onChangeText and state updates)
+    if (userEl && creds.username) {
+      await userEl.click({ count: 3 }).catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await page.keyboard.down("Control").catch(() => {})
+      await page.keyboard.press("KeyA").catch(() => {})
+      await page.keyboard.up("Control").catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await userEl.type(creds.username, { delay: 10 }).catch(() => {})
+    }
+
+    if (passEl && creds.password) {
+      await passEl.click({ count: 3 }).catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await page.keyboard.down("Control").catch(() => {})
+      await page.keyboard.press("KeyA").catch(() => {})
+      await page.keyboard.up("Control").catch(() => {})
+      await page.keyboard.press("Backspace").catch(() => {})
+      await passEl.type(creds.password, { delay: 10 }).catch(() => {})
+    }
+
+    // Secondary fallback sync for controlled inputs with custom property descriptors
+    await page.evaluate((u, p) => {
+      const setIfNeeded = (el: HTMLInputElement | null, val: string) => {
+        if (!el || el.value === val) return
         el.focus()
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
-        setter ? setter.call(el, v) : (el.value = v)
+        if (setter) setter.call(el, val)
+        else el.value = val
         el.dispatchEvent(new Event("input", { bubbles: true }))
         el.dispatchEvent(new Event("change", { bubbles: true }))
       }
-      if (user && u) setVal(user, u)
-      setVal(pw, p)
-      return true
-    }, creds.username || "", creds.password || "")
-    if (!filled) return false
-
-    const clicked = await page.evaluate(() => {
       const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(
-        (x) => x.offsetParent !== null
+        (x) => x.offsetParent !== null || x.getBoundingClientRect().height > 0
+      )
+      if (pw && pw.value !== p) setIfNeeded(pw, p)
+
+      const scope = (pw && pw.closest("form")) || document
+      const user = (Array.from(
+        scope.querySelectorAll(
+          'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[type="text"]'
+        )
+      ) as HTMLInputElement[]).find((x) => (x.offsetParent !== null || x.getBoundingClientRect().height > 0) && x.type !== "password")
+      if (user && u && user.value !== u) setIfNeeded(user, u)
+    }, creds.username || "", creds.password || "")
+
+    // 4. Find submit button or touchable element (supporting RN Web div[class*="r-cursor"], UIKittenButton, etc.)
+    const btnHandle = await page.evaluateHandle(() => {
+      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(
+        (x) => x.offsetParent !== null || x.getBoundingClientRect().height > 0
       )
       const scope = (pw && pw.closest("form")) || document
-      const btns = Array.from(scope.querySelectorAll('button, input[type="submit"]')) as HTMLElement[]
-      const btn =
-        btns.find((b) => /sign\s*in|log\s*in|login|continue|submit/i.test((b.textContent || (b as any).value || "").trim())) ||
-        btns.find((b) => (b as HTMLButtonElement).type === "submit") ||
-        btns[0]
-      if (!btn) return false
-      btn.click()
-      return true
-    })
-    if (!clicked) await page.keyboard.press("Enter")
 
-    await Promise.race([
-      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => null),
-      new Promise((r) => setTimeout(r, 8000)),
-    ])
-    await new Promise((r) => setTimeout(r, 1200))
+      const isVisible = (el: Element) => {
+        const rect = el.getBoundingClientRect()
+        const style = window.getComputedStyle(el)
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+      }
+
+      const all = Array.from(
+        scope.querySelectorAll(
+          'button, input[type="submit"], [role="button"], a, div[class*="cursor"], div[class*="r-cursor"], div[tabindex], div, span'
+        )
+      ) as HTMLElement[]
+
+      const isAuthExact = (t: string) => /^\s*(sign\s*in|log\s*in|login|continue|submit)\s*$/i.test(t.trim())
+      const isAuthContains = (t: string) => /\b(sign\s*in|log\s*in|login|continue|submit)\b/i.test(t.trim())
+
+      // Priority 1: exact text match on visible element
+      const exact = all.find((el) => isVisible(el) && isAuthExact(el.textContent || (el as any).value || ""))
+      if (exact) {
+        return exact.closest('[class*="r-cursor"], [role="button"], button') || exact
+      }
+
+      // Priority 2: explicit submit type
+      const submitType = all.find(
+        (el) => isVisible(el) && ((el as HTMLButtonElement).type === "submit" || el.getAttribute("type") === "submit")
+      )
+      if (submitType) return submitType
+
+      // Priority 3: partial text match (e.g. "Sign In to continue")
+      const partial = all.find(
+        (el) =>
+          isVisible(el) &&
+          isAuthContains(el.textContent || (el as any).value || "") &&
+          (el.textContent || "").trim().length < 40
+      )
+      if (partial) {
+        return partial.closest('[class*="r-cursor"], [role="button"], button') || partial
+      }
+
+      // Priority 4: first button in form
+      const firstBtn = all.find((el) => isVisible(el) && el.tagName === "BUTTON")
+      return firstBtn || null
+    })
+
+    const btnEl = btnHandle.asElement() as any
+    let clicked = false
+
+    if (btnEl) {
+      // Dispatch pointer events for React Native Web / Touchables responder chains
+      await page.evaluate((el: any) => {
+        if (!el) return
+        const rect = el.getBoundingClientRect()
+        const opts = { bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 }
+        el.dispatchEvent(new PointerEvent("pointerdown", opts))
+        el.dispatchEvent(new MouseEvent("mousedown", opts))
+        el.dispatchEvent(new PointerEvent("pointerup", opts))
+        el.dispatchEvent(new MouseEvent("mouseup", opts))
+        el.dispatchEvent(new MouseEvent("click", opts))
+        if (typeof el.click === "function") el.click()
+      }, btnHandle)
+
+      await btnEl.click().catch(() => {})
+      clicked = true
+    }
+
+    if (!clicked) {
+      await page.keyboard.press("Enter").catch(() => {})
+    }
+
+    // 5. Poll for login completion (URL change, visible password field disappearance, or explicit error notification)
+    const startUrl = page.url()
+    const deadline = Date.now() + 15000
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 600))
+
+      const status = await page.evaluate((initialUrl) => {
+        const isVisible = (el: HTMLElement) => {
+          const rect = el.getBoundingClientRect()
+          const style = window.getComputedStyle(el)
+          return (
+            (el.offsetParent !== null || rect.height > 0) &&
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.display !== "none" &&
+            style.visibility !== "hidden"
+          )
+        }
+        const pw = Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]
+        const hasVisiblePw = pw.some(isVisible)
+
+        const currentUrl = window.location.href
+        const urlChanged = currentUrl !== initialUrl && !currentUrl.includes("login") && !currentUrl.includes("signin")
+        const bodyText = (document.body?.innerText || "").toLowerCase()
+        const errorMatch = /invalid\s*(email|username|password|credentials)|wrong\s*password|user\s*not\s*found|login\s*failed|unable\s*to\s*connect/i.test(bodyText)
+
+        return { hasVisiblePw, urlChanged, errorMatch }
+      }, startUrl)
+
+      if (status.urlChanged || !status.hasVisiblePw) {
+        await new Promise((r) => setTimeout(r, 1200))
+        return true
+      }
+
+      if (status.errorMatch) {
+        return false
+      }
+    }
+
     return !(await hasLoginWall(page))
   } catch {
     return false
@@ -654,6 +895,11 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
       const deadline = Date.now() + 10 * 60 * 1000
       while (!job.pendingCredentials && job.status === "running" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500))
+        const vaultCreds = getJobSecrets(job.id)?.credentials
+        if (vaultCreds && vaultCreds.password) {
+          job.pendingCredentials = { username: vaultCreds.username, password: vaultCreds.password }
+          break
+        }
         const refreshed = getJob(job.id)
         if (refreshed?.pendingCredentials) {
           job.pendingCredentials = refreshed.pendingCredentials
@@ -1090,7 +1336,8 @@ export async function discoverAndMapApp(
     transitions.push({ id: `tr-${transitions.length + 1}`, fromScreenId: from, toScreenId: to, action, actionType })
   }
 
-  // Map starting screen
+  // Map starting screen (wait for SPA splash to finish first)
+  await waitForSpaPageReady(page, 4500)
   const startingHadLoginWall = await hasLoginWall(page)
   const root = await mapCurrentScreen()
   if (startingHadLoginWall) {
@@ -1103,6 +1350,7 @@ export async function discoverAndMapApp(
   if (startingHadLoginWall) {
     const loggedIn = await authenticateIfNeeded(job, page, options.credentials)
     if (loggedIn) {
+      await waitForSpaPageReady(page, 3000)
       const post = await mapCurrentScreen(true)
       addTransition(root.id, post.id, "Submit Login Form", "form_submit")
       startId = post.id
@@ -1136,10 +1384,20 @@ export async function discoverAndMapApp(
     try {
       appendLog(job, "info", `[DISCOVERY] Navigating to: ${secretRedactor.redact(cand.href)}...`)
       await page.goto(cand.href, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
-      await new Promise((r) => setTimeout(r, 600))
+      await waitForSpaPageReady(page, 2000)
 
-      // Session expired / redirected to login mid-crawl: re-auth once if we have a session
-      if (job.authState === "logged_in" && (await hasLoginWall(page))) {
+      // Check if redirected to login wall mid-crawl
+      const pageHadLoginWall = await hasLoginWall(page)
+      if (pageHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
+        appendLog(job, "warn", `[AUTH] Login wall encountered at ${cand.href}. Pausing for credentials...`)
+        const loggedIn = await authenticateIfNeeded(job, page, options.credentials)
+        if (loggedIn) {
+          await waitForSpaPageReady(page, 3000)
+          const post = await mapCurrentScreen(true)
+          addTransition(cand.from, post.id, "Submit Login Form", "form_submit")
+          continue
+        }
+      } else if (job.authState === "logged_in" && pageHadLoginWall) {
         appendLog(job, "warn", "[AUTH] Redirected to login mid-crawl - skipping protected route.")
         continue
       }
@@ -2899,7 +3157,7 @@ export async function executeFullAppTestingJob(
 
     // PHASE 1: Systematic Discovery & Mapping
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
-    await new Promise((r) => setTimeout(r, 800))
+    await waitForSpaPageReady(page, 4500)
 
     const sessionCreds: { username?: string; password?: string } = { ...(params.credentials || {}) }
     const discovery = await discoverAndMapApp(job, page, job.targetUrl, {

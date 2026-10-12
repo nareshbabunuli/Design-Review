@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useCallback } from "react"
 import type {
   AutomationJob,
   FullAppTestPlan,
@@ -41,6 +41,7 @@ import {
   HelpCircle,
   Columns,
   Loader2,
+  Trash2,
 } from "lucide-react"
 
 interface FullAppTestingViewProps {
@@ -61,6 +62,8 @@ interface FullAppTestingViewProps {
   isMapPageActive?: boolean
   onOpenBesideScreen?: () => void
   isBesideScreen?: boolean
+  isFullStage?: boolean
+  onToggleFullStage?: () => void
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
 }
@@ -80,6 +83,8 @@ export default function FullAppTestingView({
   isMapPageActive = false,
   onOpenBesideScreen,
   isBesideScreen = false,
+  isFullStage,
+  onToggleFullStage,
   testingMode = "full_app",
   onSelectTestingMode,
 }: FullAppTestingViewProps) {
@@ -109,6 +114,46 @@ export default function FullAppTestingView({
   const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null)
   const [screenshotModal, setScreenshotModal] = useState<string | null>(null)
   const [filterStepStatus, setFilterStepStatus] = useState<string>("all")
+
+  const handleDeleteScreen = useCallback(
+    (screenId: string) => {
+      if (!job) return
+
+      const currentScreens = plan?.screens || []
+      const updatedScreens = currentScreens.filter((s) => s.id !== screenId)
+      const currentNodes = flowGraph?.nodes || []
+      const updatedNodes = currentNodes.filter((n) => n.id !== screenId)
+      const currentEdges = flowGraph?.edges || []
+      const updatedEdges = currentEdges.filter((e) => e.from !== screenId && e.to !== screenId)
+      const currentTransitions = plan?.transitions || []
+      const updatedTransitions = currentTransitions.filter(
+        (t) => t.fromScreenId !== screenId && t.toScreenId !== screenId
+      )
+      const currentSteps = plan?.steps || []
+      const updatedSteps = currentSteps.filter((s) => s.screenId !== screenId)
+
+      const updatedJob: AutomationJob = {
+        ...job,
+        flowGraph: {
+          nodes: updatedNodes,
+          edges: updatedEdges,
+        },
+        fullAppTestPlan: {
+          ...(job.fullAppTestPlan || ({} as any)),
+          screens: updatedScreens,
+          transitions: updatedTransitions,
+          steps: updatedSteps,
+        },
+      }
+
+      if (selectedScreenId === screenId) {
+        setSelectedScreenId(updatedScreens[0]?.id || null)
+      }
+
+      onJobUpdate?.(updatedJob)
+    },
+    [job, plan, flowGraph, selectedScreenId, onJobUpdate]
+  )
   // Dummy test files state (user-provided or synthetic defaults)
   const [dummyFiles, setDummyFiles] = useState<
     Record<string, { name: string; url: string; type: string }>
@@ -240,64 +285,7 @@ export default function FullAppTestingView({
         </div>
       )}
 
-      {/* Top Mode Switcher Header in Full Page View */}
-      {fullPageView && onSelectTestingMode && (
-        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-              <button
-                type="button"
-                onClick={() => onSelectTestingMode("feature_workflow")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                  testingMode === "feature_workflow"
-                    ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-950"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Sparkles className="h-3.5 w-3.5 text-indigo-300" />
-                <span>Feature / Workflow Testing</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onSelectTestingMode("full_app")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                  testingMode === "full_app"
-                    ? "bg-indigo-600 text-white shadow-md"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Compass className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Full App Testing</span>
-              </button>
-            </div>
-            <span className="text-[11px] text-slate-400 hidden md:inline">
-              Mode: <span className="text-white font-semibold">Full App Systematic Crawl & Inventory</span>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {isRunning && onCancelJob ? (
-              <button
-                type="button"
-                onClick={onCancelJob}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer"
-              >
-                <Ban className="h-3.5 w-3.5" />
-                <span>Stop Job</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onStartFullAppTest(dummyFiles)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
-              >
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Run Full App Test</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Top Mode Switcher Header removed to eliminate redundant Run Full App Test & mode banner */}
 
       {/* 1. Header Banner & Architecture Stepper (shown only when not in full page view) */}
       {!fullPageView && (
@@ -535,7 +523,7 @@ export default function FullAppTestingView({
         <div className="px-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
           <div className="flex gap-1 py-1.5">
             {[
-              { id: "map", label: "Figma-Style App Map", icon: MapIcon, count: plan?.screens.length },
+              { id: "map", label: "App Map", icon: MapIcon, count: plan?.screens.length },
               { id: "screens", label: "Discovered Screens", icon: Layers, count: plan?.screens.length },
               { id: "plan", label: "Structured Test Plan", icon: ListChecks, count: plan?.steps.length },
               { id: "execution", label: "Live Execution & Evidence", icon: Play },
@@ -577,6 +565,35 @@ export default function FullAppTestingView({
               )
             })}
           </div>
+
+          {onSelectTestingMode && (
+            <div className="flex items-center gap-1 shrink-0 p-0.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] my-1 ml-2">
+              <button
+                type="button"
+                onClick={() => onSelectTestingMode("feature_workflow")}
+                className={`px-2 py-0.5 rounded font-semibold transition cursor-pointer ${
+                  testingMode === "feature_workflow"
+                    ? "bg-purple-600 text-white shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+                title="Switch to Feature / Workflow Testing"
+              >
+                Feature Test
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectTestingMode("full_app")}
+                className={`px-2 py-0.5 rounded font-semibold transition cursor-pointer ${
+                  testingMode === "full_app"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+                title="Switch to Full App Testing"
+              >
+                Full App
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -626,9 +643,12 @@ export default function FullAppTestingView({
                   onSelectScreen={(screenId) => {
                     setSelectedScreenId(screenId)
                   }}
+                  onDeleteScreen={handleDeleteScreen}
                   onViewScreenshot={(url) => setScreenshotModal(url)}
                   onOpenMapPage={onOpenMapPage || onOpenBesideScreen}
-                  isFullStage={fullPageView}
+                  isFullStage={isFullStage !== undefined ? isFullStage : fullPageView}
+                  isBesideScreen={isBesideScreen}
+                  onToggleFullStage={onToggleFullStage}
                 />
               </div>
             ) : (
@@ -669,10 +689,17 @@ export default function FullAppTestingView({
                     {plan.screens.map((s) => {
                       const isSelected = selectedScreen?.id === s.id
                       return (
-                        <button
+                        <div
                           key={s.id}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelectedScreenId(s.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault()
+                              setSelectedScreenId(s.id)
+                            }
+                          }}
                           className={`w-full p-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
                             isSelected
                               ? "bg-indigo-600/20 border-indigo-500 text-white"
@@ -686,10 +713,24 @@ export default function FullAppTestingView({
                             </div>
                             <div className="text-[10px] text-slate-500 font-mono truncate">{s.path}</div>
                           </div>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-300 shrink-0 font-mono">
-                            {s.actionableElements.length}
-                          </span>
-                        </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteScreen(s.id)
+                              }}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/60 transition cursor-pointer"
+                              title={`Delete screen ${s.id}`}
+                              aria-label={`Delete screen ${s.id}`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-300 font-mono">
+                              {s.actionableElements.length}
+                            </span>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -710,16 +751,27 @@ export default function FullAppTestingView({
                           </div>
                           <p className="text-xs text-slate-400 font-mono mt-0.5">{selectedScreen.url}</p>
                         </div>
-                        {selectedScreen.screenshotUrl && (
+                        <div className="flex items-center gap-2">
+                          {selectedScreen.screenshotUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setScreenshotModal(selectedScreen.screenshotUrl!)}
+                              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1 border border-slate-700 transition cursor-pointer"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>View Screen</span>
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => setScreenshotModal(selectedScreen.screenshotUrl!)}
-                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1 border border-slate-700 transition cursor-pointer"
+                            onClick={() => handleDeleteScreen(selectedScreen.id)}
+                            className="px-2.5 py-1 rounded bg-rose-950/40 hover:bg-rose-900/60 text-xs font-semibold text-rose-300 flex items-center gap-1 border border-rose-800/60 transition cursor-pointer"
+                            title="Delete this screen from test plan"
                           >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span>View Screen</span>
+                            <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                            <span>Delete Screen</span>
                           </button>
-                        )}
+                        </div>
                       </div>
 
                       {/* Actionable Elements List */}

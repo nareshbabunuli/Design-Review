@@ -81,6 +81,7 @@ export interface WorkflowSimulatorProps {
   initialWorkflowId?: string | null
   initialLiveMode?: boolean
   initialUrl?: string
+  onUrlChange?: (url: string) => void
   isOwner?: boolean
   canEdit?: boolean
   userRole?: "client" | "freelancer" | "owner" | "developer" | null
@@ -122,6 +123,11 @@ interface CapturedScreenshot {
   dimensions: string
   url: string
   mode: string
+}
+
+interface ToastItem {
+  id: number
+  message: string
 }
 
 const SEVERITY_STYLES: Record<Annotation["severity"], { badge: string; pin: string }> = {
@@ -352,6 +358,7 @@ export function WorkflowSimulator({
   initialWorkflowId,
   initialLiveMode,
   initialUrl,
+  onUrlChange,
   isOwner = false,
   canEdit = false,
   userRole = "owner",
@@ -436,12 +443,14 @@ export function WorkflowSimulator({
   const [overlayOpacity, setOverlayOpacity] = useState<number>(50)
 
   // Left View visibility state (hideLeftView)
-  const [internalHideLeftView, setInternalHideLeftView] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("simulator_hide_left_view") === "true"
-    }
-    return false
-  })
+  const [internalHideLeftView, setInternalHideLeftView] = useState<boolean>(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("simulator_hide_left_view")
+      if (saved === "true") setInternalHideLeftView(true)
+    } catch {}
+  }, [])
 
   const isLeftViewHidden = hideLeftViewProp !== undefined ? hideLeftViewProp : internalHideLeftView
 
@@ -470,10 +479,6 @@ export function WorkflowSimulator({
   // Live browser navigation
   const defaultUrl = useMemo(() => {
     if (initialUrl) return initialUrl
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("simulator_active_url")
-      if (saved) return saved
-    }
     return "http://localhost:8081"
   }, [initialUrl])
 
@@ -482,24 +487,35 @@ export function WorkflowSimulator({
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
-    if (initialUrl && initialUrl !== currentUrl) {
-      setCurrentUrl(initialUrl)
-      setUrlInput(initialUrl)
+    if (initialUrl) {
+      if (initialUrl !== currentUrl) {
+        setCurrentUrl(initialUrl)
+        setUrlInput(initialUrl)
+      }
+    } else {
+      try {
+        const saved = localStorage.getItem("simulator_active_url")
+        if (saved) {
+          setCurrentUrl(saved)
+          setUrlInput(saved)
+          onUrlChange?.(saved)
+        }
+      } catch {}
     }
-  }, [initialUrl])
+  }, [initialUrl, onUrlChange])
 
-  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(() => {
-    if (typeof initialLiveMode === "boolean") return initialLiveMode
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("simulator_is_live_mode")
-      if (saved !== null) return saved === "true"
-    }
-    return true
-  })
+  const [isLiveCanvas, setIsLiveCanvas] = useState<boolean>(
+    typeof initialLiveMode === "boolean" ? initialLiveMode : true
+  )
 
   useEffect(() => {
     if (typeof initialLiveMode === "boolean") {
       setIsLiveCanvas(initialLiveMode)
+    } else {
+      try {
+        const saved = localStorage.getItem("simulator_is_live_mode")
+        if (saved !== null) setIsLiveCanvas(saved === "true")
+      } catch {}
     }
   }, [initialLiveMode])
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false)
@@ -510,15 +526,16 @@ export function WorkflowSimulator({
     password?: string
     cookie?: string
     token?: string
-  }>(() => {
-    if (typeof window === "undefined") return { type: "login", username: "", password: "" }
+  }>({ type: "login", username: "", password: "" })
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem("simulator_auth_credentials")
-      return saved ? JSON.parse(saved) : { type: "login", username: "", password: "" }
-    } catch {
-      return { type: "login", username: "", password: "" }
-    }
-  })
+      if (saved) {
+        setAuthConfig(JSON.parse(saved))
+      }
+    } catch {}
+  }, [])
 
   // Fullscreen, Copy Figma states
   const [internalFullscreen, setInternalFullscreen] = useState<boolean>(false)
@@ -527,12 +544,12 @@ export function WorkflowSimulator({
   const [showQuickDock, setShowQuickDock] = useState<boolean>(true)
 
   // Toast queue
-  const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([])
+  const [toastQueue, setToastQueue] = useState<ToastItem[]>([])
   const toastIdRef = useRef(0)
   const triggerToast = useCallback((msg: string) => {
     const id = ++toastIdRef.current
-    setToastQueue((q) => [...q, { id, message: msg }])
-    setTimeout(() => setToastQueue((q) => q.filter((t) => t.id !== id)), 3200)
+    setToastQueue((prev: ToastItem[]) => [...prev, { id, message: msg }])
+    setTimeout(() => setToastQueue((prev: ToastItem[]) => prev.filter((t) => t.id !== id)), 3200)
   }, [])
 
   const toggleFullscreen = useCallback(() => {
@@ -713,16 +730,18 @@ export function WorkflowSimulator({
             iframeRef.current.src = src
           }
         }
+        onUrlChange?.(target)
       } else {
         if (typeof window !== "undefined") {
           localStorage.setItem("simulator_active_url", target)
         }
         setCurrentUrl(target)
+        onUrlChange?.(target)
         setNavHistory((prev) => [...prev.slice(0, navIndex + 1), target])
         setNavIndex((prev) => prev + 1)
       }
     },
-    [currentUrl, navIndex]
+    [currentUrl, navIndex, onUrlChange]
   )
 
   const handleGoBack = useCallback(() => {
@@ -731,9 +750,10 @@ export function WorkflowSimulator({
       setNavIndex(navIndex - 1)
       setUrlInput(prevUrl)
       setCurrentUrl(prevUrl)
+      onUrlChange?.(prevUrl)
       triggerToast("Back")
     }
-  }, [navIndex, navHistory, triggerToast])
+  }, [navIndex, navHistory, triggerToast, onUrlChange])
 
   const handleGoForward = useCallback(() => {
     if (navIndex < navHistory.length - 1) {
@@ -741,9 +761,10 @@ export function WorkflowSimulator({
       setNavIndex(navIndex + 1)
       setUrlInput(nextUrl)
       setCurrentUrl(nextUrl)
+      onUrlChange?.(nextUrl)
       triggerToast("Forward")
     }
-  }, [navIndex, navHistory, triggerToast])
+  }, [navIndex, navHistory, triggerToast, onUrlChange])
 
   const handleRefresh = useCallback(() => {
     if (iframeRef.current) {
@@ -766,6 +787,29 @@ export function WorkflowSimulator({
   const [pendingScreenshotUrl, setPendingScreenshotUrl] = useState<string | null>(null)
   const [isSavingScreenshot, setIsSavingScreenshot] = useState<boolean>(false)
   const [isCapturing, setIsCapturing] = useState<boolean>(false)
+
+  const setPendingFile = useCallback((file: File) => {
+    setPendingScreenshotUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+    setPendingScreenshot(file)
+  }, [])
+
+  const addCaptureRecord = useCallback(
+    (url: string, w = viewportWidth, h = viewportHeight) => {
+      const newCapture: CapturedScreenshot = {
+        id: `snap-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dimensions: `${w} × ${h}`,
+        url,
+        mode: compareMode,
+      }
+      setCapturedScreenshots((prev: CapturedScreenshot[]) => [newCapture, ...prev])
+      return newCapture
+    },
+    [viewportWidth, viewportHeight, compareMode]
+  )
 
   // Interactive Area Selection & Native Live Snip
   const [captureMode, setCaptureMode] = useState<CaptureMode>("clean-app")
@@ -938,15 +982,7 @@ export function WorkflowSimulator({
       return
     }
 
-    if (pendingScreenshotUrl) {
-      URL.revokeObjectURL(pendingScreenshotUrl)
-    }
-
-    const localPreviewUrl = URL.createObjectURL(file)
-
-    setPendingScreenshot(file)
-    setPendingScreenshotUrl(localPreviewUrl)
-
+    setPendingFile(file)
     event.target.value = ""
   }
 
@@ -965,12 +1001,7 @@ export function WorkflowSimulator({
         if (item.type.startsWith("image/")) {
           const file = item.getAsFile();
           if (file) {
-            if (pendingScreenshotUrl) {
-              URL.revokeObjectURL(pendingScreenshotUrl);
-            }
-            const localPreviewUrl = URL.createObjectURL(file);
-            setPendingScreenshot(file);
-            setPendingScreenshotUrl(localPreviewUrl);
+            setPendingFile(file);
             triggerToast("Screenshot pasted! Review and save it.");
             e.preventDefault();
             break;
@@ -1085,16 +1116,7 @@ export function WorkflowSimulator({
         throw lastError
       }
 
-      const newCapture: CapturedScreenshot = {
-        id: `snap-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        dimensions: `${viewportWidth} × ${viewportHeight}`,
-        url: fullPublicUrl,
-        mode: compareMode,
-      }
-
-      console.log("[DEBUG] Adding exact screenshot to capture history", newCapture)
-      setCapturedScreenshots((prev) => [newCapture, ...prev])
+      addCaptureRecord(fullPublicUrl)
 
       setIsLiveCanvas(false)
       triggerToast("Exact screenshot saved successfully.")
@@ -1248,16 +1270,7 @@ export function WorkflowSimulator({
 
         await onUpdateField(currentWorkflow.id, "designB", finalUrl)
 
-        const newCapture: CapturedScreenshot = {
-          id: `snap-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          dimensions: `${capW} × ${capH}`,
-          url: finalUrl,
-          mode: compareMode,
-        }
-
-        console.log("[DEBUG] Adding new capture to history", newCapture)
-        setCapturedScreenshots((prev) => [newCapture, ...prev])
+        addCaptureRecord(finalUrl, capW, capH)
 
         // Update preview modal and deactivate area selection
         setCapturedResultUrl(finalUrl)
@@ -1490,14 +1503,7 @@ export function WorkflowSimulator({
         await onUpdateField(currentWorkflow.id, "designB", finalUrl)
       }
 
-      const newCapture: CapturedScreenshot = {
-        id: `snap-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        dimensions: `${destW} × ${destH}`,
-        url: finalUrl,
-        mode: compareMode,
-      }
-      setCapturedScreenshots((prev) => [newCapture, ...prev])
+      addCaptureRecord(finalUrl, destW, destH)
 
       setCapturedResultUrl(finalUrl)
       setIsResultModalOpen(true)
@@ -1560,14 +1566,7 @@ export function WorkflowSimulator({
         await onUpdateField(currentWorkflow.id, "designB", finalUrl)
       }
 
-      const newCapture: CapturedScreenshot = {
-        id: `snap-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        dimensions: `${viewportWidth} × ${viewportHeight}`,
-        url: finalUrl,
-        mode: compareMode,
-      }
-      setCapturedScreenshots((prev) => [newCapture, ...prev])
+      addCaptureRecord(finalUrl)
 
       setIsResultModalOpen(false)
       triggerToast("Screenshot saved to Design B!")
@@ -1694,15 +1693,32 @@ export function WorkflowSimulator({
         </div>
 
         {/* Center: primary comparison mode */}
-        <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-0.5 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
-          <ToolbarButton active={compareMode === "side-by-side"} onClick={() => setCompareMode("side-by-side")} title="Compare designs side by side" variant="primary">
-            <span className="sm:hidden">Side</span>
-            <span className="hidden sm:inline">Side by Side</span>
-          </ToolbarButton>
+        <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-1 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
+          {/* Hide/Show Left View Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (compareMode !== "side-by-side") {
+                setCompareMode("side-by-side")
+              }
+              toggleHideLeftView()
+            }}
+            className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+              !isLeftViewHidden
+                ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
+            }`}
+            title={isLeftViewHidden ? "Show Left Spec View (Side-by-side comparison)" : "Hide Left View (Expand live device to full width)"}
+          >
+            {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+            <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
+          </button>
+
           <ToolbarButton
             active={compareMode === "overlay"}
             onClick={() => {
-              setCompareMode("overlay")
+              if (isLeftViewHidden) toggleHideLeftView(false)
+              setCompareMode(compareMode === "overlay" ? "side-by-side" : "overlay")
               setShowOptions(true)
             }}
             title="Overlay design on top of the live app"
@@ -1713,7 +1729,8 @@ export function WorkflowSimulator({
           <ToolbarButton
             active={compareMode === "difference"}
             onClick={() => {
-              setCompareMode("difference")
+              if (isLeftViewHidden) toggleHideLeftView(false)
+              setCompareMode(compareMode === "difference" ? "side-by-side" : "difference")
               setShowOptions(true)
             }}
             title="Highlight pixel differences"
@@ -1722,23 +1739,6 @@ export function WorkflowSimulator({
             <span className="sm:hidden">Diff</span>
             <span className="hidden sm:inline">Difference</span>
           </ToolbarButton>
-
-          {/* Hide/Show Left View Button */}
-          {compareMode === "side-by-side" && (
-            <button
-              type="button"
-              onClick={() => toggleHideLeftView()}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
-                isLeftViewHidden
-                  ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
-                  : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
-              }`}
-              title={isLeftViewHidden ? "Show Left Spec View" : "Hide Left View & Expand Screen to Full Width"}
-            >
-              {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-              <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
-            </button>
-          )}
         </div>
 
         {/* Right: Options + Capture + Fullscreen */}
@@ -1910,7 +1910,7 @@ export function WorkflowSimulator({
               type="button"
               onClick={() => {
                 setZoomMode("fit")
-                triggerToast("Auto-fitted both screens to view")
+                triggerToast(isLeftViewHidden ? "Auto-fitted device screen to view" : "Auto-fitted both screens to view")
               }}
               className={`px-2.5 py-1 rounded text-[11px] font-semibold transition cursor-pointer ${zoomMode === "fit" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
                 }`}
@@ -1961,8 +1961,8 @@ export function WorkflowSimulator({
             </button>
           </div>
 
-          {/* Split ratio — moved here from header, only relevant in side-by-side */}
-          {compareMode === "side-by-side" && (
+          {/* Split ratio — only relevant in side-by-side when both panels are visible */}
+          {compareMode === "side-by-side" && !isLeftViewHidden && (
             <div className="flex items-center gap-1 bg-white dark:bg-[#181a22] p-0.5 rounded border border-slate-300 dark:border-[#272b38] text-[11px] shadow-xs transition-colors">
               {[40, 50, 60].map((ratio) => (
                 <button
@@ -2269,22 +2269,6 @@ export function WorkflowSimulator({
                   </button>
                 </div>
 
-                {/* Port Quick Switch */}
-                <div className="hidden xl:flex items-center gap-1 font-mono text-[10px]">
-                  {["8082", "8081", "5173", "8080", "3001"].map((port) => (
-                    <button
-                      key={port}
-                      type="button"
-                      onClick={() => navigateTo(port)}
-                      className={`px-1.5 py-0.5 rounded border transition cursor-pointer ${currentUrl.includes(`:${port}`)
-                          ? "bg-indigo-100 dark:bg-indigo-600/30 border-indigo-300 dark:border-indigo-500/50 text-indigo-800 dark:text-indigo-300 font-bold"
-                          : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
-                        }`}
-                    >
-                      :{port}
-                    </button>
-                  ))}
-                </div>
 
                 {/* Open in new tab */}
                 <a
@@ -2725,73 +2709,67 @@ export function WorkflowSimulator({
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 overflow-y-auto flex-1">
-              {/* Section 1: Our Notes */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-[#e2e4ea]">
-                    <FileText className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                    <span>Our Notes</span>
-                  </label>
-                  <span className="text-[10px] text-blue-600 dark:text-blue-400/90 font-medium px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
-                    Developer Notes
-                  </span>
-                </div>
-
-                {canEdit || isOwner ? (
-                  <textarea
-                    value={notesDraft}
-                    onChange={(e) => setNotesDraft(e.target.value)}
-                    onBlur={() => {
-                      if (currentWorkflow && onUpdateField && notesDraft !== (currentWorkflow.ourNotes || "")) {
-                        onUpdateField(currentWorkflow.id, "ourNotes", notesDraft)
-                      }
-                    }}
-                    rows={4}
-                    placeholder="Developer notes about the design structure, constraints, or UX decisions..."
-                    className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#272b38] focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 rounded-lg p-3 text-xs text-slate-900 dark:text-[#e2e4ea] placeholder-slate-400 dark:placeholder-[#5a6275] focus:outline-none resize-none leading-relaxed transition"
-                  />
-                ) : (
-                  <div className="w-full min-h-[80px] bg-slate-50 dark:bg-[#0d0e14] border border-slate-200 dark:border-[#272b38] rounded-lg p-3 text-xs text-slate-800 dark:text-[#d1d5db] leading-relaxed whitespace-pre-wrap">
-                    {currentWorkflow?.ourNotes || (
-                      <span className="text-slate-400 dark:text-[#646c82] italic">No developer notes provided.</span>
-                    )}
+              {[
+                {
+                  label: "Our Notes",
+                  tag: "Developer Notes",
+                  icon: <FileText className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />,
+                  tagColor: "text-blue-600 dark:text-blue-400/90 bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20",
+                  focusColor: "focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30",
+                  value: notesDraft,
+                  onChange: setNotesDraft,
+                  field: "ourNotes" as const,
+                  placeholder: "Developer notes about the design structure, constraints, or UX decisions...",
+                  existing: currentWorkflow?.ourNotes,
+                  fallback: "No developer notes provided.",
+                },
+                {
+                  label: "Reason",
+                  tag: "Designer Reasoning",
+                  icon: <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />,
+                  tagColor: "text-amber-600 dark:text-amber-400/90 bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20",
+                  focusColor: "focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30",
+                  value: reasonDraft,
+                  onChange: setReasonDraft,
+                  field: "reason" as const,
+                  placeholder: "Explain why changes were made or how feedback was addressed...",
+                  existing: currentWorkflow?.reason,
+                  fallback: "No reason provided.",
+                },
+              ].map((item) => (
+                <div key={item.label} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-[#e2e4ea]">
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </label>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${item.tagColor}`}>
+                      {item.tag}
+                    </span>
                   </div>
-                )}
-              </div>
 
-              {/* Section 2: Reason for Final Changes */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-[#e2e4ea]">
-                    <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-                    <span>Reason</span>
-                  </label>
-                  <span className="text-[10px] text-amber-600 dark:text-amber-400/90 font-medium px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
-                    Designer Reasoning
-                  </span>
+                  {canEdit || isOwner ? (
+                    <textarea
+                      value={item.value}
+                      onChange={(e) => item.onChange(e.target.value)}
+                      onBlur={() => {
+                        if (currentWorkflow && onUpdateField && item.value !== (item.existing || "")) {
+                          onUpdateField(currentWorkflow.id, item.field, item.value)
+                        }
+                      }}
+                      rows={4}
+                      placeholder={item.placeholder}
+                      className={`w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#272b38] ${item.focusColor} rounded-lg p-3 text-xs text-slate-900 dark:text-[#e2e4ea] placeholder-slate-400 dark:placeholder-[#5a6275] focus:outline-none resize-none leading-relaxed transition`}
+                    />
+                  ) : (
+                    <div className="w-full min-h-[80px] bg-slate-50 dark:bg-[#0d0e14] border border-slate-200 dark:border-[#272b38] rounded-lg p-3 text-xs text-slate-800 dark:text-[#d1d5db] leading-relaxed whitespace-pre-wrap">
+                      {item.existing || (
+                        <span className="text-slate-400 dark:text-[#646c82] italic">{item.fallback}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-
-                {canEdit || isOwner ? (
-                  <textarea
-                    value={reasonDraft}
-                    onChange={(e) => setReasonDraft(e.target.value)}
-                    onBlur={() => {
-                      if (currentWorkflow && onUpdateField && reasonDraft !== (currentWorkflow.reason || "")) {
-                        onUpdateField(currentWorkflow.id, "reason", reasonDraft)
-                      }
-                    }}
-                    rows={4}
-                    placeholder="Explain why changes were made or how feedback was addressed..."
-                    className="w-full bg-slate-50 dark:bg-[#0d0e14] border border-slate-300 dark:border-[#272b38] focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 rounded-lg p-3 text-xs text-slate-900 dark:text-[#e2e4ea] placeholder-slate-400 dark:placeholder-[#5a6275] focus:outline-none resize-none leading-relaxed transition"
-                  />
-                ) : (
-                  <div className="w-full min-h-[80px] bg-slate-50 dark:bg-[#0d0e14] border border-slate-200 dark:border-[#272b38] rounded-lg p-3 text-xs text-slate-800 dark:text-[#d1d5db] leading-relaxed whitespace-pre-wrap">
-                    {currentWorkflow?.reason || (
-                      <span className="text-slate-400 dark:text-[#646c82] italic">No reason provided.</span>
-                    )}
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
 
             {/* Modal Footer */}
@@ -2954,36 +2932,26 @@ export function WorkflowSimulator({
 
             {/* Tabs */}
             <div className="flex items-center gap-1 my-4 bg-slate-100 dark:bg-[#1b1e2a] p-1 rounded-lg text-xs">
-              <button
-                type="button"
-                onClick={() => setAuthConfig(prev => ({ ...prev, type: "login" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "login"
-                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
-                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
+              {(
+                [
+                  ["login", "Auto-Login (User/Pass)"],
+                  ["cookie", "Session Cookie"],
+                  ["token", "Bearer Token"],
+                ] as const
+              ).map(([type, label]) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setAuthConfig((prev) => ({ ...prev, type }))}
+                  className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${
+                    authConfig.type === type
+                      ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
+                      : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
                   }`}
-              >
-                Auto-Login (User/Pass)
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthConfig(prev => ({ ...prev, type: "cookie" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "cookie"
-                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
-                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
-                  }`}
-              >
-                Session Cookie
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthConfig(prev => ({ ...prev, type: "token" }))}
-                className={`flex-1 py-1 rounded-md font-medium transition cursor-pointer ${authConfig.type === "token"
-                    ? "bg-white dark:bg-[#272b38] text-slate-900 dark:text-white shadow-xs"
-                    : "text-slate-500 dark:text-[#7e8596] hover:text-slate-900 dark:hover:text-white"
-                  }`}
-              >
-                Bearer Token
-              </button>
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             {/* Fields */}
@@ -3122,9 +3090,28 @@ export function WorkflowSimulator({
 // Mock content components
 // ============================================================================
 
-function FigmaPrototypeMock({ viewportWidth, viewportHeight, title }: { viewportWidth: number; viewportHeight: number; title: string }) {
+function MockDashboardView({
+  viewportWidth,
+  viewportHeight,
+  title,
+  minHeight = "900px",
+  children,
+}: {
+  viewportWidth?: number
+  viewportHeight?: number
+  title: string
+  minHeight?: string
+  children?: React.ReactNode
+}) {
+  const bars = [42, 58, 65, 72, 60, 85, 92, 78, 64, 52, 69, 81, 95, 88, 76, 68, 74, 82, 91, 86, 79, 94]
   return (
-    <div style={{ width: `${viewportWidth}px`, minHeight: `${viewportHeight}px` }} className="bg-[#0f1117] text-white flex flex-col select-none">
+    <div
+      style={{
+        ...(viewportWidth ? { width: `${viewportWidth}px` } : {}),
+        minHeight: viewportHeight ? `${viewportHeight}px` : minHeight,
+      }}
+      className="bg-[#0f1117] text-white flex flex-col select-none relative"
+    >
       <div className="h-16 border-b border-[#1f2433] px-8 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 font-bold tracking-tight text-base text-white">
@@ -3149,7 +3136,7 @@ function FigmaPrototypeMock({ viewportWidth, viewportHeight, title }: { viewport
             <h1 className="text-2xl font-bold tracking-tight text-white">{title}</h1>
             <p className="text-xs text-[#8e95a5] mt-1">Real-time throughput metrics & conversion funnels across active regions.</p>
           </div>
-          <button type="button" className="px-6 py-3 rounded-lg bg-[#6366F1] text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 flex items-center gap-2">
+          <button type="button" className="px-5 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold text-xs shadow-md flex items-center gap-2 hover:bg-indigo-500 transition">
             <Plus className="w-3.5 h-3.5" />
             Deploy New Cluster
           </button>
@@ -3177,14 +3164,19 @@ function FigmaPrototypeMock({ viewportWidth, viewportHeight, title }: { viewport
             <span className="text-[#7c8395] font-mono">Sampling: 1s interval</span>
           </div>
           <div className="h-36 w-full flex items-end gap-1 pt-4 border-b border-[#212638]">
-            {[42, 58, 65, 72, 60, 85, 92, 78, 64, 52, 69, 81, 95, 88, 76, 68, 74, 82, 91, 86, 79, 94].map((val, i) => (
+            {bars.map((val, i) => (
               <div key={i} style={{ height: `${val}%` }} className="flex-1 bg-indigo-500/40 rounded-t hover:bg-indigo-400 transition" />
             ))}
           </div>
         </div>
       </div>
+      {children}
     </div>
   )
+}
+
+function FigmaPrototypeMock({ viewportWidth, viewportHeight, title }: { viewportWidth: number; viewportHeight: number; title: string }) {
+  return <MockDashboardView viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={title} />
 }
 
 function LiveDevSandboxMock({
@@ -3201,67 +3193,9 @@ function LiveDevSandboxMock({
   title: string
 }) {
   return (
-    <div className="text-white flex flex-col select-none relative min-h-[900px] bg-[#0f1117]">
-      <div className="h-16 border-b border-[#1f2433] px-8 flex items-center justify-between bg-[#0f1117]">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 font-bold tracking-tight text-base text-white">
-            <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center text-xs">◆</div>
-            PulseMetric Pro
-          </div>
-          <div className="flex items-center gap-4 text-xs text-[#9aa0b2]">
-            <span className="text-white font-medium">Dashboard</span>
-            <span>Analytics</span>
-            <span>Audience</span>
-            <span>Integrations</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-full bg-[#1d2230] border border-[#2b3144] flex items-center justify-center text-xs">🔔</div>
-          <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">JD</div>
-        </div>
-      </div>
-      <div className="p-8 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">{title}</h1>
-            <p className="text-xs text-[#8e95a5] mt-1">Real-time throughput metrics & conversion funnels across active regions.</p>
-          </div>
-          <button type="button" className="px-4 py-2 rounded bg-[#3B82F6] text-white font-medium text-xs shadow-md flex items-center gap-2 hover:bg-blue-600 transition">
-            <Plus className="w-3.5 h-3.5" />
-            Deploy New Cluster
-          </button>
-        </div>
-        <div className="grid grid-cols-3 gap-5">
-          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
-            <div className="text-xs font-medium text-[#8c93a8]">Active Sessions</div>
-            <div className="text-2xl font-bold text-white mt-2 font-mono">142,890</div>
-            <div className="text-[11px] text-gray-400 mt-2 font-mono">+18% vs last week</div>
-          </div>
-          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
-            <div className="text-xs font-medium text-[#8c93a8]">P99 Response Latency</div>
-            <div className="text-2xl font-bold text-white mt-2 font-mono">42.8 ms</div>
-            <div className="text-[11px] text-emerald-400 mt-2 flex items-center gap-1 font-medium">↓ -4.2ms faster</div>
-          </div>
-          <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a]">
-            <div className="text-xs font-medium text-[#8c93a8]">Net Error Rate</div>
-            <div className="text-2xl font-bold text-white mt-2 font-mono">0.003%</div>
-            <div className="text-[11px] text-[#8c93a8] mt-2">Target: &lt; 0.05%</div>
-          </div>
-        </div>
-        <div className="p-5 rounded-xl bg-[#151824] border border-[#23283a] space-y-4">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-white">Throughput Trends (24h)</span>
-            <span className="text-[#7c8395] font-mono">Sampling: 1s interval</span>
-          </div>
-          <div className="h-36 w-full flex items-end gap-1 pt-4 border-b border-[#212638]">
-            {[42, 58, 65, 72, 60, 85, 92, 78, 64, 52, 69, 81, 95, 88, 76, 68, 74, 82, 91, 86, 79, 94].map((val, i) => (
-              <div key={i} style={{ height: `${val}%` }} className="flex-1 bg-blue-500/40 rounded-t hover:bg-blue-400 transition" />
-            ))}
-          </div>
-        </div>
-      </div>
+    <MockDashboardView title={title} minHeight="900px">
       <AnnotationPins annotations={annotations} activeAnnotationId={activeAnnotationId} setActiveAnnotationId={setActiveAnnotationId} newAnnotationCoords={newAnnotationCoords} />
-    </div>
+    </MockDashboardView>
   )
 }
 
