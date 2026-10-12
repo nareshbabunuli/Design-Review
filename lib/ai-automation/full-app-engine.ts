@@ -1945,6 +1945,7 @@ export async function executeStructuredTestPlan(
     step.status = "running"
     updateActionLedgerForStep(job, step, "running")
     job.currentStep = `[${i + 1}/${testPlan.steps.length}] Testing ${step.screenName}: ${step.actionType.toUpperCase()} ${step.targetName}`
+    emitSessionEvent(job, "browser_action", { message: job.currentStep, payload: { stepId: step.id, screenId: step.screenId, actionType: step.actionType } })
     job.progress = Math.round(30 + ((i + 1) / testPlan.steps.length) * 65)
     saveJob(job)
 
@@ -2989,6 +2990,7 @@ export async function executeStructuredTestPlan(
         screen.path.split("#")[0] === currentNorm &&
         screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase()
       )
+      let createdNewScreen = false
 
       if (!currentScreen && !hasActiveModal) {
         currentScreen = testPlan.screens.find((screen) =>
@@ -2998,6 +3000,7 @@ export async function executeStructuredTestPlan(
       }
 
       if (!currentScreen) {
+        createdNewScreen = true
         const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
         currentScreen = {
           id: newScreenId,
@@ -3058,6 +3061,27 @@ export async function executeStructuredTestPlan(
       linkTestPlanStepsToLedger(job, testPlan)
       const queuedNow = queueUnplannedLedgerActions(job, testPlan, resolvedScreen.id, i)
       const prioritizedNow = prioritizePendingStepsForScreen(testPlan, resolvedScreen.id, i)
+      job.currentUrl = currentUrl
+      job.flowGraph = buildFigmaWorkflowMap(testPlan)
+      job.fullAppTestPlan = testPlan
+      if (createdNewScreen) {
+        emitSessionEvent(job, "screen_discovered", {
+          url: currentUrl,
+          message: `Discovered ${hasActiveModal ? "modal/view" : "screen"} ${resolvedScreen.name} while testing.`,
+          payload: { screenId: resolvedScreen.id, path: resolvedScreen.path, actionableCount: resolvedScreen.actionableElements.length },
+        })
+      }
+      emitSessionEvent(job, "test_result", {
+        url: currentUrl,
+        message: `Step ${step.id}: ${step.status} — ${step.targetName}`,
+        payload: {
+          stepId: step.id,
+          screenId: resolvedScreen.id,
+          status: step.status,
+          verdict: step.verdict,
+          hasScreenshot: Boolean(step.screenshotUrl),
+        },
+      })
       if (queuedNow > 0 || prioritizedNow > 0) {
         appendLog(
           job,
