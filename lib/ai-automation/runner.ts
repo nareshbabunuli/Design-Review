@@ -37,6 +37,7 @@ import {
   isFeatureWorkflowCommand,
 } from "./feature-workflow-engine"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
+import { emitSessionEvent } from "./job-store"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
   { name: "Mobile", width: 390, height: 844 },
@@ -117,6 +118,10 @@ export function appendLog(job: AutomationJob, level: AutomationLog["level"], mes
   }
   job.logs.push(log)
   saveJob(job)
+  emitSessionEvent(job, level === "error" ? "error" : "progress", {
+    message,
+    payload: { level },
+  })
   console.log(`[AI Bot][${job.id.slice(0, 6)}][${level.toUpperCase()}] ${message}`)
 }
 
@@ -147,6 +152,10 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
 
   const newJob: AutomationJob = {
     id: jobId,
+    sessionId: jobId,
+    sessionEventSequence: 0,
+    sessionEvents: [],
+    currentUrl: params.url.trim(),
     targetUrl: params.url.trim(),
     projectId: params.projectId,
     projectDir: params.projectDir,
@@ -179,6 +188,11 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
   }
 
   saveJob(newJob)
+  emitSessionEvent(newJob, "session_started", {
+    url: newJob.currentUrl,
+    message: "Shared testing session created; browser, map, chat and recording use this session ID.",
+    payload: { mode: newJob.mode || "chat" },
+  })
 
   // Launch execution asynchronously without awaiting
   setImmediate(() => {
