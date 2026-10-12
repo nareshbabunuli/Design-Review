@@ -193,6 +193,151 @@ async function findVisibleInput(
   return null
 }
 
+type VisibleFormFillTask = {
+  selector: string
+  name: string
+  value: string
+  kind: "type" | "select" | "check"
+  sensitive: boolean
+}
+
+/** Fill a real form through visible pointer and keyboard input, publishing each action to the live mirror. */
+async function fillFormVisibly(
+  job: AutomationJob,
+  page: Page,
+  formSelector: string,
+  testData: typeof SYNTHETIC_TEST_DATA,
+  payload?: Record<string, unknown> | null,
+  paymentCreds?: TestPaymentCredentials | null,
+): Promise<{ attempted: number; failed: number }> {
+  const markerPrefix = `qa-human-${job.id}-${Date.now()}`
+  const tasks = await page.evaluate(
+    (sel, data, formPayload, payment, prefix) => {
+      const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+      if (!form) return [] as VisibleFormFillTask[]
+      const tasks: VisibleFormFillTask[] = []
+      const radioGroups = new Set<string>()
+      const mark = (field: Element, index: number) => {
+        const marker = `${prefix}-${index}`
+        field.setAttribute("data-qa-human-fill", marker)
+        return `[data-qa-human-fill="${marker}"]`
+      }
+
+      Array.from(form.querySelectorAll("input, textarea, select")).forEach((field: any, index) => {
+        const type = String(field.type || "").toLowerCase()
+        const tag = String(field.tagName || "").toLowerCase()
+        const name = String(field.name || field.id || "").toLowerCase()
+        const placeholder = String(field.placeholder || "").toLowerCase()
+        const label = field.labels ? Array.from(field.labels).map((x: any) => x.textContent || "").join(" ").toLowerCase() : ""
+        const sensitive = type === "password" || /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(name + " " + placeholder + " " + label)
+        const existingValue = typeof field.value === "string" ? field.value.trim() : ""
+        const style = window.getComputedStyle(field)
+        const rect = field.getBoundingClientRect()
+        if (field.disabled || field.readOnly || rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
+        if (["submit", "button", "hidden", "file", "reset"].includes(type)) return
+
+        const key = String(field.name || field.id || "")
+        if (formPayload && key && Object.prototype.hasOwnProperty.call(formPayload, key)) {
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Form field", value: String(formPayload[key] ?? ""), kind: tag === "select" ? "select" : "type", sensitive })
+          return
+        }
+
+        if (tag === "select") {
+          if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
+          const option = Array.from(field.options || []).find((item: any, optionIndex: number) => optionIndex > 0 && !item.disabled) || Array.from(field.options || []).find((item: any) => !item.disabled)
+          if (option) tasks.push({ selector: mark(field, index), name: label || key || "Dropdown", value: String((option as any).value), kind: "select", sensitive: false })
+          return
+        }
+
+        if (type === "checkbox") {
+          if (!field.checked) tasks.push({ selector: mark(field, index), name: label || key || "Checkbox", value: "true", kind: "check", sensitive: false })
+          return
+        }
+
+        if (type === "radio") {
+          const groupKey = String(field.name || `radio-${index}`)
+          if (radioGroups.has(groupKey)) return
+          radioGroups.add(groupKey)
+          const group = Array.from(form.querySelectorAll('input[type="radio"]')).filter((radio: any) => String(radio.name || "") === String(field.name || ""))
+          if (group.some((radio: any) => radio.checked)) return
+          if (group[0] === field) tasks.push({ selector: mark(field, index), name: label || key || "Radio option", value: "true", kind: "check", sensitive: false })
+          return
+        }
+
+        if (!sensitive && existingValue && field.checkValidity()) return
+
+        let value = String(data.fullName || "QA Test User")
+        if (type === "email" || /email/i.test(name + " " + placeholder + " " + label)) value = String(data.email || "qa-test@example.com")
+        else if (type === "password" || /password|passcode/i.test(name + " " + placeholder + " " + label)) value = String(data.password || "QaTest!234")
+        else if (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label)) value = String(data.phone || "+15555550123")
+        else if (type === "number" || /amount|count|age|qty/i.test(name + " " + placeholder + " " + label)) value = "10"
+        else if (type === "url" || /url|website/i.test(name + " " + placeholder + " " + label)) value = "https://example.com"
+        else if (type === "date") value = new Date().toISOString().slice(0, 10)
+
+        if (payment) {
+          if (/card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) || /card\s*number/i.test(placeholder)) value = payment.cardNumber || "4242 4242 4242 4242"
+          else if (/cvv|cvc|security[-_]?code/i.test(name) || /cvv|cvc|security\s*code/i.test(placeholder)) value = payment.cvv || "123"
+          else if (/exp|expiration|expiry/i.test(name) || /exp|mm\/yy/i.test(placeholder)) value = payment.expiryDate || "12/34"
+          else if (/zip|postal/i.test(name + " " + placeholder)) value = payment.zipCode || "90210"
+        }
+
+        tasks.push({ selector: mark(field, index), name: label || placeholder || key || `${type || tag} field`, value, kind: "type", sensitive })
+      })
+      return tasks
+    },
+    formSelector,
+    testData,
+    payload || null,
+    paymentCreds || null,
+    markerPrefix,
+  )
+
+  let failed = 0
+  for (const task of tasks) {
+    const field = await page.$(task.selector).catch(() => null)
+    const box = await field?.boundingBox().catch(() => null)
+    if (!field || !box) {
+      failed++
+      appendLog(job, "warn", `[FORM] Could not find visible field "${task.name}" for human-paced input.`)
+      continue
+    }
+
+    await publishLiveAction(job, page, {
+      type: task.kind === "type" ? "type" : "click",
+      description: task.kind === "type" ? `Typing into ${task.name}` : `Selecting ${task.name}`,
+      target: task.name,
+      selector: task.selector,
+      value: task.value,
+      sensitive: task.sensitive,
+    })
+    await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    await publishLiveFrame(job, page)
+
+    let ok = false
+    if (task.kind === "type") {
+      ok = await humanType(page, field, task.value, { label: task.name, maskInBanner: task.sensitive })
+    } else if (task.kind === "check") {
+      ok = Boolean(await humanClick(page, field))
+    } else {
+      const optionIndex = await field.evaluate((node, value) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.value === value), task.value).catch(() => -1)
+      if (optionIndex >= 0 && await humanClick(page, field)) {
+        try {
+          await page.keyboard.press("Home")
+          for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
+          await page.keyboard.press("Enter")
+          ok = await field.evaluate((node, value) => (node as HTMLSelectElement).value === value, task.value).catch(() => false)
+        } catch {}
+      }
+    }
+
+    if (!ok) failed++
+    if (job.currentAction) job.currentAction.status = ok ? "passed" : "failed"
+    await publishLiveFrame(job, page)
+  }
+
+  return { attempted: tasks.length, failed }
+}
+
 export const DEFAULT_SANDBOX_CARD: TestPaymentCredentials = {
   cardNumber: "4242 4242 4242 4242",
   cardHolder: "Test Automation User",
