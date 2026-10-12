@@ -27,7 +27,7 @@ const OVERLAY_SCRIPT = `
       pointer-events: none;
       z-index: 2147483647;
       transform: translate(-100px, -100px);
-      transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: transform 0.04s linear;
       filter: drop-shadow(0 4px 10px rgba(37, 99, 235, 0.5));
     }
     #qa-visual-cursor svg {
@@ -129,9 +129,6 @@ const OVERLAY_SCRIPT = `
     input[data-sensitive="true"], textarea[data-sensitive="true"],
     [data-qa-secret="true"] {
       -webkit-text-security: disc !important;
-      color: transparent !important;
-      text-shadow: none !important;
-      caret-color: transparent !important;
     }
     [data-sensitive="true"], [data-qa-secret="true"] { filter: blur(8px) !important; }
   \`;

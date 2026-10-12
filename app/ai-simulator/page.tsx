@@ -263,6 +263,15 @@ export default function AISimulatorPage() {
 
   // Verification and Settings interaction state
   const [verificationUrlInput, setVerificationUrlInput] = useState("")
+  const [isDummyTestActive, setIsDummyTestActive] = useState(false)
+
+  useEffect(() => {
+    const handleStatus = (e: any) => {
+      setIsDummyTestActive(Boolean(e.detail?.running))
+    }
+    window.addEventListener("dummy-test-status", handleStatus)
+    return () => window.removeEventListener("dummy-test-status", handleStatus)
+  }, [])
   const [verificationCodeInput, setVerificationCodeInput] = useState("")
   const [isSubmittingVerification, setIsSubmittingVerification] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
@@ -2279,17 +2288,22 @@ export default function AISimulatorPage() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    disabled={isDummyTestActive}
                     onClick={() => {
                       if (workspaceLayoutMode === "stage") {
                         setWorkspaceLayoutMode("split")
                       }
                       window.dispatchEvent(new CustomEvent("run-simulator-dummy-test"))
                     }}
-                    className="px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                    className={`px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 shadow-sm transition font-bold ${
+                      isDummyTestActive
+                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait animate-pulse"
+                        : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 cursor-pointer"
+                    }`}
                     title="Run dummy test with mouse operations and form filling on login form"
                   >
-                    <Play className="h-3 w-3 fill-current" />
-                    <span>Dummy Test: Form & Mouse</span>
+                    <Play className={`h-3 w-3 fill-current ${isDummyTestActive ? "animate-spin" : ""}`} />
+                    <span>{isDummyTestActive ? "Running Dummy Test…" : "Dummy Test: Form & Mouse"}</span>
                   </button>
 
                   {currentJob?.status === "running" && (

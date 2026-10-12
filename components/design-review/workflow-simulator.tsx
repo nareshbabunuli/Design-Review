@@ -184,6 +184,7 @@ function LiveAgentCursorOverlay({
   viewportWidth,
   viewportHeight,
   bannerText,
+  hideCursor,
 }: {
   action?: AgentAction | null
   workflow?: Workflow | null
@@ -191,6 +192,7 @@ function LiveAgentCursorOverlay({
   viewportWidth: number
   viewportHeight: number
   bannerText?: string | null
+  hideCursor?: boolean
 }) {
   const [pos, setPos] = useState<{ x: number; y: number }>({
     x: Math.round(viewportWidth / 2),
@@ -304,71 +306,73 @@ function LiveAgentCursorOverlay({
         </div>
       )}
 
-      <div
-        className="absolute top-0 left-0 transition-transform duration-500 ease-out will-change-transform"
-        style={{
-          transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`,
-        }}
-      >
-        {/* Click ripple animation */}
-        {isClicking && (
-          <span className="absolute -top-4 -left-4 w-12 h-12 rounded-full border-2 border-rose-500 bg-rose-500/30 animate-ping pointer-events-none" />
-        )}
-
-        {/* Target radar halo ring */}
+      {!hideCursor && (
         <div
-          className={`absolute -top-3 -left-3 w-9 h-9 rounded-full border pointer-events-none transition-colors ${
-            isClick
-              ? "border-rose-400/80 bg-rose-500/20 animate-ping"
-              : isType
-              ? "border-sky-400/80 bg-sky-500/20 animate-pulse"
-              : "border-indigo-400/70 bg-indigo-500/15 animate-pulse"
-          }`}
-        />
-
-        {/* High-visibility SVG Mouse Pointer Arrow */}
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-          className="drop-shadow-[0_4px_12px_rgba(0,0,0,0.7)]"
+          className="absolute top-0 left-0 transition-transform duration-500 ease-out will-change-transform"
+          style={{
+            transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`,
+          }}
         >
-          <path
-            d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z"
-            fill={isClick ? "#f43f5e" : isType ? "#0284c7" : "#6366f1"}
-            stroke="#ffffff"
-            strokeWidth="1.8"
-            strokeLinejoin="round"
-          />
-        </svg>
+          {/* Click ripple animation */}
+          {isClicking && (
+            <span className="absolute -top-4 -left-4 w-12 h-12 rounded-full border-2 border-rose-500 bg-rose-500/30 animate-ping pointer-events-none" />
+          )}
 
-        {/* Action HUD Pill Badge beside pointer */}
-        <div className="absolute left-6 top-1.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950/95 border border-indigo-500/60 shadow-2xl backdrop-blur-md text-[10px] font-mono whitespace-nowrap">
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
+          {/* Target radar halo ring */}
+          <div
+            className={`absolute -top-3 -left-3 w-9 h-9 rounded-full border pointer-events-none transition-colors ${
               isClick
-                ? "bg-rose-400 animate-ping"
+                ? "border-rose-400/80 bg-rose-500/20 animate-ping"
                 : isType
-                ? "bg-sky-400 animate-pulse"
-                : "bg-emerald-400 animate-pulse"
+                ? "border-sky-400/80 bg-sky-500/20 animate-pulse"
+                : "border-indigo-400/70 bg-indigo-500/15 animate-pulse"
             }`}
           />
-          <strong className="text-white uppercase font-bold text-[9px] tracking-wide">
-            {effectiveAction?.type || (isRunning ? "EXECUTING" : "ACTIVE")}
-          </strong>
-          <span className="text-slate-300 max-w-[150px] truncate text-[9px]">
-            {effectiveAction?.target || effectiveAction?.description || (isRunning ? "Live testing" : "Target element")}
-          </span>
-        </div>
 
-        {/* Typing Bubble */}
-        {isType && effectiveAction?.value && (
-          <div className="absolute left-6 top-7 px-2 py-0.5 rounded bg-sky-950/95 border border-sky-500/60 text-[9px] text-sky-200 font-mono shadow-xl backdrop-blur-md">
-            ⌨ &quot;{effectiveAction.value}&quot;
+          {/* High-visibility SVG Mouse Pointer Arrow */}
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            className="drop-shadow-[0_4px_12px_rgba(0,0,0,0.7)]"
+          >
+            <path
+              d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z"
+              fill={isClick ? "#f43f5e" : isType ? "#0284c7" : "#6366f1"}
+              stroke="#ffffff"
+              strokeWidth="1.8"
+              strokeLinejoin="round"
+            />
+          </svg>
+
+          {/* Action HUD Pill Badge beside pointer */}
+          <div className="absolute left-6 top-1.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950/95 border border-indigo-500/60 shadow-2xl backdrop-blur-md text-[10px] font-mono whitespace-nowrap">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isClick
+                  ? "bg-rose-400 animate-ping"
+                  : isType
+                  ? "bg-sky-400 animate-pulse"
+                  : "bg-emerald-400 animate-pulse"
+              }`}
+            />
+            <strong className="text-white uppercase font-bold text-[9px] tracking-wide">
+              {effectiveAction?.type || (isRunning ? "EXECUTING" : "ACTIVE")}
+            </strong>
+            <span className="text-slate-300 max-w-[150px] truncate text-[9px]">
+              {effectiveAction?.target || effectiveAction?.description || (isRunning ? "Live testing" : "Target element")}
+            </span>
           </div>
-        )}
-      </div>
+
+          {/* Typing Bubble */}
+          {isType && effectiveAction?.value && (
+            <div className="absolute left-6 top-7 px-2 py-0.5 rounded bg-sky-950/95 border border-sky-500/60 text-[9px] text-sky-200 font-mono shadow-xl backdrop-blur-md">
+              ⌨ &quot;{effectiveAction.value}&quot;
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -592,37 +596,46 @@ export function WorkflowSimulator({
     if (isDummyTestRunning) return
     setIsDummyTestRunning(true)
     setIsLiveCanvas(true)
-    setDummyLiveScreenshot(null)
+    setDummyBanner("⚡ Launching Real Browser Session...")
+    window.dispatchEvent(new CustomEvent("dummy-test-status", { detail: { running: true } }))
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
     const userEmail = "nareshbabu.nuli@gmail.com"
     const userPass = "TestPass123!"
 
+    // Clear stale state on server before polling
+    await fetch("/api/ai-automation/dummy-test?reset=1").catch(() => {})
+
     // Start background poller to stream live frames from Puppeteer
     let isPolling = true
+    let seenRunning = false
     const pollFrames = async () => {
       while (isPolling) {
         try {
           const res = await fetch("/api/ai-automation/dummy-test")
           const data = await res.json()
+          if (data?.status === "running") {
+            seenRunning = true
+          }
           if (data?.screenshot) {
             setDummyLiveScreenshot(data.screenshot)
           }
           if (data?.banner) {
             setDummyBanner(data.banner)
           }
-          if (data?.status === "completed" || data?.status === "failed") {
+          if (data?.action) {
+            setDummyAction(data.action)
+          }
+          if (seenRunning && (data?.status === "completed" || data?.status === "failed")) {
             break
           }
         } catch {}
-        await sleep(180)
+        await sleep(90)
       }
     }
     const pollingPromise = pollFrames()
 
     try {
-      setDummyBanner("⚡ Launching Real Browser Session...")
-      
       const res = await fetch("/api/ai-automation/dummy-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -639,7 +652,7 @@ export function WorkflowSimulator({
       }
       setDummyBanner("✓ Form Filled & Signed In Successfully!")
       triggerToast("✓ Signed in with nareshbabu.nuli@gmail.com")
-      await sleep(3500)
+      await sleep(2500)
     } catch (err: any) {
       setDummyBanner("Dummy test failed: " + (err?.message || "Error"))
       await sleep(2000)
@@ -649,6 +662,7 @@ export function WorkflowSimulator({
       setIsDummyTestRunning(false)
       setDummyBanner(null)
       setDummyAction(null)
+      window.dispatchEvent(new CustomEvent("dummy-test-status", { detail: { running: false } }))
     }
   }, [isDummyTestRunning, currentUrl, triggerToast])
 
@@ -2500,7 +2514,7 @@ export function WorkflowSimulator({
                       height: `${viewportHeight}px`,
                       maxWidth: "none",
                       maxHeight: "none",
-                      ...(((isRunningTest && liveSessionScreenshotUrl) || (isDummyTestRunning && dummyLiveScreenshot)) || (currentWorkflow?.designB && !isLiveCanvas)
+                      ...(((isRunningTest && liveSessionScreenshotUrl) || Boolean(dummyLiveScreenshot)) || (currentWorkflow?.designB && !isLiveCanvas)
                         ? {
                             opacity: 0,
                             pointerEvents: "none" as const,
@@ -2513,7 +2527,7 @@ export function WorkflowSimulator({
                   />
 
                   {/* Mirror the same Puppeteer-controlled page while full-app testing or dummy test is active. */}
-                  {((isRunningTest && liveSessionScreenshotUrl) || (isDummyTestRunning && dummyLiveScreenshot)) && (
+                  {((isRunningTest && liveSessionScreenshotUrl) || Boolean(dummyLiveScreenshot)) && (
                     <div className="absolute inset-0 z-20 w-full h-full bg-black overflow-hidden" aria-label="Live testing browser mirror">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -2521,10 +2535,26 @@ export function WorkflowSimulator({
                         alt="Live browser session"
                         className="block w-full h-full object-contain bg-black"
                       />
-                      <div className="absolute left-2 top-2 rounded-md border border-emerald-400/40 bg-slate-950/85 px-2 py-1 text-[10px] font-semibold text-emerald-300 shadow-lg">
-                        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        {isDummyTestRunning ? "Real Browser Session (Live)" : "Live testing session"}
+                      <div className="absolute left-2 top-2 rounded-md border border-emerald-400/40 bg-slate-950/85 px-2 py-1 text-[10px] font-semibold text-emerald-300 shadow-lg flex items-center gap-1.5">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>
+                          {isDummyTestRunning
+                            ? "Real Browser Session (Live Testing…)"
+                            : dummyLiveScreenshot
+                            ? "✓ Real Browser Session (Signed In)"
+                            : "Live testing session"}
+                        </span>
                       </div>
+                      {Boolean(dummyLiveScreenshot && !isDummyTestRunning) && (
+                        <button
+                          type="button"
+                          onClick={() => setDummyLiveScreenshot(null)}
+                          className="absolute right-2 top-2 rounded-md border border-slate-700 bg-slate-900/90 hover:bg-slate-800 text-slate-300 px-2 py-1 text-[10px] font-medium shadow cursor-pointer transition"
+                          title="Close mirror and return to interactive app frame"
+                        >
+                          ✕ Close Mirror
+                        </button>
+                      )}
                     </div>
                   )}
                   {isDummyTestRunning && !dummyLiveScreenshot && (
@@ -2576,6 +2606,7 @@ export function WorkflowSimulator({
                     viewportWidth={viewportWidth}
                     viewportHeight={viewportHeight}
                     bannerText={dummyBanner}
+                    hideCursor={Boolean(isDummyTestRunning && dummyLiveScreenshot)}
                   />
                 </DeviceFrame>
               </div>

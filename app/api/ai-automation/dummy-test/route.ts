@@ -19,10 +19,17 @@ declare global {
     banner?: string
     status: "idle" | "running" | "completed" | "failed"
     steps: string[]
+    action?: any
+    runId?: string
   } | undefined
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  if (searchParams.get("reset") === "1") {
+    globalThis.__DUMMY_TEST_FRAME__ = { status: "idle", steps: [] }
+    return NextResponse.json({ status: "idle", steps: [] })
+  }
   return NextResponse.json(globalThis.__DUMMY_TEST_FRAME__ || { status: "idle", steps: [] })
 }
 
@@ -30,8 +37,10 @@ export async function POST(req: NextRequest) {
   let browser: any = null
   let frameInterval: any = null
   const steps: string[] = []
+  const currentRunId = `run_${Date.now()}`
 
   globalThis.__DUMMY_TEST_FRAME__ = {
+    runId: currentRunId,
     status: "running",
     banner: "Starting Live Browser Session...",
     steps: ["Launching browser..."],
@@ -57,9 +66,9 @@ export async function POST(req: NextRequest) {
     })
 
     const page = await browser.newPage()
-    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 })
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
 
-    // Continuous Live Stream frame capture (~5 fps)
+    // Continuous Live Stream frame capture (~8 fps, lightweight)
     let isCapturing = false
     frameInterval = setInterval(async () => {
       if (isCapturing || !page || page.isClosed()) return
@@ -74,7 +83,7 @@ export async function POST(req: NextRequest) {
       finally {
         isCapturing = false
       }
-    }, 180)
+    }, 130)
 
     steps.push("Navigating to application...")
     if (globalThis.__DUMMY_TEST_FRAME__) {
@@ -83,8 +92,9 @@ export async function POST(req: NextRequest) {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 15000 })
     await installVisualOverlay(page).catch(() => {})
 
-    // Wait for splash screen to dismiss (Expo app 3s splash)
-    await sleep(3000)
+    // Dynamic wait: immediately proceed as soon as inputs mount (no artificial 3s stall)
+    const emailSelector = 'input[type="email"], input[placeholder*="email" i], input[name*="email" i]'
+    await page.waitForSelector(emailSelector, { timeout: 15000 }).catch(() => null)
     await installVisualOverlay(page).catch(() => {})
 
     // 1. Locate Email field
@@ -94,8 +104,6 @@ export async function POST(req: NextRequest) {
     }
     await showActionBanner(page, "Focus Email: " + username).catch(() => {})
 
-    const emailSelector = 'input[type="email"], input[placeholder*="email" i], input[name*="email" i]'
-    await page.waitForSelector(emailSelector, { timeout: 6000 }).catch(() => null)
     const emailEl = await page.$(emailSelector)
 
     if (emailEl) {
@@ -143,14 +151,14 @@ export async function POST(req: NextRequest) {
 
     const submitHandle = await page.evaluateHandle(() => {
       const candidates = Array.from(
-        document.querySelectorAll('button, [role="button"], div, input[type="submit"]')
+        document.querySelectorAll('button, [role="button"], [tabindex="0"], div, input[type="submit"]')
       ) as HTMLElement[]
-      return (
-        candidates.find((el) => {
-          const txt = (el.innerText || el.textContent || "").trim().toLowerCase()
-          return txt === "sign in" || txt === "login" || txt === "log in"
-        }) || null
-      )
+      const match = candidates.find((el) => {
+        const txt = (el.innerText || el.textContent || "").trim().toLowerCase()
+        return txt === "sign in" || txt === "login" || txt === "log in"
+      })
+      if (!match) return null
+      return match.closest('[tabindex="0"], button, [role="button"]') || match
     })
 
     const submitEl = submitHandle.asElement()
@@ -163,11 +171,48 @@ export async function POST(req: NextRequest) {
       await page.keyboard.press("Enter")
     }
 
-    // Allow page response / redirect to render
-    await sleep(3500)
+    // Safety fallback: also trigger Enter on password input if form hasn't submitted yet
+    if (passEl) {
+      await passEl.focus().catch(() => {})
+      await page.keyboard.press("Enter").catch(() => {})
+    }
+
+    // Wait dynamically for backend auth API and SPA redirect to render
+    if (globalThis.__DUMMY_TEST_FRAME__) {
+      globalThis.__DUMMY_TEST_FRAME__.banner = "Authenticating with server..."
+    }
+    steps.push("Authenticating with backend server...")
+
+    let isLoggedIn = false
+    try {
+      await page.waitForFunction(
+        () => {
+          const hasPw = Boolean(document.querySelector('input[type="password"]'))
+          const text = document.body ? document.body.innerText : ""
+          return !hasPw || /training|my training|home|dashboard/i.test(text)
+        },
+        { timeout: 12000 }
+      )
+      isLoggedIn = true
+    } catch {
+      const postLoginText = await page.evaluate(() => document.body.innerText).catch(() => "")
+      const hasPassword = Boolean(await page.$('input[type="password"]').catch(() => null))
+      isLoggedIn = !hasPassword || /training|home|dashboard|logout|sign out/i.test(postLoginText)
+    }
+
+    // Let authenticated UI (skills cards, bottom tab bar) fully settle
+    await sleep(1500)
+
+    if (isLoggedIn) {
+      steps.push("✓ Verification: Successfully authenticated & navigated to authenticated view (TRAINING)")
+    } else {
+      steps.push("Verification: Form submitted, checking state")
+    }
 
     if (globalThis.__DUMMY_TEST_FRAME__) {
-      globalThis.__DUMMY_TEST_FRAME__.banner = "✓ SIGN IN Operation Completed!"
+      globalThis.__DUMMY_TEST_FRAME__.banner = isLoggedIn
+        ? "✓ Successfully Authenticated (TRAINING view loaded)"
+        : "✓ Form Submitted"
       globalThis.__DUMMY_TEST_FRAME__.status = "completed"
       globalThis.__DUMMY_TEST_FRAME__.steps = steps
     }
