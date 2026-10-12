@@ -282,6 +282,9 @@ export type AgentAction = {
   selector?: string
   value?: string
   coordinates?: { x: number; y: number }
+  /** Source viewport used for coordinates so the UI can scale the cursor to its device frame. */
+  viewportWidth?: number
+  viewportHeight?: number
   observation?: string
   status?: "pending" | "running" | "passed" | "failed" | "blocked"
   durationMs?: number
