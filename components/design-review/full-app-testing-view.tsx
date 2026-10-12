@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo, useCallback } from "react"
+import React, { useState, useMemo, useCallback, useEffect } from "react"
 import type {
   AutomationJob,
   FullAppTestPlan,
@@ -114,6 +114,60 @@ export default function FullAppTestingView({
   const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null)
   const [screenshotModal, setScreenshotModal] = useState<string | null>(null)
   const [filterStepStatus, setFilterStepStatus] = useState<string>("all")
+  const [planChatInput, setPlanChatInput] = useState("")
+  const [planChatBusy, setPlanChatBusy] = useState(false)
+  const [planChatMessages, setPlanChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([])
+  const [planApprovalBusy, setPlanApprovalBusy] = useState(false)
+
+  useEffect(() => {
+    if (job?.planApprovalState === "awaiting_review" && job.fullAppTestPlan?.screens?.length) {
+      setInternalSubTab("plan")
+      onSubTabChange?.("plan")
+    }
+  }, [job?.planApprovalState, job?.fullAppTestPlan?.id, job?.fullAppTestPlan?.steps?.length, onSubTabChange])
+
+  const submitPlanChat = async () => {
+    if (!job?.id || !planChatInput.trim() || planChatBusy) return
+    const instruction = planChatInput.trim()
+    setPlanChatMessages((messages) => [...messages, { role: "user", text: instruction }])
+    setPlanChatInput("")
+    setPlanChatBusy(true)
+    try {
+      const response = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action: "edit_test_plan", instruction }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Could not update the plan")
+      if (data.job) onJobUpdate?.(data.job)
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: data.message || "Plan updated. Review the changes before approving." }])
+    } catch (error) {
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: error instanceof Error ? error.message : "Could not update the plan." }])
+    } finally {
+      setPlanChatBusy(false)
+    }
+  }
+
+  const approveTestPlan = async () => {
+    if (!job?.id || planApprovalBusy) return
+    setPlanApprovalBusy(true)
+    try {
+      const response = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action: "approve_test_plan" }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Could not approve the plan")
+      if (data.job) onJobUpdate?.(data.job)
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: "Plan approved. The current browser session will continue into execution." }])
+    } catch (error) {
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: error instanceof Error ? error.message : "Could not approve the plan." }])
+    } finally {
+      setPlanApprovalBusy(false)
+    }
+  }
 
   const handleDeleteScreen = useCallback(
     (screenId: string) => {
@@ -871,6 +925,48 @@ export default function FullAppTestingView({
                 </div>
               )}
             </div>
+
+            {job?.planApprovalState === "awaiting_review" && plan && (
+              <div className="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Review and chat with this plan</h4>
+                    <p className="text-xs text-slate-300 mt-1">The browser is paused after authenticated discovery. Ask for supported changes below, review the updated steps, then approve execution.</p>
+                  </div>
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-300">Waiting for approval</span>
+                </div>
+                {planChatMessages.length > 0 && (
+                  <div className="max-h-36 overflow-y-auto space-y-2 rounded-lg bg-slate-950/70 p-2.5" aria-live="polite">
+                    {planChatMessages.map((message, index) => (
+                      <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
+                        <span className={message.role === "user" ? "inline-block max-w-[90%] rounded-lg bg-indigo-600/30 px-3 py-2 text-xs text-indigo-100" : "inline-block max-w-[90%] rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200"}>{message.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form className="flex flex-col sm:flex-row gap-2" onSubmit={(event) => { event.preventDefault(); void submitPlanChat() }}>
+                  <input
+                    value={planChatInput}
+                    onChange={(event) => setPlanChatInput(event.target.value)}
+                    placeholder='Try: “add a test for signup validation” or “remove step 3”'
+                    aria-label="Chat with the test plan"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+                    disabled={planChatBusy}
+                  />
+                  <button type="submit" disabled={planChatBusy || !planChatInput.trim()} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
+                    {planChatBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    Apply change
+                  </button>
+                </form>
+                <p className="text-[10px] text-slate-400">Supported edits: add a test, remove a numbered step, rename a step, or change a step’s expected result. Every edit is saved to the plan before approval.</p>
+                <div className="flex justify-end border-t border-indigo-500/20 pt-3">
+                  <button type="button" onClick={() => void approveTestPlan()} disabled={planApprovalBusy || planChatBusy || job.status !== "running"} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+                    {planApprovalBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                    Approve plan &amp; run tests
+                  </button>
+                </div>
+              </div>
+            )}
 
             {filteredSteps.length > 0 ? (
               <div className="space-y-2">
