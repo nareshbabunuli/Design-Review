@@ -2352,6 +2352,19 @@ export function WorkflowSimulator({
                   <iframe
                     ref={iframeRef}
                     src={currentUrl}
+                    onLoad={() => {
+                      // Same-origin SPA redirects can be reflected into the shared session.
+                      // Cross-origin iframe URLs are intentionally left unreadable by the browser.
+                      try {
+                        const loadedUrl = iframeRef.current?.contentWindow?.location.href
+                        if (loadedUrl && loadedUrl !== currentUrl) {
+                          setCurrentUrl(loadedUrl)
+                          setUrlInput(loadedUrl)
+                          if (typeof window !== "undefined") localStorage.setItem("simulator_active_url", loadedUrl)
+                          onUrlChange?.(loadedUrl)
+                        }
+                      } catch {}
+                    }}
                     title="Live App Preview"
                     className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
                     style={
