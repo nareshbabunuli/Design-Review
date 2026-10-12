@@ -577,7 +577,15 @@ export async function executeFeatureWorkflowJob(
     })
 
     const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900 })
+    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const isMobileVp = primaryVp.width <= 768
+    await page.setViewport({
+      width: primaryVp.width,
+      height: primaryVp.height,
+      deviceScaleFactor: 1,
+      isMobile: isMobileVp,
+      hasTouch: isMobileVp,
+    })
     if (params.recordVideo !== false) {
       videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
       await videoRecorder.start(job)

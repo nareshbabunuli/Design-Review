@@ -409,6 +409,9 @@ export default function AISimulatorPage() {
     [activePlan, currentJob]
   )
 
+  // Simulator device viewport state
+  const [simulatorViewport, setSimulatorViewport] = useState<{ width: number; height: number }>({ width: 393, height: 852 })
+
   // Local Project Route Scanner State
   const [discoveredRoutes, setDiscoveredRoutes] = useState<Array<{ path: string; url: string; file: string; title: string }>>([])
   const [isScanningRoutes, setIsScanningRoutes] = useState(false)
@@ -1671,6 +1674,13 @@ export default function AISimulatorPage() {
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           mode: "full_app",
+          viewports: [
+            {
+              name: "Active Simulator Viewport",
+              width: simulatorViewport.width,
+              height: simulatorViewport.height,
+            },
+          ],
           dummyTestFiles,
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
@@ -1766,6 +1776,13 @@ export default function AISimulatorPage() {
           projectDir: selectedProjectDir,
           mode: "feature_workflow",
           workflowPrompt: promptText,
+          viewports: [
+            {
+              name: "Active Simulator Viewport",
+              width: simulatorViewport.width,
+              height: simulatorViewport.height,
+            },
+          ],
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
           allowTestPayments,
@@ -2317,6 +2334,7 @@ export default function AISimulatorPage() {
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
                       liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
+                      onViewportChange={(vp) => setSimulatorViewport({ width: vp.width, height: vp.height })}
                     />
                   </div>
                 )}

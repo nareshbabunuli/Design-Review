@@ -641,7 +641,15 @@ export async function executeAutonomousJob(
       ],
     })
     const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
+    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const isMobileVp = primaryVp.width <= 768
+    await page.setViewport({
+      width: primaryVp.width,
+      height: primaryVp.height,
+      deviceScaleFactor: 1,
+      isMobile: isMobileVp,
+      hasTouch: isMobileVp,
+    })
     page.on("pageerror", () => {})
     // Collect console errors for the issue list
     await page

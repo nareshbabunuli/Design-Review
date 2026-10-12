@@ -828,7 +828,7 @@ export async function detectEmptyDataSurfaces(page: Page): Promise<Array<{ selec
 }
 
 // Finds visible images/media whose resources failed to load.
-export async function detectBrokenDomAssets(page: Page): Promise<Array<{ url: string; tagName: string; alt: string; resourceType: "image"; description: string }>> {
+export async function detectBrokenDomAssets(page: Page): Promise<Array<{ url: string; tagName: string; alt: string; resourceType: "image" | "media"; description: string }>> {
   return page.evaluate(() => Array.from(document.querySelectorAll("img, source"))
     .filter((node) => {
       const el = node as HTMLImageElement | HTMLSourceElement;
@@ -845,11 +845,12 @@ export async function detectBrokenDomAssets(page: Page): Promise<Array<{ url: st
       const el = node as HTMLImageElement | HTMLSourceElement;
       const url = (el as HTMLImageElement).currentSrc || el.src || el.getAttribute("src") || "";
       const alt = (el as HTMLImageElement).alt || "";
+      const isMedia = el.tagName.toLowerCase() === "source";
       return {
         url,
         tagName: el.tagName.toLowerCase(),
         alt,
-        resourceType: "image" as const,
+        resourceType: (isMedia ? "media" : "image") as "image" | "media",
         description: alt ? `Image "${alt}" failed to load or decode.` : "Image failed to load or decode.",
       };
     }));

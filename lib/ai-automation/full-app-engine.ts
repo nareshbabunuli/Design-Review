@@ -3261,7 +3261,15 @@ export async function executeFullAppTestingJob(
     })
 
     const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900 })
+    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const isMobileVp = primaryVp.width <= 768
+    await page.setViewport({
+      width: primaryVp.width,
+      height: primaryVp.height,
+      deviceScaleFactor: 1,
+      isMobile: isMobileVp,
+      hasTouch: isMobileVp,
+    })
 
     // Safety environment inspection
     const isProd = isProductionLike(job.targetUrl)

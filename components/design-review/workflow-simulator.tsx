@@ -104,6 +104,7 @@ export interface WorkflowSimulatorProps {
   isRunningTest?: boolean
   /** Latest screenshot from the controlled automation browser while a session is running. */
   liveSessionScreenshotUrl?: string
+  onViewportChange?: (viewport: { width: number; height: number; presetId?: string | null }) => void
 }
 
 interface Annotation {
@@ -378,6 +379,7 @@ export function WorkflowSimulator({
   currentAction,
   isRunningTest = false,
   liveSessionScreenshotUrl,
+  onViewportChange,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
 
@@ -478,6 +480,14 @@ export function WorkflowSimulator({
   const [showDeviceFrame, setShowDeviceFrame] = useState<boolean>(true)
   const [frameFinish, setFrameFinish] = useState<FrameFinish>("titanium")
   const [showDeviceStatusBar, setShowDeviceStatusBar] = useState<boolean>(true)
+
+  useEffect(() => {
+    onViewportChange?.({
+      width: viewportWidth,
+      height: viewportHeight,
+      presetId: selectedPresetId,
+    })
+  }, [viewportWidth, viewportHeight, selectedPresetId, onViewportChange])
 
   // Live browser navigation
   const defaultUrl = useMemo(() => {
@@ -2369,19 +2379,24 @@ export function WorkflowSimulator({
                       } catch {}
                     }}
                     title="Live App Preview"
-                    className="w-full h-full border-0 bg-white dark:bg-[#0f1117]"
-                    style={
-                      isRunningTest && liveSessionScreenshotUrl
-                        ? { position: "absolute", opacity: 0, pointerEvents: "none", zIndex: -1 }
-                        : !currentWorkflow?.designB || isLiveCanvas
-                          ? {}
-                          : {
-                              position: "absolute",
-                              opacity: 0,
-                              pointerEvents: "none",
-                              zIndex: -1,
-                            }
-                    }
+                    className="absolute inset-0 block border-0 bg-white dark:bg-[#0f1117]"
+                    style={{
+                      // Keep the browsing context at the selected device's real CSS
+                      // viewport. DeviceFrame scales the outer screen for presentation;
+                      // letting the iframe size itself to a scaled parent can make
+                      // responsive apps render as a tiny, desktop-width page.
+                      width: `${viewportWidth}px`,
+                      height: `${viewportHeight}px`,
+                      maxWidth: "none",
+                      maxHeight: "none",
+                      ...((isRunningTest && liveSessionScreenshotUrl) || (currentWorkflow?.designB && !isLiveCanvas)
+                        ? {
+                            opacity: 0,
+                            pointerEvents: "none" as const,
+                            zIndex: -1,
+                          }
+                        : {}),
+                    }}
                     sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"
                     allow="accelerometer; camera; encrypted-media; gyroscope; microphone"
                   />
@@ -2393,7 +2408,7 @@ export function WorkflowSimulator({
                       <img
                         src={liveSessionScreenshotUrl}
                         alt="Live browser session"
-                        className="block w-full h-full object-fill"
+                        className="block w-full h-full object-contain bg-black"
                       />
                       <div className="absolute left-2 top-2 rounded-md border border-emerald-400/40 bg-slate-950/85 px-2 py-1 text-[10px] font-semibold text-emerald-300 shadow-lg">
                         <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
