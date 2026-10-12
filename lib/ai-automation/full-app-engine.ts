@@ -2718,7 +2718,7 @@ export async function executeStructuredTestPlan(
           if (/pass/i.test(step.targetName)) inputVal = credentials.password
           else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
         }
-        const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|cvv|security code/i.test(step.targetName)
+        const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(step.targetName)
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
         const field = await findVisibleInput(page, step.targetSelector, step.targetName)
         const fieldSelector = step.targetSelector || undefined
