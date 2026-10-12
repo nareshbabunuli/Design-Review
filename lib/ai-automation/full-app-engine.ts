@@ -3157,8 +3157,9 @@ export async function executeStructuredTestPlan(
           screenUrl: diagnosticUrl,
           screenTitle: step.screenName,
           type: "broken_asset",
-          severity: asset.resourceType === "media" ? "high" : "medium",
-          description: `Broken visible ${asset.resourceType} asset: ${safeAssetUrl}. ${asset.description}`,
+          // detectBrokenDomAssets currently returns image assets only.
+          severity: "medium",
+          description: `Broken visible image asset: ${safeAssetUrl}. ${asset.description}`,
           expected: "Visible images and media should load and decode successfully.",
           actual: asset.description,
           timestamp: diagnosticTimestamp,
