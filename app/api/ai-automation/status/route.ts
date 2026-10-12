@@ -9,7 +9,7 @@ import {
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 import { setJobSecrets, clearJobSecrets } from "@/lib/ai-automation/job-secret-vault"
 import { emitSessionEvent } from "@/lib/ai-automation/job-store"
-import { assertSafeTargetUrlWithDevBypass } from "@/lib/security/url-guard"
+import { assertSafeTargetUrlWithDevBypass, UrlGuardError } from "@/lib/security/url-guard"
 
 async function assertJobAccess(job: { projectId?: string; userId?: string }) {
   const user = await requireUser()
@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
     })
   } catch (err: unknown) {
     if (err instanceof AuthError) return authErrorResponse(err)
+    if (err instanceof UrlGuardError) return NextResponse.json({ error: err.message }, { status: 400 })
     console.error("[API ai-automation/status] Error:", err)
     return NextResponse.json(
       { error: (err as Error)?.message || "Internal server error" },
