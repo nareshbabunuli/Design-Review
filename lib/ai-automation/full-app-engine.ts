@@ -23,6 +23,7 @@ import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
+import { exploreUiStates } from "./state-explorer"
 
 import {
   SYNTHETIC_TEST_DATA,
@@ -1860,8 +1861,203 @@ export async function discoverAndMapApp(
     } catch {}
   }
 
-  // Return to the start screen before test planning
+  // MAP & PLAN FIRST: bounded state exploration complements route crawling by
+  // discovering controls hidden behind menus, disclosures, dialogs and scroll regions.
+  // It only probes reversible/safe controls and leaves execution for the approved plan.
   await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+  await waitForSpaPageReady(page, 1500)
+
+  const stateInventories = new Map<string, {
+    inventory: Awaited<ReturnType<typeof extractActionableInventory>>
+    screenshotUrl?: string
+  }>()
+  const stateReport = await exploreUiStates(page, {
+    maxDepth: 3,
+    maxStates: 30,
+    maxScrollSteps: 3,
+    onState: async (state) => {
+      const inventory = await extractActionableInventory(page)
+      let screenshotUrl: string | undefined
+      try {
+        const buffer = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
+        screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buffer).toString("base64")}`
+      } catch {}
+      stateInventories.set(state.signature, { inventory, screenshotUrl })
+    },
+  })
+
+  const rootState = stateReport.states[0]
+  const rootElementKeys = new Set(rootState.elements.map((element) =>
+    [element.tag, element.role, element.label.trim().toLowerCase(), element.href || ""].join("|")
+  ))
+  const rootRoutePath = normalizePath(rootState.url, origin)
+  const rootScreen = screens.find((screen) => screen.id === pathScreenMap.get(rootRoutePath)) ||
+    screens.find((screen) => normalizePath(screen.url, origin) === rootRoutePath) || screens[0]
+  const stateScreenIds = new Map<string, string>()
+  if (rootScreen) {
+    stateScreenIds.set(rootState.id, rootScreen.id)
+    const rootInventory = stateInventories.get(rootState.signature)?.inventory
+    if (rootInventory) {
+      const known = new Set(rootScreen.actionableElements.map((element) =>
+        [element.name.trim().toLowerCase(), element.type, element.selector || ""].join("|")
+      ))
+      for (const element of rootInventory.actionableElements) {
+        const key = [element.name.trim().toLowerCase(), element.type, element.selector || ""].join("|")
+        if (!known.has(key)) rootScreen.actionableElements.push(element)
+        known.add(key)
+      }
+    }
+  }
+
+  type ReplayStep = { action: string; selector: string; kind: "expand" | "menu" | "details" | "tab" | "scroll" }
+  const replayPathByState = new Map<string, ReplayStep[]>([[rootState.id, []]])
+  const stateQueue = [rootState.id]
+  while (stateQueue.length) {
+    const fromStateId = stateQueue.shift()!
+    const fromPath = replayPathByState.get(fromStateId) || []
+    for (const edge of stateReport.edges) {
+      if (edge.fromStateId !== fromStateId || !edge.reversible || !edge.selector || edge.toStateId === fromStateId) continue
+      if (replayPathByState.has(edge.toStateId)) continue
+      replayPathByState.set(edge.toStateId, [...fromPath, {
+        action: edge.action,
+        selector: edge.selector,
+        kind: edge.kind,
+      }])
+      stateQueue.push(edge.toStateId)
+    }
+  }
+
+  for (const state of stateReport.states) {
+    if (state.id === rootState.id) continue
+    const replayPath = replayPathByState.get(state.id)
+    if (!replayPath) {
+      appendLog(job, "warn", `[STATE DISCOVERY] State "${state.trigger || state.id}" was observed but has no safe replay path; it is reported but not added to executable plan.`)
+      continue
+    }
+    const captured = stateInventories.get(state.signature)
+    const inventory = captured?.inventory
+    const routePath = normalizePath(state.url, origin)
+    const screenId = `S${String(screenSeq++).padStart(3, "0")}`
+    // State screens should contain newly revealed controls, not a duplicate of every
+    // background action from the route. Overlay descendants remain eligible even if
+    // they share a label with an action behind the overlay.
+    const newlyRevealedElements = state.elements.filter((element) =>
+      !rootElementKeys.has([element.tag, element.role, element.label.trim().toLowerCase(), element.href || ""].join("|")) ||
+      element.kind === "overlay"
+    )
+    const newlyRevealedLabels = newlyRevealedElements.map((element) => element.label.trim().toLowerCase()).filter(Boolean)
+    const baseActions = (inventory?.actionableElements || []).filter((element) => {
+      const name = element.name.trim().toLowerCase()
+      return newlyRevealedLabels.some((label) => label === name || label.includes(name) || name.includes(label))
+    })
+    const actionables = [...baseActions]
+    const knownActionKeys = new Set(actionables.map((element) =>
+      [element.name.trim().toLowerCase(), element.type, element.selector || ""].join("|")
+    ))
+    for (const [index, element] of newlyRevealedElements.entries()) {
+      const selector = element.locators?.find((candidate) =>
+        candidate.strategy === "attribute" && candidate.uniqueAtDiscovery
+      )?.selector || element.selector
+      const lowerLabel = element.label.trim().toLowerCase()
+      const type: ActionableElementType =
+        element.role === "link" ? "link" :
+        element.role === "tab" ? "tab" :
+        element.role === "checkbox" ? "checkbox" :
+        element.role === "radio" ? "radio" :
+        element.tag === "select" || element.role === "combobox" ? "select" :
+        element.tag === "input" || element.tag === "textarea" ? "input" :
+        /menu|dropdown/i.test(lowerLabel) ? "menu" :
+        element.kind === "state-change" ? "toggle" :
+        element.role === "button" ? "button" : "clickable"
+      const key = [lowerLabel, type, selector || ""].join("|")
+      if (!selector || knownActionKeys.has(key) || element.risk !== "safe") continue
+      actionables.push({
+        id: `state-${state.signature}-${index + 1}`,
+        name: element.label || element.tag,
+        type,
+        selector,
+        href: element.href,
+        actionKey: undefined,
+        interactionConfidence: element.risk === "safe" ? 0.9 : element.risk === "review" ? 0.55 : 0.25,
+        discoveryReason: ["bounded-state-explorer", `state:${state.signature}`, `risk:${element.risk}`],
+        isInteractive: true,
+      })
+      knownActionKeys.add(key)
+    }
+    const node: AppScreenNode = {
+      id: screenId,
+      name: `${deriveScreenName(routePath, inventory?.heading, inventory?.modalTitle)} — ${state.trigger || "Expanded UI state"}`,
+      url: state.url,
+      path: `${routePath}#state-${state.signature}`,
+      screenshotUrl: captured?.screenshotUrl,
+      actionableElements: actionables,
+      forms: (inventory?.forms || []).filter((form) =>
+        Boolean(form.isInsideModal) ||
+        form.fields.some((field) => newlyRevealedLabels.some((label) =>
+          label.includes(field.trim().toLowerCase()) || field.trim().toLowerCase().includes(label)
+        ))
+      ),
+      statePath: replayPath,
+      discoveredAt: state.discoveredAt,
+    }
+    screens.push(node)
+    stateScreenIds.set(state.id, screenId)
+    mergeScreenActionsIntoLedger(job, node)
+    saveJob(job)
+    emitSessionEvent(job, "screen_discovered", {
+      url: node.url,
+      message: `Discovered UI state: ${node.name}`,
+      payload: { screenId: node.id, path: node.path, stateSignature: state.signature, depth: state.depth },
+    })
+    appendLog(job, "success", `[STATE DISCOVERY] Screen ${node.id}: "${node.name}" mapped with ${node.actionableElements.length} actionable elements (depth ${state.depth}).`)
+  }
+
+  // Publish the state graph to the same session/map data consumed by the UI.
+  const mergedGraphNodes = new Map<string, import("./types").DomDiscoveryGraph["nodes"][number]>((job.domDiscoveryGraph?.nodes || []).map((node) => [node.id, node] as const))
+  for (const state of stateReport.states) {
+    mergedGraphNodes.set(state.id, {
+      id: state.id,
+      url: state.url,
+      title: state.title,
+      observedAt: state.discoveredAt,
+      elementCount: state.elements.length,
+    })
+  }
+  const mergedGraphEdges = new Map<string, import("./types").DomDiscoveryGraph["edges"][number]>((job.domDiscoveryGraph?.edges || []).map((edge) => [edge.id, edge] as const))
+  stateReport.edges.forEach((edge, index) => {
+    mergedGraphEdges.set(`state-edge-${index + 1}`, {
+      id: `state-edge-${index + 1}`,
+      from: edge.fromStateId,
+      to: edge.toStateId,
+      action: edge.action,
+      selector: edge.selector,
+      transition: "same_url_state",
+      status: edge.reversible && edge.toStateId !== edge.fromStateId ? "passed" : "blocked",
+      observedAt: new Date().toISOString(),
+      evidence: edge.restorationError,
+    })
+  })
+  job.domDiscoveryGraph = {
+    nodes: Array.from(mergedGraphNodes.values()),
+    edges: Array.from(mergedGraphEdges.values()),
+    truncated: Boolean(job.domDiscoveryGraph?.truncated) ||
+      stateReport.stopReason !== "exhausted" || stateReport.frontierRemaining > 0,
+  }
+  for (const edge of stateReport.edges) {
+    const fromScreenId = stateScreenIds.get(edge.fromStateId)
+    const toScreenId = stateScreenIds.get(edge.toStateId)
+    if (!fromScreenId || !toScreenId || fromScreenId === toScreenId) continue
+    const actionType: AppWorkflowTransition["actionType"] =
+      /dialog|modal/i.test(edge.action) ? "modal_open" : "click"
+    addTransition(fromScreenId, toScreenId, edge.action, actionType)
+  }
+  appendLog(
+    job,
+    stateReport.stopReason === "exhausted" ? "success" : "warn",
+    `[STATE DISCOVERY] ${stateReport.counts.discovered} states, ${stateReport.counts.attempted} safe probes, ${stateReport.counts.blocked} blocked, ${stateReport.counts.truncated} truncated; stop reason: ${stateReport.stopReason}; remaining frontier: ${stateReport.frontierRemaining}.`
+  )
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+  saveJob(job)
 
   return { screens, transitions }
 }
@@ -2361,7 +2557,8 @@ export async function executeStructuredTestPlan(
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
         const targetBasePath = targetScreen.path.split("#")[0]
-        if (!page.url().includes(targetBasePath)) {
+        const targetOrigin = new URL(targetScreen.url).origin
+        if (normalizePath(page.url(), targetOrigin) !== targetBasePath) {
           await page.goto(targetScreen.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
           await new Promise((r) => setTimeout(r, 400))
         }
@@ -2369,8 +2566,40 @@ export async function executeStructuredTestPlan(
         // Discovery assigns a synthetic #tab-name path to SPA views. The URL
         // alone cannot restore those views, so reactivate the matching tab before
         // testing its child controls. Modal states are kept open by queue priority.
-        const stateMarker = targetScreen.path.split("#")[1]
-        if (stateMarker && !stateMarker.startsWith("modal-")) {
+        if (targetScreen.statePath?.length) {
+          for (const replayStep of targetScreen.statePath) {
+            if (replayStep.kind === "scroll") {
+              await page.evaluate((selector) => {
+                const element = document.querySelector(selector) as HTMLElement | null
+                if (!element) return
+                if (element === document.documentElement || element === document.body) {
+                  window.scrollTo(0, window.scrollY + Math.max(100, Math.floor(window.innerHeight * 0.75)))
+                } else {
+                  element.scrollTop = Math.min(element.scrollHeight, element.scrollTop + Math.max(100, Math.floor(element.clientHeight * 0.75)))
+                }
+              }, replayStep.selector).catch(() => {})
+            } else {
+              const matches = await page.$$(replayStep.selector).catch(() => [])
+              let target: ElementHandle<Element> | null = null
+              for (const match of matches) {
+                if (await match.boundingBox().catch(() => null)) { target = match; break }
+              }
+              if (!target) {
+                appendLog(job, "warn", `[COVERAGE] Could not restore UI state "${replayStep.action}" for step "${step.targetName}".`)
+                break
+              }
+              const alreadyOpen = await target.evaluate((element) => {
+                const el = element as HTMLElement
+                return el.getAttribute("aria-expanded") === "true" ||
+                  (el.tagName.toLowerCase() === "summary" && Boolean(el.closest("details[open]")))
+              }).catch(() => false)
+              if (!alreadyOpen) await page.click(replayStep.selector).catch(() => null)
+              await new Promise((resolve) => setTimeout(resolve, 180))
+            }
+          }
+        } else {
+          const stateMarker = targetScreen.path.split("#")[1]
+          if (stateMarker && !stateMarker.startsWith("modal-")) {
           let tabLabel = stateMarker
           try { tabLabel = decodeURIComponent(stateMarker) } catch {}
           tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
@@ -2395,6 +2624,7 @@ export async function executeStructuredTestPlan(
             appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
           } else {
             await new Promise((r) => setTimeout(r, 250))
+          }
           }
         }
       }

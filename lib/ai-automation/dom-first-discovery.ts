@@ -199,7 +199,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       return parts.join(" > ") || el.tagName.toLowerCase()
     }
     const nodes = Array.from(document.querySelectorAll(
-      'a[href],area[href],button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[onclick],[tabindex]:not([tabindex="-1"])'
+      'a[href],area[href],button,input,select,textarea,summary,[aria-haspopup],[aria-expanded],[data-dropdown],[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[onclick],[tabindex]:not([tabindex="-1"])'
     )).filter(visible).slice(0, 300)
     const elements = nodes.map((el) => {
       const h = el as HTMLElement
@@ -218,7 +218,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const isForm = /^(input|select|textarea)$/.test(el.tagName.toLowerCase()) || !!el.closest("form")
       const overlay = /^(dialog)$/.test(el.tagName.toLowerCase()) || !!el.closest('[role="dialog"],dialog[open],.modal,[data-modal]')
       const stateChange = role === "tab" || role === "switch" || role === "checkbox" || role === "radio" ||
-        h.hasAttribute("aria-expanded") || h.hasAttribute("aria-pressed") || h.hasAttribute("aria-controls")
+        h.hasAttribute("aria-expanded") || h.hasAttribute("aria-pressed") || h.hasAttribute("aria-controls") || h.hasAttribute("aria-haspopup") || el.tagName.toLowerCase() === "summary"
       return {
         selector: locators.find((candidate) => candidate.uniqueAtDiscovery && candidate.strategy !== "role" && candidate.strategy !== "label-text")?.selector || selectorOf(el),
         locators,
