@@ -54,8 +54,22 @@ export async function drainDomNavigationEvents(page: Page): Promise<DomNavigatio
   }).catch(() => [])
 }
 
+export type RankedLocatorStrategy = "role" | "attribute" | "label-text" | "structural"
+
+export type RankedLocatorCandidate = {
+  strategy: RankedLocatorStrategy
+  selector: string
+  role?: string
+  name?: string
+  attribute?: string
+  confidence: number
+  uniqueAtDiscovery: boolean
+  context?: string
+}
+
 export type DomDiscoveryElement = {
   selector: string
+  locators: RankedLocatorCandidate[]
   tag: string
   role: string
   label: string
@@ -83,6 +97,8 @@ export type DomDiscoverySnapshot = {
  */
 export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> {
   return page.evaluate(() => {
+    const browserWindow = window as Window & { __name?: (fn: unknown, name?: string) => unknown }
+    browserWindow.__name ??= (fn) => fn
     const visible = (el: Element) => {
       const h = el as HTMLElement
       const r = h.getBoundingClientRect()
@@ -98,6 +114,62 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const label = h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
         h.innerText || input.placeholder || input.name || input.title || el.tagName
       return String(label).replace(/\s+/g, " ").trim().slice(0, 120)
+    }
+    const roleOf = (el: Element) => {
+      const explicit = el.getAttribute("role")
+      if (explicit) return explicit
+      const tag = el.tagName.toLowerCase()
+      if (tag === "button" || tag === "summary") return "button"
+      if (tag === "a" && el.hasAttribute("href")) return "link"
+      if (tag === "textarea") return "textbox"
+      if (tag === "select") return "combobox"
+      if (tag === "input") {
+        const type = (el.getAttribute("type") || "text").toLowerCase()
+        if (type === "checkbox") return "checkbox"
+        if (type === "radio") return "radio"
+        if (type === "submit" || type === "button" || type === "reset") return "button"
+        return "textbox"
+      }
+      return ""
+    }
+    const cssAttr = (name: string, value: string) => "[" + name + "=" + JSON.stringify(value) + "]"
+    const locatorCandidatesOf = (el: Element, label: string): RankedLocatorCandidate[] => {
+      const h = el as HTMLElement
+      const candidates: RankedLocatorCandidate[] = []
+      const add = (candidate: RankedLocatorCandidate) => {
+        if (!candidate.selector || candidates.some((item) => item.strategy === candidate.strategy && item.selector === candidate.selector && item.role === candidate.role && item.name === candidate.name)) return
+        candidates.push(candidate)
+      }
+      const role = roleOf(el)
+      if (role && label) {
+        const roleSelector = role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase()
+        const uniqueNamedMatch = (() => {
+          try { return Array.from(document.querySelectorAll(roleSelector)).filter((candidate) => roleOf(candidate) === role && labelOf(candidate) === label).length === 1 } catch { return false }
+        })()
+        add({ strategy: "role", selector: roleSelector, role, name: label, confidence: 0.98, uniqueAtDiscovery: uniqueNamedMatch, context: "active document" })
+      }
+      const testId = h.getAttribute("data-testid") || h.getAttribute("data-test-id") || h.getAttribute("data-cy")
+      if (testId) {
+        const attr = h.hasAttribute("data-testid") ? "data-testid" : h.hasAttribute("data-test-id") ? "data-test-id" : "data-cy"
+        const selector = cssAttr(attr, testId)
+        add({ strategy: "attribute", selector, attribute: attr, confidence: 0.96, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      if (h.id) {
+        const selector = "#" + CSS.escape(h.id)
+        add({ strategy: "attribute", selector, attribute: "id", confidence: 0.94, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      const name = h.getAttribute("name")
+      if (name) {
+        const selector = el.tagName.toLowerCase() + cssAttr("name", name)
+        add({ strategy: "attribute", selector, attribute: "name", confidence: 0.91, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      if (label) {
+        const textSelector = el.tagName.toLowerCase() + ':not([aria-label])'
+        add({ strategy: "label-text", selector: textSelector, role: role || undefined, name: label, confidence: 0.78, uniqueAtDiscovery: false, context: "active document" })
+      }
+      const structural = selectorOf(el)
+      add({ strategy: "structural", selector: structural, confidence: 0.45, uniqueAtDiscovery: (() => { try { return document.querySelectorAll(structural).length === 1 } catch { return false } })(), context: "active document" })
+      return candidates.sort((a, b) => b.confidence - a.confidence)
     }
     const selectorOf = (el: Element) => {
       const h = el as HTMLElement
@@ -133,6 +205,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const h = el as HTMLElement
       const input = el as HTMLInputElement
       const label = labelOf(el)
+      const locators = locatorCandidatesOf(el, label)
       const role = h.getAttribute("role") || ""
       const href = el instanceof HTMLAnchorElement || el instanceof HTMLAreaElement ? el.href : undefined
       const target = h.getAttribute("target") || ""
@@ -147,7 +220,8 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const stateChange = role === "tab" || role === "switch" || role === "checkbox" || role === "radio" ||
         h.hasAttribute("aria-expanded") || h.hasAttribute("aria-pressed") || h.hasAttribute("aria-controls")
       return {
-        selector: selectorOf(el),
+        selector: locators.find((candidate) => candidate.uniqueAtDiscovery && candidate.strategy !== "role" && candidate.strategy !== "label-text")?.selector || selectorOf(el),
+        locators,
         tag: el.tagName.toLowerCase(),
         role,
         label,
@@ -173,6 +247,94 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       }).length,
     }
   })
+}
+
+/** Revalidate ranked locator candidates against the live DOM before acting. */
+export async function resolveRankedLocator(
+  page: Page,
+  candidates: RankedLocatorCandidate[],
+): Promise<{ selector: string; strategy: RankedLocatorStrategy; confidence: number } | null> {
+  const ordered = [...candidates].sort((a, b) => b.confidence - a.confidence)
+  for (const candidate of ordered) {
+    try {
+      const resolved = await page.evaluate((expected) => {
+        const browserWindow = window as Window & { __name?: (fn: unknown, name?: string) => unknown }
+        browserWindow.__name ??= (fn) => fn
+        const roleOf = (el: Element) => {
+          const h = el as HTMLElement
+          const explicit = h.getAttribute("role")
+          if (explicit) return explicit
+          const tag = el.tagName.toLowerCase()
+          if (tag === "button" || tag === "summary") return "button"
+          if (tag === "a" && h.hasAttribute("href")) return "link"
+          if (tag === "textarea") return "textbox"
+          if (tag === "select") return "combobox"
+          if (tag === "input") {
+            const type = (h.getAttribute("type") || "text").toLowerCase()
+            if (type === "checkbox") return "checkbox"
+            if (type === "radio") return "radio"
+            if (["submit", "button", "reset", "image"].includes(type)) return "button"
+            return "textbox"
+          }
+          return ""
+        }
+        const nameOf = (el: Element) => {
+          const h = el as HTMLElement
+          const input = el as HTMLInputElement
+          const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+          const referenced = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
+          return String(h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
+            h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") || el.tagName)
+            .replace(/\s+/g, " ").trim().slice(0, 120)
+        }
+        const matching = Array.from(document.querySelectorAll(expected.selector)).filter((el) => {
+          const h = el as HTMLElement
+          const style = getComputedStyle(h)
+          const rect = h.getBoundingClientRect()
+          if (rect.width <= 2 || rect.height <= 2 || style.display === "none" || style.visibility === "hidden" ||
+              style.opacity === "0" || h.getAttribute("aria-hidden") === "true") return false
+          if (expected.role && roleOf(el) !== expected.role) return false
+          if (expected.name && nameOf(el) !== expected.name) return false
+          return true
+        })
+        if (matching.length !== 1) return null
+        const el = matching[0]
+        const unique = (selector: string) => {
+          try { return document.querySelectorAll(selector).length === 1 } catch { return false }
+        }
+        const h = el as HTMLElement
+        if (h.id) {
+          const byId = "#" + CSS.escape(h.id)
+          if (unique(byId)) return { selector: byId }
+        }
+        for (const attr of ["data-testid", "data-test-id", "data-cy", "aria-label", "name"]) {
+          const value = h.getAttribute(attr)
+          if (!value) continue
+          const byAttr = el.tagName.toLowerCase() + "[" + attr + "=" + JSON.stringify(value) + "]"
+          if (unique(byAttr)) return { selector: byAttr }
+        }
+        const parts: string[] = []
+        let current: Element | null = el
+        while (current && current !== document.documentElement) {
+          const parent: Element | null = current.parentElement
+          const tagName = current.tagName.toLowerCase()
+          if (!parent) { parts.unshift(tagName); break }
+          const siblings = (Array.from(parent.children) as Element[]).filter((child: Element) => child.tagName === current!.tagName)
+          parts.unshift(siblings.length > 1 ? tagName + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tagName)
+          const structural = parts.join(" > ")
+          if (unique(structural)) return { selector: structural }
+          current = parent
+        }
+        return parts.length ? { selector: parts.join(" > ") } : null
+      }, candidate)
+      if (resolved?.selector) {
+        return { selector: resolved.selector, strategy: candidate.strategy, confidence: candidate.confidence }
+      }
+    } catch {
+      // Invalid or stale candidates are skipped in favor of the next ranked alternative.
+    }
+  }
+  return null
 }
 
 function discoveryStateSignature(snapshot: DomDiscoverySnapshot): string {
@@ -256,7 +418,7 @@ export async function exploreInternalLinkAndReturn(
       Object.entries(destination.counts).map(([kind, count]) => kind + "=" + count).join(", ") +
       "), forms=" + destination.forms + ", dialogs=" + destination.dialogs + "."
     const restored = await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
-    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: return to source URL failed."), restored, stateChanged: true }
+    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: source URL restoration failed."), restored, stateChanged: true }
   } catch (error: any) {
     const restored = page.url() === sourceUrl || await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
     return { destination: null, observation: "Navigation exploration failed: " + String(error?.message || error) + (restored ? "; source URL restored." : "; source URL restoration failed."), restored }
