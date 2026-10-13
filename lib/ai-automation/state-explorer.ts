@@ -191,9 +191,9 @@ async function getProbes(
       };
     }, selector);
     if (!live) continue;
-    if (kind === "menu" && !(live.popup === "menu" || live.hasControls || /menu|actions|dropdown/i.test(lower))) continue;
-    if (kind === "expand" && !(live.expanded === "false" || live.hasControls)) continue;
-    if (kind === "details" && live.tag !== "summary") continue;
+    if (kind === "menu" && (live.expanded === "true" || !(live.popup === "menu" || live.hasControls || /menu|actions|dropdown/i.test(lower)))) continue;
+    if (kind === "expand" && (live.expanded === "true" || !(live.expanded === "false" || live.hasControls || live.popup === "dialog"))) continue;
+    if (kind === "details" && (live.tag !== "summary" || live.detailsOpen)) continue;
     if (kind === "tab" && !includeTabs) continue;
     probes.push({ selector, label, kind, key: kind + ":" + selector });
   }
