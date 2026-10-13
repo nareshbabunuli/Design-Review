@@ -271,9 +271,9 @@ export async function resolveRankedLocator(
             if (nativeRole !== expected.role) return false
           }
           if (expected.name) {
-            const ids = (h.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+            const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
             const labelled = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
-            const accessible = (h.getAttribute("aria-label") || labelled || (h as HTMLInputElement).labels?.[0]?.textContent || h.innerText || (h as HTMLInputElement).placeholder || h.getAttribute("title") || "").replace(/\\s+/g, " ").trim()
+            const accessible = (h.getAttribute("aria-label") || labelled || (h as HTMLInputElement).labels?.[0]?.textContent || h.innerText || (h as HTMLInputElement).placeholder || h.getAttribute("title") || "").replace(/\s+/g, " ").trim()
             if (accessible !== expected.name) return false
           }
           return true
