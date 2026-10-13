@@ -2,6 +2,10 @@
 
 import { useEffect } from "react"
 
+/**
+ * Ignore errors originating from browser extensions that inject scripts into the page.
+ * App errors are left untouched.
+ */
 export default function SuppressExtensionErrors() {
   useEffect(() => {
     function isExtensionError(event: ErrorEvent | PromiseRejectionEvent) {
@@ -25,6 +29,7 @@ export default function SuppressExtensionErrors() {
         event.preventDefault()
       }
     }
+
     const handleRejection = (event: PromiseRejectionEvent) => {
       if (isExtensionError(event)) {
         event.stopImmediatePropagation()
@@ -34,6 +39,7 @@ export default function SuppressExtensionErrors() {
 
     window.addEventListener("error", handleError, true)
     window.addEventListener("unhandledrejection", handleRejection, true)
+
     return () => {
       window.removeEventListener("error", handleError, true)
       window.removeEventListener("unhandledrejection", handleRejection, true)
