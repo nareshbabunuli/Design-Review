@@ -156,8 +156,7 @@ async function getProbes(
     let kind: ExplorationTransitionKind | null = null;
     if (element.tag === "summary") kind = "details";
     else if (element.role === "tab") kind = "tab";
-    else if (element.kind === "state-change" && /aria-expanded=false/.test("")) kind = "expand";
-    else if (element.kind === "state-change" && /expand|accordion|advanced|more options|show details|filter/i.test(lower)) kind = "expand";
+    else if (element.kind === "state-change" && /expand|accordion|advanced|more options|show details|filter|dialog|modal|open confirmation/i.test(lower)) kind = "expand";
     else if (/menu|actions|dropdown/i.test(lower)) kind = "menu";
     if (!kind) continue;
     const selector = await uniqueSelector(page, element.selector);
