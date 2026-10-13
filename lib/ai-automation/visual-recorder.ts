@@ -3,12 +3,16 @@ import path from "path"
 import os from "os"
 import type { Page, ElementHandle } from "puppeteer"
 import { createClient } from "@supabase/supabase-js"
-import { appendLog } from "./job-store"
+import { appendLog, saveJob } from "./job-store"
 import type { AutomationJob } from "./types"
 
 const OVERLAY_SCRIPT = `
 (function() {
   if (window.__qaOverlayInstalled) return;
+  if (!document.head || !document.documentElement) {
+    document.addEventListener('DOMContentLoaded', arguments.callee, { once: true });
+    return;
+  }
   window.__qaOverlayInstalled = true;
 
   const style = document.createElement('style');
@@ -23,28 +27,45 @@ const OVERLAY_SCRIPT = `
       pointer-events: none;
       z-index: 2147483647;
       transform: translate(-100px, -100px);
-      transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));
+      transition: transform 0.04s linear;
+      filter: drop-shadow(0 4px 10px rgba(37, 99, 235, 0.5));
     }
     #qa-visual-cursor svg {
-      width: 100%;
-      height: 100%;
+      width: 24px;
+      height: 24px;
       display: block;
+      color: #3b82f6;
+    }
+    #qa-cursor-tag {
+      margin-left: 18px;
+      margin-top: -8px;
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: rgba(37, 99, 235, 0.95);
+      color: #ffffff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+      white-space: nowrap;
+      transition: opacity 0.2s ease;
     }
     #qa-visual-ripple {
       position: fixed;
       top: 0;
       left: 0;
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      border: 3px solid #f43f5e;
-      background: rgba(244, 63, 94, 0.28);
+      width: 32px;
+      height: 32px;
+      margin-left: -16px;
+      margin-top: -16px;
+      border-radius: 9999px;
+      background: rgba(59, 130, 246, 0.45);
       pointer-events: none;
       z-index: 2147483646;
       opacity: 0;
-      transform: translate(-50%, -50%) scale(0.2);
-      transition: transform 0.35s ease-out, opacity 0.35s ease-out;
+      transform: scale(0.2);
+      transition: transform 0.45s ease-out, opacity 0.45s ease-out;
     }
     #qa-visual-banner {
       position: fixed;
@@ -89,6 +110,27 @@ const OVERLAY_SCRIPT = `
       box-shadow: 0 0 14px rgba(2, 132, 199, 0.5) !important;
       transition: outline 0.15s ease-in-out !important;
     }
+
+    /* Video privacy: mask secrets without changing submitted field values. */
+    input[type="password"], input[autocomplete*="password" i],
+    input[name*="password" i], input[id*="password" i],
+    input[name*="token" i], input[id*="token" i],
+    input[name*="api-key" i], input[name*="api_key" i],
+    input[id*="api-key" i], input[id*="api_key" i],
+    input[name*="secret" i], input[id*="secret" i],
+    input[name*="credential" i], input[id*="credential" i],
+    input[placeholder*="api key" i], input[placeholder*="api-key" i],
+    input[placeholder*="token" i], input[placeholder*="secret" i],
+    input[placeholder*="password" i], input[placeholder*="credential" i],
+    input[placeholder*="private key" i], input[placeholder*="bearer" i],
+    textarea[placeholder*="api key" i], textarea[placeholder*="token" i],
+    textarea[placeholder*="secret" i], textarea[placeholder*="credential" i],
+    input[autocomplete*="cc-number" i], input[autocomplete*="cc-csc" i],
+    input[data-sensitive="true"], textarea[data-sensitive="true"],
+    [data-qa-secret="true"] {
+      -webkit-text-security: disc !important;
+    }
+    [data-sensitive="true"], [data-qa-secret="true"] { filter: blur(8px) !important; }
   \`;
   document.head.appendChild(style);
 
@@ -96,9 +138,10 @@ const OVERLAY_SCRIPT = `
   const cursor = document.createElement('div');
   cursor.id = 'qa-visual-cursor';
   cursor.innerHTML = \`
-    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M5.5 3.2L18.8 12.2L12.5 13.8L15.8 20.8L12.8 22.2L9.5 15.2L5.5 19.2V3.2Z" fill="#f43f5e" stroke="#ffffff" stroke-width="1.8"/>
+    <svg viewBox="0 0 24 24" fill="#3b82f6" stroke="#ffffff" stroke-width="1.2">
+      <path d="M4 0l16 12.279-6.951 1.17 4.325 8.817-3.596 1.734-4.35-8.879-5.428 5.163v-20.284z"/>
     </svg>
+    <span id="qa-cursor-tag">mouse</span>
   \`;
   document.documentElement.appendChild(cursor);
 
@@ -117,17 +160,21 @@ const OVERLAY_SCRIPT = `
   typingBadge.id = 'qa-visual-typing';
   document.documentElement.appendChild(typingBadge);
 
-  window.__qaMoveCursor = function(x, y) {
+  window.__qaMoveCursor = function(x, y, label) {
     cursor.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+    var tag = document.getElementById('qa-cursor-tag');
+    if (tag && label) tag.textContent = label;
   };
 
   window.__qaClickRipple = function(x, y) {
     ripple.style.transition = 'none';
-    ripple.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(0.2)';
+    ripple.style.left = x + 'px';
+    ripple.style.top = y + 'px';
+    ripple.style.transform = 'scale(0.2)';
     ripple.style.opacity = '0.9';
     void ripple.offsetWidth;
-    ripple.style.transition = 'transform 0.35s ease-out, opacity 0.35s ease-out';
-    ripple.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(1.6)';
+    ripple.style.transition = 'transform 0.45s ease-out, opacity 0.45s ease-out';
+    ripple.style.transform = 'scale(2.4)';
     ripple.style.opacity = '0';
   };
 
@@ -151,7 +198,11 @@ const OVERLAY_SCRIPT = `
     window.__qaMoveCursor(rect.left + rect.width / 2, rect.top + rect.height / 2);
 
     if (val) {
-      typingBadge.textContent = 'Typing: ' + val;
+      var sensitiveField = /password|token|api[-_ ]?key|secret|credential|private[-_ ]?key|bearer|cvv|cvc|card[-_ ]?number/i.test([
+        el.type || '', el.name || '', el.id || '', el.getAttribute('placeholder') || '',
+        el.getAttribute('autocomplete') || '', el.getAttribute('data-sensitive') || ''
+      ].join(' '));
+      typingBadge.textContent = sensitiveField ? 'Typing: ••••••••' : 'Typing: ' + val;
       typingBadge.style.left = (rect.left) + 'px';
       typingBadge.style.top = (rect.bottom + 6) + 'px';
       typingBadge.style.display = 'block';
@@ -183,14 +234,14 @@ export async function installVisualOverlay(page: Page): Promise<void> {
 /**
  * Smoothly animates the visual cursor to coordinates (x, y)
  */
-export async function animateCursorTo(page: Page, x: number, y: number): Promise<void> {
+export async function animateCursorTo(page: Page, x: number, y: number, label?: string): Promise<void> {
   try {
-    await page.evaluate((cx, cy) => {
+    await page.evaluate((cx, cy, clabel) => {
       if (typeof (window as any).__qaMoveCursor === "function") {
-        ;(window as any).__qaMoveCursor(cx, cy)
+        ;(window as any).__qaMoveCursor(cx, cy, clabel)
       }
-    }, x, y)
-    await new Promise((r) => setTimeout(r, 120))
+    }, x, y, label)
+    await new Promise((r) => setTimeout(r, 90))
   } catch {}
 }
 
@@ -305,7 +356,14 @@ export class SessionVideoRecorder {
   private projectId: string
   private jobId: string
   private recorder: any = null
-  private recordingPath: string = ""
+  private recordingPath = ""
+  private segmentPaths: string[] = []
+  private transition: Promise<void> = Promise.resolve()
+  private monitor: ReturnType<typeof setInterval> | null = null
+  private state: "recording" | "paused" | "stopped" = "stopped"
+  private finalizedUrl = ""
+  private finalized = false
+  private finalizationPromise: Promise<string> | null = null
 
   constructor(page: Page, projectId: string, jobId: string) {
     this.page = page
@@ -313,47 +371,114 @@ export class SessionVideoRecorder {
     this.jobId = jobId
   }
 
-  async start(): Promise<void> {
+  private async startSegment(): Promise<void> {
+    const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
+    this.recordingPath = path.join(os.tmpdir(), `qa-journey-${this.jobId}-${Date.now()}.webm`)
+    this.recorder = new PuppeteerScreenRecorder(this.page, {
+      followNewTab: true,
+      fps: 25,
+      videoFrame: { width: 1440, height: 900 },
+    })
+    await this.recorder.start(this.recordingPath)
+    this.segmentPaths.push(this.recordingPath)
+    this.state = "recording"
+  }
+
+  async start(job?: AutomationJob): Promise<void> {
     try {
-      const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
-      this.recordingPath = path.join(os.tmpdir(), `qa-journey-${this.jobId}-${Date.now()}.webm`)
-
-      this.recorder = new PuppeteerScreenRecorder(this.page, {
-        followNewTab: true,
-        fps: 25,
-        videoFrame: { width: 1440, height: 900 },
-      })
-
-      await this.recorder.start(this.recordingPath)
-      // Inject cursor overlay
+      await this.startSegment()
       await installVisualOverlay(this.page)
+      if (job) {
+        ;(job as any).recordingControl = "recording"
+        saveJob(job)
+        appendLog(job, "info", "Session video recording started.")
+        this.monitor = setInterval(() => {
+          const requested = (job as any).recordingControl
+          if (requested === "paused" && this.state === "recording") void this.pause(job)
+          else if (requested === "recording" && this.state === "paused") void this.resume(job)
+          else if (requested === "stopped" && this.state !== "stopped") void this.stop(job)
+        }, 250)
+      }
     } catch (err: any) {
-      console.warn("[visual-recorder] Session video recording unavailable:", err?.message)
       this.recorder = null
+      this.state = "stopped"
+      if (job) {
+        ;(job as any).recordingControl = "stopped"
+        saveJob(job)
+        appendLog(job, "warn", `Session video recording unavailable: ${err?.message || String(err)}`)
+      }
     }
   }
 
-  async stop(job?: AutomationJob): Promise<string> {
-    if (!this.recorder) return ""
-
-    try {
-      await this.recorder.stop()
-      if (fs.existsSync(this.recordingPath) && fs.statSync(this.recordingPath).size > 1024) {
-        const buf = fs.readFileSync(this.recordingPath)
-        const publicUrl = await uploadSessionVideo(buf, this.projectId, this.jobId)
-
-        if (publicUrl) {
-          if (job) appendLog(job, "success", `🎬 Session recording video uploaded: ${publicUrl}`)
-          return publicUrl
-        } else {
-          if (job) appendLog(job, "info", `🎬 Session video saved locally at ${this.recordingPath}`)
-          return this.recordingPath
-        }
+  async pause(job?: AutomationJob): Promise<void> {
+    this.transition = this.transition.then(async () => {
+      if (this.state !== "recording" || !this.recorder) return
+      try { await this.recorder.stop() }
+      finally {
+        this.recorder = null
+        this.state = "paused"
+        if (job) appendLog(job, "info", "Session video recording paused.")
       }
-    } catch (err: any) {
-      if (job) appendLog(job, "warn", `Session video finalization note: ${err?.message}`)
-    }
+    })
+    await this.transition
+  }
 
-    return ""
+  async resume(job?: AutomationJob): Promise<void> {
+    this.transition = this.transition.then(async () => {
+      if (this.state !== "paused") return
+      try {
+        await this.startSegment()
+        if (job) appendLog(job, "info", "Session video recording resumed.")
+      } catch (err: any) {
+        this.state = "paused"
+        if (job) appendLog(job, "warn", `Session video resume failed: ${err?.message || String(err)}`)
+      }
+    })
+    await this.transition
+  }
+
+  stop(job?: AutomationJob): Promise<string> {
+    if (this.finalizationPromise) return this.finalizationPromise
+    this.finalizationPromise = this.finalize(job)
+    return this.finalizationPromise
+  }
+
+  private async finalize(job?: AutomationJob): Promise<string> {
+    if (this.finalized) return this.finalizedUrl
+    if (this.monitor) { clearInterval(this.monitor); this.monitor = null }
+    await this.transition.catch(() => {})
+    if (this.recorder) {
+      try { await this.recorder.stop() }
+      catch (err: any) { if (job) appendLog(job, "warn", `Session video finalization note: ${err?.message || String(err)}`) }
+      this.recorder = null
+    }
+    this.state = "stopped"
+    const urls: string[] = []
+    for (let i = 0; i < this.segmentPaths.length; i++) {
+      const p = this.segmentPaths[i]
+      try {
+        if (!fs.existsSync(p) || fs.statSync(p).size <= 1024) continue
+        const url = await uploadSessionVideo(fs.readFileSync(p), this.projectId, `${this.jobId}-segment-${i + 1}`)
+        if (url) urls.push(url)
+      } catch (err: any) {
+        if (job) appendLog(job, "warn", `Recording segment upload failed: ${err?.message || String(err)}`)
+      }
+    }
+    if (job) {
+      ;(job as any).recordingSegments = urls.length ? urls : undefined
+      ;(job as any).recordingControl = "stopped"
+      if (urls[0]) {
+        job.recordingUrl = urls[0]
+        appendLog(job, "success", `Session recording finalized with ${urls.length} segment(s).`)
+      }
+    }
+    this.finalizedUrl = urls[0] || ""
+    this.finalized = true
+    if (job) saveJob(job)
+    return this.finalizedUrl
+  }
+
+  getSegments(): string[] {
+    return [...this.segmentPaths]
   }
 }

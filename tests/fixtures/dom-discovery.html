@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>DOM discovery fixture</title></head><body>
+<button id="open-modal">Open modal</button><div id="modal" role="dialog" aria-label="Fixture modal" hidden><button id="revealed-modal">Modal control</button><button id="close-modal">Close</button></div>
+<button id="show-tab">Show tab</button><section id="tab-panel" hidden><button id="revealed-tab">Tab control</button></section>
+<button id="spa-link">SPA route</button><section id="route-panel" hidden><button id="revealed-spa">SPA control</button></section>
+<a id="hash-link" href="#details">Details</a><section id="details" hidden><button id="revealed-hash">Hash control</button></section>
+<script>
+document.querySelector("#open-modal").onclick=()=>document.querySelector("#modal").hidden=false;
+document.querySelector("#close-modal").onclick=()=>document.querySelector("#modal").hidden=true;
+document.querySelector("#show-tab").onclick=()=>document.querySelector("#tab-panel").hidden=false;
+document.querySelector("#spa-link").onclick=()=>{history.pushState({fixture:true},"","#route-dashboard");document.querySelector("#route-panel").hidden=false};
+window.addEventListener("popstate",()=>{document.querySelector("#route-panel").hidden=true});
+window.addEventListener("hashchange",()=>{document.querySelector("#details").hidden=location.hash!=="#details"});
+</script></body></html>

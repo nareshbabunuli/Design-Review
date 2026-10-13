@@ -332,6 +332,11 @@ export default function Page() {
         setInviteToken(token)
         setShowLanding(false)
       }
+      const projectParam = params.get("project") || params.get("projectId") || params.get("id")
+      if (projectParam) {
+        setActiveProjectId(projectParam)
+        setShowLanding(false)
+      }
       const viewParam = params.get("view")
       if (viewParam === "editor" || viewParam === "simulator" || viewParam === "dashboard") {
         setViewMode(viewParam)
@@ -339,6 +344,8 @@ export default function Page() {
         if (viewParam === "editor" && window.innerWidth < 1024) {
           setIsMobileSidebarOpen(true)
         }
+      } else if (projectParam) {
+        setViewMode("editor")
       }
     }
   }, [])
@@ -476,7 +483,18 @@ export default function Page() {
       setProjects(next)
       if (next.length > 0) {
         setActiveProjectId((prevId) => {
-          const chosenId = prevId && next.some((p) => p.id === prevId) ? prevId : next[0].id
+          const urlParam =
+            typeof window !== "undefined"
+              ? new URLSearchParams(window.location.search).get("project") ||
+                new URLSearchParams(window.location.search).get("projectId") ||
+                new URLSearchParams(window.location.search).get("id")
+              : null
+          const chosenId =
+            urlParam && next.some((p) => p.id === urlParam)
+              ? urlParam
+              : prevId && next.some((p) => p.id === prevId)
+              ? prevId
+              : next[0].id
           const activeP = next.find((p) => p.id === chosenId) || next[0]
           setActiveWorkflowId((prevW) => {
             if (prevW && activeP.workflows.some((w) => w.id === prevW)) {
@@ -962,6 +980,12 @@ export default function Page() {
     )
     setViewMode("editor")
     setIsMobileSidebarOpen(false)
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href)
+      url.searchParams.set("project", projectId)
+      url.searchParams.set("view", "editor")
+      window.history.pushState({}, "", url.toString())
+    }
   }, [projects])
 
   const createProject = async (e?: React.MouseEvent) => {
@@ -2088,7 +2112,7 @@ export default function Page() {
 
             {/* AI Simulator Route Link */}
             <Link
-              href="/ai-simulator"
+              href={activeProject ? `/ai-simulator?projectId=${activeProject.id}` : "/ai-simulator"}
               className="w-full py-2.5 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-indigo-300 cursor-pointer"
               title="AI Simulator & Full App Testing"
             >
@@ -2330,10 +2354,22 @@ export default function Page() {
                 value={viewMode}
                 onChange={(e) => {
                   if (e.target.value === "ai-simulator") {
-                    window.location.href = "/ai-simulator"
+                    window.location.href = activeProject ? `/ai-simulator?projectId=${activeProject.id}` : "/ai-simulator"
                     return
                   }
-                  setViewMode(e.target.value as "dashboard" | "editor" | "simulator")
+                  const newMode = e.target.value as "dashboard" | "editor" | "simulator"
+                  setViewMode(newMode)
+                  if (typeof window !== "undefined") {
+                    const url = new URL(window.location.href)
+                    if (newMode === "dashboard") {
+                      url.searchParams.delete("view")
+                      url.searchParams.delete("project")
+                    } else {
+                      if (activeProject) url.searchParams.set("project", activeProject.id)
+                      url.searchParams.set("view", newMode)
+                    }
+                    window.history.pushState({}, "", url.toString())
+                  }
                 }}
                 className="sm:hidden h-8 max-w-[125px] rounded-lg border border-slate-200 bg-slate-100 px-2 text-xs font-semibold text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                 aria-label="Switch workspace view"
@@ -2346,14 +2382,30 @@ export default function Page() {
               <div className="hidden sm:flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 flex-shrink-0">
                 <button
                   type="button"
-                  onClick={() => setViewMode("dashboard")}
+                  onClick={() => {
+                    setViewMode("dashboard")
+                    if (typeof window !== "undefined") {
+                      const url = new URL(window.location.href)
+                      url.searchParams.delete("view")
+                      url.searchParams.delete("project")
+                      window.history.pushState({}, "", url.toString())
+                    }
+                  }}
                   className="px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                 >
                   Dashboard
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewMode("editor")}
+                  onClick={() => {
+                    setViewMode("editor")
+                    if (typeof window !== "undefined" && activeProject) {
+                      const url = new URL(window.location.href)
+                      url.searchParams.set("project", activeProject.id)
+                      url.searchParams.set("view", "editor")
+                      window.history.pushState({}, "", url.toString())
+                    }
+                  }}
                   className={`px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                     viewMode === "editor"
                       ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
@@ -2364,7 +2416,15 @@ export default function Page() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewMode("simulator")}
+                  onClick={() => {
+                    setViewMode("simulator")
+                    if (typeof window !== "undefined" && activeProject) {
+                      const url = new URL(window.location.href)
+                      url.searchParams.set("project", activeProject.id)
+                      url.searchParams.set("view", "simulator")
+                      window.history.pushState({}, "", url.toString())
+                    }
+                  }}
                   className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                     viewMode === "simulator"
                       ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
@@ -2375,7 +2435,7 @@ export default function Page() {
                   <span>Simulator</span>
                 </button>
                 <Link
-                  href="/ai-simulator"
+                  href={activeProject ? `/ai-simulator?projectId=${activeProject.id}` : "/ai-simulator"}
                   className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400"
                 >
                   <Sparkles className="h-3.5 w-3.5 hidden sm:block text-indigo-500" />

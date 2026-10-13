@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useCallback, useEffect } from "react"
 import type {
   AutomationJob,
   FullAppTestPlan,
@@ -9,6 +9,7 @@ import type {
   ActionableElement,
 } from "@/lib/ai-automation/types"
 import TestFlowGraph from "./test-flow-graph"
+import ActionLedgerPanel from "./action-ledger-panel"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import {
   Compass,
@@ -28,7 +29,6 @@ import {
   Image as ImageIcon,
   Maximize2,
   ChevronRight,
-  ChevronDown,
   ShieldAlert,
   ExternalLink,
   Check,
@@ -41,6 +41,11 @@ import {
   HelpCircle,
   Columns,
   Loader2,
+  Trash2,
+  Archive,
+  RotateCcw,
+  Edit3,
+  KeyRound,
 } from "lucide-react"
 
 interface FullAppTestingViewProps {
@@ -61,6 +66,8 @@ interface FullAppTestingViewProps {
   isMapPageActive?: boolean
   onOpenBesideScreen?: () => void
   isBesideScreen?: boolean
+  isFullStage?: boolean
+  onToggleFullStage?: () => void
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
 }
@@ -80,6 +87,8 @@ export default function FullAppTestingView({
   isMapPageActive = false,
   onOpenBesideScreen,
   isBesideScreen = false,
+  isFullStage,
+  onToggleFullStage,
   testingMode = "full_app",
   onSelectTestingMode,
 }: FullAppTestingViewProps) {
@@ -109,7 +118,263 @@ export default function FullAppTestingView({
   const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null)
   const [screenshotModal, setScreenshotModal] = useState<string | null>(null)
   const [filterStepStatus, setFilterStepStatus] = useState<string>("all")
+  const [planChatInput, setPlanChatInput] = useState("")
+  const [planChatBusy, setPlanChatBusy] = useState(false)
+  const [planChatMessages, setPlanChatMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([])
+  const [planApprovalBusy, setPlanApprovalBusy] = useState(false)
+  const [isExportingZip, setIsExportingZip] = useState(false)
+  const [isResettingData, setIsResettingData] = useState(false)
 
+  // Step value inline editing
+  const [editingStepId, setEditingStepId] = useState<string | null>(null)
+  const [editingStepValue, setEditingStepValue] = useState<string>("")
+  const [isSavingStepValue, setIsSavingStepValue] = useState(false)
+
+  // Plan credentials quick-bar
+  const [planCredUser, setPlanCredUser] = useState("")
+  const [planCredPass, setPlanCredPass] = useState("")
+  const [isApplyingPlanCreds, setIsApplyingPlanCreds] = useState(false)
+
+  useEffect(() => {
+    try {
+      const savedStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+      if (savedStr) {
+        const parsed = JSON.parse(savedStr)
+        if (parsed.username) setPlanCredUser(parsed.username)
+        if (parsed.password) setPlanCredPass(parsed.password)
+      }
+    } catch {}
+  }, [])
+
+  const handleSaveStepValue = async (stepId: string) => {
+    if (!job?.id) return
+    setIsSavingStepValue(true)
+    try {
+      if (job.fullAppTestPlan?.steps) {
+        const target = job.fullAppTestPlan.steps.find((s) => s.id === stepId)
+        if (target) {
+          target.syntheticValue = editingStepValue
+          const isEmail = /e-?mail/i.test(target.targetName) || /e-?mail/i.test(target.targetSelector || "")
+          const isPass = /pass/i.test(target.targetName) || /pass/i.test(target.targetSelector || "")
+          try {
+            const savedStr = localStorage.getItem("simulator_auth_credentials")
+            const parsed = savedStr ? JSON.parse(savedStr) : {}
+            if (isEmail) parsed.username = editingStepValue
+            if (isPass) parsed.password = editingStepValue
+            localStorage.setItem("simulator_auth_credentials", JSON.stringify(parsed))
+          } catch {}
+        }
+      }
+
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          projectId: job.projectId,
+          action: "update_step_value",
+          stepId,
+          value: editingStepValue,
+        }),
+      })
+
+      if (onJobUpdate) onJobUpdate({ ...job })
+      setEditingStepId(null)
+    } catch (e) {
+      console.error("Failed to update step value:", e)
+    } finally {
+      setIsSavingStepValue(false)
+    }
+  }
+
+  const handleApplyPlanCredentials = async () => {
+    if (!job?.id || (!planCredUser.trim() && !planCredPass.trim())) return
+    setIsApplyingPlanCreds(true)
+    try {
+      const u = planCredUser.trim()
+      const p = planCredPass.trim()
+
+      try {
+        const savedStr = localStorage.getItem("simulator_auth_credentials")
+        const parsed = savedStr ? JSON.parse(savedStr) : {}
+        if (u) parsed.username = u
+        if (p) parsed.password = p
+        localStorage.setItem("simulator_auth_credentials", JSON.stringify(parsed))
+      } catch {}
+
+      if (job.fullAppTestPlan?.steps) {
+        for (const s of job.fullAppTestPlan.steps) {
+          if (s.actionType === "fill") {
+            const isEmail = /e-?mail/i.test(s.targetName) || /e-?mail/i.test(s.targetSelector || "")
+            const isUser = /user|login/i.test(s.targetName) || /user|login/i.test(s.targetSelector || "")
+            const isPass = /pass/i.test(s.targetName) || /pass/i.test(s.targetSelector || "")
+            if ((isEmail || isUser) && u) s.syntheticValue = u
+            if (isPass && p) s.syntheticValue = p
+          }
+        }
+      }
+
+      await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          projectId: job.projectId,
+          action: "provide_credentials",
+          username: u,
+          password: p,
+        }),
+      })
+
+      if (onJobUpdate) onJobUpdate({ ...job })
+    } catch (e) {
+      console.error("Failed to apply plan credentials:", e)
+    } finally {
+      setIsApplyingPlanCreds(false)
+    }
+  }
+
+  const handleExportZip = async () => {
+    if (!job?.id || isExportingZip) return
+    setIsExportingZip(true)
+    try {
+      const res = await fetch(`/api/ai-automation/export-zip?jobId=${job.id}`)
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        throw new Error(errJson.error || "Failed to generate export zip")
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      const disposition = res.headers.get("content-disposition") || ""
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch?.[1] || `test-bundle-${job.id.slice(0, 8)}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      alert(`Export failed: ${err?.message || "Could not generate ZIP bundle"}`)
+    } finally {
+      setIsExportingZip(false)
+    }
+  }
+
+  const handleResetData = async () => {
+    if (!job?.id || isResettingData) return
+    const confirmed = window.confirm(
+      "Are you sure you want to reset all discovered screens and test plan data? This will clear the current map and tests so you can start a fresh run."
+    )
+    if (!confirmed) return
+
+    setIsResettingData(true)
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action: "reset_test_data" }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Could not reset map data")
+      if (data.job) onJobUpdate?.(data.job)
+      window.dispatchEvent(new CustomEvent("ai-simulator-data-reset", { detail: { jobId: job.id } }))
+    } catch (err: any) {
+      alert(`Reset failed: ${err?.message || "Could not reset data"}`)
+    } finally {
+      setIsResettingData(false)
+    }
+  }
+
+  useEffect(() => {
+    if (job?.planApprovalState === "awaiting_review" && job.fullAppTestPlan?.screens?.length) {
+      setInternalSubTab("plan")
+      onSubTabChange?.("plan")
+    }
+  }, [job?.planApprovalState, job?.fullAppTestPlan?.id, job?.fullAppTestPlan?.steps?.length, onSubTabChange])
+
+  const submitPlanChat = async () => {
+    if (!job?.id || !planChatInput.trim() || planChatBusy) return
+    const instruction = planChatInput.trim()
+    setPlanChatMessages((messages) => [...messages, { role: "user", text: instruction }])
+    setPlanChatInput("")
+    setPlanChatBusy(true)
+    try {
+      const response = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action: "edit_test_plan", instruction }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Could not update the plan")
+      if (data.job) onJobUpdate?.(data.job)
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: data.message || "Plan updated. Review the changes before approving." }])
+    } catch (error) {
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: error instanceof Error ? error.message : "Could not update the plan." }])
+    } finally {
+      setPlanChatBusy(false)
+    }
+  }
+
+  const approveTestPlan = async () => {
+    if (!job?.id || planApprovalBusy) return
+    setPlanApprovalBusy(true)
+    try {
+      const response = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action: "approve_test_plan" }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Could not approve the plan")
+      if (data.job) onJobUpdate?.(data.job)
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: "Plan approved. The current browser session will continue into execution." }])
+    } catch (error) {
+      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: error instanceof Error ? error.message : "Could not approve the plan." }])
+    } finally {
+      setPlanApprovalBusy(false)
+    }
+  }
+
+  const handleDeleteScreen = useCallback(
+    (screenId: string) => {
+      if (!job) return
+
+      const currentScreens = plan?.screens || []
+      const updatedScreens = currentScreens.filter((s) => s.id !== screenId)
+      const currentNodes = flowGraph?.nodes || []
+      const updatedNodes = currentNodes.filter((n) => n.id !== screenId)
+      const currentEdges = flowGraph?.edges || []
+      const updatedEdges = currentEdges.filter((e) => e.from !== screenId && e.to !== screenId)
+      const currentTransitions = plan?.transitions || []
+      const updatedTransitions = currentTransitions.filter(
+        (t) => t.fromScreenId !== screenId && t.toScreenId !== screenId
+      )
+      const currentSteps = plan?.steps || []
+      const updatedSteps = currentSteps.filter((s) => s.screenId !== screenId)
+
+      const updatedJob: AutomationJob = {
+        ...job,
+        flowGraph: {
+          nodes: updatedNodes,
+          edges: updatedEdges,
+        },
+        fullAppTestPlan: {
+          ...(job.fullAppTestPlan || ({} as any)),
+          screens: updatedScreens,
+          transitions: updatedTransitions,
+          steps: updatedSteps,
+        },
+      }
+
+      if (selectedScreenId === screenId) {
+        setSelectedScreenId(updatedScreens[0]?.id || null)
+      }
+
+      onJobUpdate?.(updatedJob)
+    },
+    [job, plan, flowGraph, selectedScreenId, onJobUpdate]
+  )
   // Dummy test files state (user-provided or synthetic defaults)
   const [dummyFiles, setDummyFiles] = useState<
     Record<string, { name: string; url: string; type: string }>
@@ -203,6 +468,7 @@ export default function FullAppTestingView({
     }
   }, [plan])
 
+  const actionLedger = job?.actionLedger
   // Handle local dummy file upload
   const handleFileUpload = (type: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -240,64 +506,7 @@ export default function FullAppTestingView({
         </div>
       )}
 
-      {/* Top Mode Switcher Header in Full Page View */}
-      {fullPageView && onSelectTestingMode && (
-        <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-              <button
-                type="button"
-                onClick={() => onSelectTestingMode("feature_workflow")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                  testingMode === "feature_workflow"
-                    ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-950"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Sparkles className="h-3.5 w-3.5 text-indigo-300" />
-                <span>Feature / Workflow Testing</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onSelectTestingMode("full_app")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                  testingMode === "full_app"
-                    ? "bg-indigo-600 text-white shadow-md"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Compass className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Full App Testing</span>
-              </button>
-            </div>
-            <span className="text-[11px] text-slate-400 hidden md:inline">
-              Mode: <span className="text-white font-semibold">Full App Systematic Crawl & Inventory</span>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {isRunning && onCancelJob ? (
-              <button
-                type="button"
-                onClick={onCancelJob}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer"
-              >
-                <Ban className="h-3.5 w-3.5" />
-                <span>Stop Job</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onStartFullAppTest(dummyFiles)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition cursor-pointer"
-              >
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Run Full App Test</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Top Mode Switcher Header removed to eliminate redundant Run Full App Test & mode banner */}
 
       {/* 1. Header Banner & Architecture Stepper (shown only when not in full page view) */}
       {!fullPageView && (
@@ -429,7 +638,7 @@ export default function FullAppTestingView({
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              if (authUser.trim() && authPass) sendAuth("provide_credentials")
+              if (authUser.trim()) sendAuth("provide_credentials")
             }}
             className="flex flex-wrap items-center gap-2"
           >
@@ -445,17 +654,17 @@ export default function FullAppTestingView({
               type="password"
               value={authPass}
               onChange={(e) => setAuthPass(e.target.value)}
-              placeholder="Password"
+              placeholder="Password (if required)"
               autoComplete="new-password"
               className="flex-1 min-w-[140px] bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
             />
             <button
               type="submit"
-              disabled={isSubmittingAuth || !authUser.trim() || !authPass}
+              disabled={isSubmittingAuth || !authUser.trim()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-bold cursor-pointer transition shadow-sm"
             >
               {isSubmittingAuth && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              <span>{isSubmittingAuth ? "Logging in..." : "Log in & continue"}</span>
+              <span>{isSubmittingAuth ? "Submitting..." : authPass ? "Log in & continue" : "Use email & continue"}</span>
             </button>
             <button
               type="button"
@@ -535,7 +744,7 @@ export default function FullAppTestingView({
         <div className="px-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
           <div className="flex gap-1 py-1.5">
             {[
-              { id: "map", label: "Figma-Style App Map", icon: MapIcon, count: plan?.screens.length },
+              { id: "map", label: "App Map", icon: MapIcon, count: plan?.screens.length },
               { id: "screens", label: "Discovered Screens", icon: Layers, count: plan?.screens.length },
               { id: "plan", label: "Structured Test Plan", icon: ListChecks, count: plan?.steps.length },
               { id: "execution", label: "Live Execution & Evidence", icon: Play },
@@ -576,6 +785,33 @@ export default function FullAppTestingView({
                 </button>
               )
             })}
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto my-1">
+            {job?.id && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportZip}
+                  disabled={isExportingZip}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                  title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
+                >
+                  {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+                  <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetData}
+                  disabled={isResettingData}
+                  className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-[11px] font-medium flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                  title="Reset discovered map screens and test plan data"
+                >
+                  {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                  <span>Reset Data</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -626,9 +862,12 @@ export default function FullAppTestingView({
                   onSelectScreen={(screenId) => {
                     setSelectedScreenId(screenId)
                   }}
+                  onDeleteScreen={handleDeleteScreen}
                   onViewScreenshot={(url) => setScreenshotModal(url)}
                   onOpenMapPage={onOpenMapPage || onOpenBesideScreen}
-                  isFullStage={fullPageView}
+                  isFullStage={isFullStage !== undefined ? isFullStage : fullPageView}
+                  isBesideScreen={isBesideScreen}
+                  onToggleFullStage={onToggleFullStage}
                 />
               </div>
             ) : (
@@ -669,10 +908,17 @@ export default function FullAppTestingView({
                     {plan.screens.map((s) => {
                       const isSelected = selectedScreen?.id === s.id
                       return (
-                        <button
+                        <div
                           key={s.id}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelectedScreenId(s.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault()
+                              setSelectedScreenId(s.id)
+                            }
+                          }}
                           className={`w-full p-2.5 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
                             isSelected
                               ? "bg-indigo-600/20 border-indigo-500 text-white"
@@ -686,10 +932,24 @@ export default function FullAppTestingView({
                             </div>
                             <div className="text-[10px] text-slate-500 font-mono truncate">{s.path}</div>
                           </div>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-300 shrink-0 font-mono">
-                            {s.actionableElements.length}
-                          </span>
-                        </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDeleteScreen(s.id)
+                              }}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/60 transition cursor-pointer"
+                              title={`Delete screen ${s.id}`}
+                              aria-label={`Delete screen ${s.id}`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-slate-300 font-mono">
+                              {s.actionableElements.length}
+                            </span>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -710,16 +970,27 @@ export default function FullAppTestingView({
                           </div>
                           <p className="text-xs text-slate-400 font-mono mt-0.5">{selectedScreen.url}</p>
                         </div>
-                        {selectedScreen.screenshotUrl && (
+                        <div className="flex items-center gap-2">
+                          {selectedScreen.screenshotUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setScreenshotModal(selectedScreen.screenshotUrl!)}
+                              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1 border border-slate-700 transition cursor-pointer"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>View Screen</span>
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => setScreenshotModal(selectedScreen.screenshotUrl!)}
-                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1 border border-slate-700 transition cursor-pointer"
+                            onClick={() => handleDeleteScreen(selectedScreen.id)}
+                            className="px-2.5 py-1 rounded bg-rose-950/40 hover:bg-rose-900/60 text-xs font-semibold text-rose-300 flex items-center gap-1 border border-rose-800/60 transition cursor-pointer"
+                            title="Delete this screen from test plan"
                           >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span>View Screen</span>
+                            <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                            <span>Delete Screen</span>
                           </button>
-                        )}
+                        </div>
                       </div>
 
                       {/* Actionable Elements List */}
@@ -730,9 +1001,9 @@ export default function FullAppTestingView({
                         </h5>
 
                         <div className="space-y-1.5 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
-                          {selectedScreen.actionableElements.map((elem) => (
+                          {selectedScreen.actionableElements.map((elem, index) => (
                             <div
-                              key={elem.id}
+                              key={`${elem.id}-${index}`}
                               className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/80 flex items-center justify-between text-xs"
                             >
                               <div className="min-w-0 pr-3">
@@ -799,26 +1070,131 @@ export default function FullAppTestingView({
                 </p>
               </div>
 
-              {/* Status Filters */}
-              {plan && (
-                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
-                  {["all", "passed", "failed", "blocked", "pending"].map((st) => (
+              {/* Status Filters & Actions */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {plan && (
+                  <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
+                    {["all", "passed", "failed", "blocked", "pending"].map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setFilterStepStatus(st)}
+                        className={`px-2.5 py-1 rounded capitalize font-medium transition cursor-pointer ${
+                          filterStepStatus === st
+                            ? "bg-indigo-600 text-white font-bold"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {job?.id && (
+                  <>
                     <button
-                      key={st}
                       type="button"
-                      onClick={() => setFilterStepStatus(st)}
-                      className={`px-2.5 py-1 rounded capitalize font-medium transition cursor-pointer ${
-                        filterStepStatus === st
-                          ? "bg-indigo-600 text-white font-bold"
-                          : "text-slate-400 hover:text-white"
-                      }`}
+                      onClick={handleExportZip}
+                      disabled={isExportingZip}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      title="Save complete test as ZIP file (PDF report, HTML, evidence screenshots, and JSON)"
                     >
-                      {st}
+                      {isExportingZip ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
+                      <span>{isExportingZip ? "Generating ZIP..." : "Save Test ZIP"}</span>
                     </button>
-                  ))}
-                </div>
-              )}
+                    <button
+                      type="button"
+                      onClick={handleResetData}
+                      disabled={isResettingData}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-300 hover:text-rose-200 disabled:opacity-50 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                      title="Reset discovered map screens and test plan data"
+                    >
+                      {isResettingData ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                      <span>Reset Data</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
+
+            {/* Quick Test Credentials Bar */}
+            <div className="rounded-xl border border-indigo-500/30 bg-slate-900/90 p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-amber-400 shrink-0" />
+                <div>
+                  <span className="text-xs font-bold text-white">Test Login Credentials</span>
+                  <p className="text-[10px] text-slate-400">Write test email & password to use on login steps instead of synthetic faker data.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="text"
+                  value={planCredUser}
+                  onChange={(e) => setPlanCredUser(e.target.value)}
+                  placeholder="Test email / username"
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 w-48"
+                />
+                <input
+                  type="password"
+                  value={planCredPass}
+                  onChange={(e) => setPlanCredPass(e.target.value)}
+                  placeholder="Test password"
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 w-36"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyPlanCredentials}
+                  disabled={isApplyingPlanCreds || (!planCredUser.trim() && !planCredPass.trim())}
+                  className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  {isApplyingPlanCreds ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                  <span>Apply to Plan</span>
+                </button>
+              </div>
+            </div>
+
+            {job?.planApprovalState === "awaiting_review" && plan && (
+              <div className="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Review and chat with this plan</h4>
+                    <p className="text-xs text-slate-300 mt-1">The browser is paused after authenticated discovery. Ask for supported changes below, review the updated steps, then approve execution.</p>
+                  </div>
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-300">Waiting for approval</span>
+                </div>
+                {planChatMessages.length > 0 && (
+                  <div className="max-h-36 overflow-y-auto space-y-2 rounded-lg bg-slate-950/70 p-2.5" aria-live="polite">
+                    {planChatMessages.map((message, index) => (
+                      <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
+                        <span className={message.role === "user" ? "inline-block max-w-[90%] rounded-lg bg-indigo-600/30 px-3 py-2 text-xs text-indigo-100" : "inline-block max-w-[90%] rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200"}>{message.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form className="flex flex-col sm:flex-row gap-2" onSubmit={(event) => { event.preventDefault(); void submitPlanChat() }}>
+                  <input
+                    value={planChatInput}
+                    onChange={(event) => setPlanChatInput(event.target.value)}
+                    placeholder='Try: “add a test for signup validation” or “remove step 3”'
+                    aria-label="Chat with the test plan"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+                    disabled={planChatBusy}
+                  />
+                  <button type="submit" disabled={planChatBusy || !planChatInput.trim()} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
+                    {planChatBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    Apply change
+                  </button>
+                </form>
+                <p className="text-[10px] text-slate-400">Supported edits: add a test, remove a numbered step, rename a step, or change a step’s expected result. Every edit is saved to the plan before approval.</p>
+                <div className="flex justify-end border-t border-indigo-500/20 pt-3">
+                  <button type="button" onClick={() => void approveTestPlan()} disabled={planApprovalBusy || planChatBusy} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer">
+                    {planApprovalBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                    Approve plan &amp; run tests
+                  </button>
+                </div>
+              </div>
+            )}
 
             {filteredSteps.length > 0 ? (
               <div className="space-y-2">
@@ -917,14 +1293,62 @@ export default function FullAppTestingView({
                         )}
                       </div>
 
-                      {/* Synthetic test value note */}
+                      {/* Synthetic test value note & inline edit */}
                       {step.syntheticValue && (
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[10px]">
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px]">
                           <span className="text-slate-500 font-mono">Input Value:</span>
-                          <code className="px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-indigo-300 font-mono">
-                            {step.syntheticValue}
-                          </code>
-                          <span className="text-[9px] text-emerald-400/80">(Synthetic Faker Data)</span>
+                          {editingStepId === step.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type={/pass/i.test(step.targetName) ? "password" : "text"}
+                                value={editingStepValue}
+                                onChange={(e) => setEditingStepValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveStepValue(step.id)
+                                  if (e.key === "Escape") setEditingStepId(null)
+                                }}
+                                className="px-2 py-0.5 rounded bg-slate-950 border border-indigo-500 text-white font-mono text-xs focus:outline-none"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveStepValue(step.id)}
+                                disabled={isSavingStepValue}
+                                className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold cursor-pointer"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingStepId(null)}
+                                className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <code className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-indigo-300 font-mono">
+                                {step.syntheticValue}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingStepId(step.id)
+                                  setEditingStepValue(step.syntheticValue || "")
+                                }}
+                                className="p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-indigo-300 transition cursor-pointer"
+                                title="Edit this input value"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                              </button>
+                              <span className="text-[9px] text-emerald-400/80">
+                                {step.syntheticValue.includes("synthetic.test") || step.syntheticValue === "Password123!Safe"
+                                  ? "(Synthetic Faker Data)"
+                                  : "(Custom Value)"}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -970,6 +1394,9 @@ export default function FullAppTestingView({
                 {plan ? `${coverage.actionsTested} / ${coverage.totalActions} Executed` : "Idle"}
               </div>
             </div>
+
+            {/* Reusable Action Queue: stays inside the existing execution view */}
+            <ActionLedgerPanel actionLedger={actionLedger} onViewEvidence={setScreenshotModal} autoExpand={isRunning} />
 
             {/* Current Active Step Banner */}
             {isRunning && job?.currentStep && (

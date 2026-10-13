@@ -61,6 +61,7 @@ import {
   LogOut,
   Plug,
   User,
+  Archive,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -191,6 +192,7 @@ const DEFAULT_AI_PROJECT: Project = {
 export default function AISimulatorPage() {
   const supabase = createClient()
   const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<Project[]>([DEFAULT_AI_PROJECT])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(DEFAULT_AI_PROJECT.id)
@@ -217,9 +219,65 @@ export default function AISimulatorPage() {
   const [maxScreens, setMaxScreens] = useState(5)
   const [checkBackNav, setCheckBackNav] = useState(true)
   const [checkResponsive, setCheckResponsive] = useState(true)
+  const [recordVideo, setRecordVideo] = useState(true)
 
   // Active Automation Job State
   const [currentJob, setCurrentJob] = useState<AutomationJob | null>(null)
+  const [isExportingZip, setIsExportingZip] = useState(false)
+  const [isResettingData, setIsResettingData] = useState(false)
+
+  const handleExportZip = async () => {
+    if (!currentJob?.id || isExportingZip) return
+    setIsExportingZip(true)
+    try {
+      const res = await fetch(`/api/ai-automation/export-zip?jobId=${currentJob.id}`)
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        throw new Error(errJson.error || "Failed to generate export zip")
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      const disposition = res.headers.get("content-disposition") || ""
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch?.[1] || `test-bundle-${currentJob.id.slice(0, 8)}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      alert(`Export failed: ${err?.message || "Could not generate ZIP bundle"}`)
+    } finally {
+      setIsExportingZip(false)
+    }
+  }
+
+  const handleResetData = async () => {
+    if (!currentJob?.id || isResettingData) return
+    const confirmed = window.confirm(
+      "Are you sure you want to reset all discovered screens and test plan data? This will clear the current map and tests so you can start a fresh run."
+    )
+    if (!confirmed) return
+
+    setIsResettingData(true)
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: currentJob.id, action: "reset_test_data" }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Could not reset map data")
+      if (data.job) setCurrentJob(data.job)
+    } catch (err: any) {
+      alert(`Reset failed: ${err?.message || "Could not reset data"}`)
+    } finally {
+      setIsResettingData(false)
+    }
+  }
+
+  const lastSessionEventSequenceRef = useRef<Record<string, number>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [botError, setBotError] = useState("")
   const [copiedReport, setCopiedReport] = useState(false)
@@ -261,6 +319,15 @@ export default function AISimulatorPage() {
 
   // Verification and Settings interaction state
   const [verificationUrlInput, setVerificationUrlInput] = useState("")
+  const [isDummyTestActive, setIsDummyTestActive] = useState(false)
+
+  useEffect(() => {
+    const handleStatus = (e: any) => {
+      setIsDummyTestActive(Boolean(e.detail?.running))
+    }
+    window.addEventListener("dummy-test-status", handleStatus)
+    return () => window.removeEventListener("dummy-test-status", handleStatus)
+  }, [])
   const [verificationCodeInput, setVerificationCodeInput] = useState("")
   const [isSubmittingVerification, setIsSubmittingVerification] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
@@ -269,7 +336,7 @@ export default function AISimulatorPage() {
 
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
-  type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+  type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage" | "chat"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
 
   // Workspace layout mode: "device" (Phone Simulator) | "split" (Side-by-Side) | "stage" (Map & Plan)
@@ -296,7 +363,7 @@ export default function AISimulatorPage() {
       const tabParam = params.get("tab") || params.get("view")
       if (
         tabParam &&
-        ["simulator", "map", "screens", "plan", "execution", "files", "coverage"].includes(tabParam)
+        ["simulator", "map", "screens", "plan", "execution", "files", "coverage", "chat"].includes(tabParam)
       ) {
         setStageViewMode(tabParam as StageViewMode)
         if (tabParam === "simulator") {
@@ -307,6 +374,67 @@ export default function AISimulatorPage() {
       }
     }
   }, [])
+
+  // Load project from URL search param if provided (e.g. ?projectId=... or ?project=...)
+  useEffect(() => {
+    if (typeof window === "undefined" || !supabase) return
+    const params = new URLSearchParams(window.location.search)
+    const pId = params.get("projectId") || params.get("project") || params.get("id")
+    if (!pId || pId === "ai-simulator-default") return
+
+    setActiveProjectId(pId)
+
+    const fetchProject = async () => {
+      try {
+        const { data: pData } = await supabase
+          .from("projects")
+          .select("id, title, user_id, figma_url")
+          .eq("id", pId)
+          .single()
+
+        if (pData) {
+          const { data: wData } = await supabase
+            .from("workflows")
+            .select("id, project_id, title, design_a, design_b, figma_url, our_notes, client_message, client_task_done, reason, is_done")
+            .eq("project_id", pId)
+
+          const loadedProject: Project = {
+            id: pData.id,
+            title: pData.title,
+            isExpanded: true,
+            userId: pData.user_id,
+            figmaUrl: pData.figma_url,
+            workflows: (wData || []).map((w: any) => ({
+              id: w.id,
+              projectId: w.project_id,
+              title: w.title,
+              designA: w.design_a,
+              designB: w.design_b,
+              figmaUrl: w.figma_url,
+              ourNotes: w.our_notes || "",
+              clientMessage: w.client_message || "",
+              clientTaskDone: w.client_task_done,
+              reason: w.reason || "",
+              isDone: w.is_done,
+              comments: [],
+              revisions: [],
+            })),
+          }
+
+          setProjects((prev) => {
+            const filtered = prev.filter((p) => p.id !== pId)
+            return [loadedProject, ...filtered]
+          })
+          if (loadedProject.workflows.length > 0) {
+            setActiveWorkflowId(loadedProject.workflows[0].id)
+          }
+        }
+      } catch (err) {
+        console.warn("[AI Simulator] Failed to load project from query param:", err)
+      }
+    }
+    fetchProject()
+  }, [supabase])
 
   // Full App Test Plan & Figma-Style Workflow Map Synthesis
   const activePlan = useMemo(() => {
@@ -406,6 +534,15 @@ export default function AISimulatorPage() {
     },
     [activePlan, currentJob]
   )
+
+  // Simulator device viewport state
+  const [simulatorViewport, setSimulatorViewport] = useState<{ width: number; height: number }>({ width: 393, height: 852 })
+  const handleSimulatorViewportChange = useCallback((vp: { width: number; height: number }) => {
+    setSimulatorViewport((prev) => {
+      if (prev.width === vp.width && prev.height === vp.height) return prev
+      return { width: vp.width, height: vp.height }
+    })
+  }, [])
 
   // Local Project Route Scanner State
   const actionLedgerLive = activePlan?.steps?.filter((s) => s.status === "running").map((s) => ({ id: s.id, title: s.targetName || "Running action", detail: s.expectedResult, status: "running" as const })) || []
@@ -520,6 +657,42 @@ export default function AISimulatorPage() {
     fetchTestDataStatus(savedProject)
   }, [])
 
+  const handleSimulatorUrlChange = useCallback((newUrl: string) => {
+    const cleanUrl = newUrl.trim()
+    if (!cleanUrl) return
+
+    setTargetUrl(cleanUrl)
+    localStorage.setItem("ai_target_app_url", cleanUrl)
+
+    // Update only the shared session URL. Discovered screens keep their own routes.
+    setCurrentJob((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        currentUrl: cleanUrl,
+        targetUrl: cleanUrl,
+        fullAppTestPlan: prev.fullAppTestPlan
+          ? { ...prev.fullAppTestPlan, targetUrl: cleanUrl }
+          : prev.fullAppTestPlan,
+      }
+    })
+
+    const activeJob = currentJob
+    if (activeJob?.id && (activeJob.status === "running" || activeJob.status === "queued")) {
+      void fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: activeJob.id, action: "navigate_session", url: cleanUrl }),
+      })
+        .then(async (res) => {
+          const data = await res.json()
+          if (!res.ok || !data.success) throw new Error(data.error || "Failed to navigate the active testing session.")
+          if (data.job) setCurrentJob(data.job)
+        })
+        .catch((err) => setBotError(err?.message || "Failed to synchronize session navigation."))
+    }
+  }, [currentJob?.id, currentJob?.status])
+
   // Laya fast health checker (runs only if explicitly enabled)
   useEffect(() => {
     if (!enableLaya) {
@@ -529,24 +702,25 @@ export default function AISimulatorPage() {
     let active = true
     const checkLaya = async () => {
       try {
-        const res = await fetch(`/api/ai-automation/laya-health?baseUrl=${encodeURIComponent(layaBaseUrl)}`, {
-          signal: AbortSignal.timeout(2500),
-        }).catch(() => null)
+        const res = await fetch(`/api/ai-automation/laya-health?baseUrl=${encodeURIComponent(layaBaseUrl)}`)
         if (!res || !res.ok) {
           if (active) setIsLayaLive(false)
           return
         }
         const data = await res.json().catch(() => null)
         if (active) setIsLayaLive(Boolean(data?.live))
-      } catch {
+      } catch (err: any) {
+        if (err?.name === "AbortError") return
         if (active) setIsLayaLive(false)
       }
     }
-    checkLaya()
-    const timer = setInterval(checkLaya, 12000)
+    void checkLaya()
+    const intervalTimer = setInterval(() => {
+      void checkLaya()
+    }, 15000)
     return () => {
       active = false
-      clearInterval(timer)
+      clearInterval(intervalTimer)
     }
   }, [enableLaya, layaBaseUrl])
 
@@ -634,7 +808,7 @@ export default function AISimulatorPage() {
   }, [chatHistory.length])
 
   // Send natural language testing command to browser agent
-  const handleSendChatCommand = async (cmdText?: string, imageOverride?: string, fromQueue = false) => {
+  const handleSendChatCommand = async (cmdText?: string, imageOverride?: string, fromQueue = false, targetUrlOverride?: string) => {
     const textToSend = (cmdText || chatInput).trim()
     const imageToSend = imageOverride || attachedImage
     if ((!textToSend && !imageToSend) || isSendingChat) return
@@ -644,27 +818,41 @@ export default function AISimulatorPage() {
       const skip = /^\s*skip\b/i.test(textToSend)
       const pwMatch = textToSend.match(/(?:password|pass|pwd)\s*[:=]?\s*(\S+)/i)
       const userMatch = textToSend.match(/(?:e-?mail|username|user|login)\s*[:=]?\s*(\S+)/i)
-      let username = userMatch?.[1]
+      const emailOnlyMatch = textToSend.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
+
+      let username = userMatch?.[1] || (emailOnlyMatch ? emailOnlyMatch[0] : undefined)
       let password = pwMatch?.[1]
-      if (!skip && (!username || !password)) {
+      if (!skip && !username && !password) {
         const parts = textToSend.split(/[\s,;/|:]+/).filter(Boolean)
         if (parts.length === 2) [username, password] = parts
+        else if (parts.length === 1 && parts[0].includes("@")) username = parts[0]
       }
       const now = Date.now()
-      if (!skip && (!username || !password)) {
+      if (!skip && !username) {
         setChatHistory((prev) => [
           ...prev,
           { id: `user-${now}`, sender: "user", text: textToSend.replace(/(pass(?:word)?|pwd)\s*[:=]?\s*\S+/i, "$1: ****"), timestamp: new Date().toISOString(), status: "completed" },
-          { id: `agent-${now}`, sender: "agent", text: "I couldn't read that. Type it like `email: you@example.com password: yourpass`, or type `skip` to continue without logging in.", timestamp: new Date().toISOString(), status: "completed" },
+          { id: `agent-${now}`, sender: "agent", text: "Please enter your email (e.g. `you@example.com`) or `email: you@example.com password: yourpass`, or type `skip` to test without logging in.", timestamp: new Date().toISOString(), status: "completed" },
         ])
         setChatInput("")
         return
       }
       setChatInput("")
+      const displayLabel = skip
+        ? "skip"
+        : password
+        ? `email: ${username} password: ****`
+        : `email: ${username}`
+      const botResponse = skip
+        ? "Skipping login. Mapping only the public screens."
+        : password
+        ? "Got credentials. Typing details into the login form and continuing."
+        : `Using email: ${username}. Continuing test execution.`
+
       setChatHistory((prev) => [
         ...prev,
-        { id: `user-${now}`, sender: "user", text: skip ? "skip" : `email: ${username} password: ****`, timestamp: new Date().toISOString(), status: "completed" },
-        { id: `agent-${now}`, sender: "agent", text: skip ? "Skipping login. Mapping only the public screens." : "Got it. Typing those details into the login form and continuing.", timestamp: new Date().toISOString(), status: "completed" },
+        { id: `user-${now}`, sender: "user", text: displayLabel, timestamp: new Date().toISOString(), status: "completed" },
+        { id: `agent-${now}`, sender: "agent", text: botResponse, timestamp: new Date().toISOString(), status: "completed" },
       ])
       await fetch("/api/ai-automation/status", {
         method: "POST",
@@ -672,7 +860,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify(
           skip
             ? { jobId: currentJob.id, action: "skip_auth" }
-            : { jobId: currentJob.id, action: "provide_credentials", username, password }
+            : { jobId: currentJob.id, action: "provide_credentials", username, password: password || "" }
         ),
       }).catch(() => {})
       return
@@ -729,14 +917,39 @@ export default function AISimulatorPage() {
       }
     }
 
-    // Job already running: queue the message instead of starting a parallel job
-    if (!fromQueue && (currentJob?.status === "running" || currentJob?.status === "queued")) {
-      setCommandQueue((q) => [
-        ...q,
-        { id: `q-${Date.now()}`, text: textToSend, image: imageToSend || undefined },
-      ])
+    // Deliver user input to the active session instead of creating a competing job.
+    if (!fromQueue && currentJob?.id && (currentJob.status === "running" || currentJob.status === "queued")) {
+      const timestamp = new Date().toISOString()
+      const inputId = `user-session-${currentJob.id}-${Date.now()}`
+      setChatHistory((prev) => [...prev, {
+        id: inputId,
+        sender: "user",
+        text: textToSend,
+        timestamp,
+        status: "completed",
+        imageUrl: imageToSend || undefined,
+      }])
       setChatInput("")
       setAttachedImage(null)
+      try {
+        const res = await fetch("/api/ai-automation/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: currentJob.id, action: "session_input", text: textToSend }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.success) throw new Error(data.error || "The active session could not receive this input.")
+        if (data.job) setCurrentJob(data.job)
+      } catch (err: any) {
+        setBotError(err?.message || "Failed to deliver input to the active session.")
+        setChatHistory((prev) => [...prev, {
+          id: `agent-session-input-error-${Date.now()}`,
+          sender: "agent",
+          text: err?.message || "Failed to deliver input to the active session.",
+          timestamp: new Date().toISOString(),
+          status: "error",
+        }])
+      }
       return
     }
 
@@ -774,7 +987,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify({
           command: effectiveText,
           image: imageToSend || undefined,
-          targetUrl: targetUrl.trim() || "http://localhost:3001",
+          targetUrl: (targetUrlOverride || targetUrl).trim() || "http://localhost:3001",
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           credentials:
@@ -1174,14 +1387,20 @@ export default function AISimulatorPage() {
     }
   }
 
-  // Auth session check
+  // Require a valid Supabase session before rendering the simulator.
   useEffect(() => {
     let mounted = true
     supabase.auth.getSession().then(({ data: { session } }: { data: { session: Session | null } }) => {
       if (!mounted) return
       if (session?.user) {
         setUser({ id: session.user.id, email: session.user.email })
+        setAuthLoading(false)
+      } else {
+        setUser(null)
+        window.location.replace("/")
       }
+    }).catch(() => {
+      if (mounted) window.location.replace("/")
     })
 
     const {
@@ -1190,8 +1409,10 @@ export default function AISimulatorPage() {
       if (!mounted) return
       if (session?.user) {
         setUser({ id: session.user.id, email: session.user.email })
+        setAuthLoading(false)
       } else {
         setUser(null)
+        window.location.replace("/")
       }
     })
 
@@ -1350,6 +1571,44 @@ export default function AISimulatorPage() {
 
     return () => clearInterval(interval)
   }, [currentJob?.id, currentJob?.status, loadWorkspace])
+
+  // The shared session event stream feeds chat progress; sequence IDs prevent
+  // duplicate messages when the status poll returns the same event history.
+  useEffect(() => {
+    const job = currentJob
+    if (!job?.sessionEvents?.length) return
+    const sessionId = job.sessionId || job.id
+    const lastSeen = lastSessionEventSequenceRef.current[sessionId] || 0
+    const freshEvents = job.sessionEvents.filter((event) => event.sequence > lastSeen)
+    if (freshEvents.length === 0) return
+    lastSessionEventSequenceRef.current[sessionId] = Math.max(...freshEvents.map((event) => event.sequence))
+
+    const visibleEvents = freshEvents.filter((event) =>
+      ["session_started", "navigation_requested", "navigation_completed", "screen_discovered", "browser_action", "test_result", "progress", "recording", "evidence", "error", "session_stopped"].includes(event.type)
+    )
+    if (visibleEvents.length === 0) return
+    setChatHistory((prev) => {
+      const seen = new Set(prev.map((message) => message.id))
+      const additions = visibleEvents
+        .filter((event) => !seen.has(`session-event-${event.id}`) && event.message)
+        .map((event) => ({
+          id: `session-event-${event.id}`,
+          sender: "agent" as const,
+          text: event.message || "",
+          timestamp: event.timestamp,
+          status: (event.type === "error" ? "error" : "completed") as AgentChatMessage["status"],
+        }))
+      return additions.length ? [...prev, ...additions] : prev
+    })
+  }, [currentJob?.id, currentJob?.sessionEvents])
+
+  // Reflect backend browser navigation in the visible simulator as well as the map/chat.
+  useEffect(() => {
+    const sessionUrl = currentJob?.currentUrl
+    if (!sessionUrl || sessionUrl === targetUrl) return
+    setTargetUrl(sessionUrl)
+    localStorage.setItem("ai_target_app_url", sessionUrl)
+  }, [currentJob?.currentUrl, targetUrl])
 
   // Chronological action history (from first step to latest)
   const chronologicalActions = useMemo(() => {
@@ -1529,6 +1788,20 @@ export default function AISimulatorPage() {
       return
     }
 
+    let savedLocalCreds: { username?: string; password?: string } | undefined
+    try {
+      const savedStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+      if (savedStr) {
+        const parsed = JSON.parse(savedStr)
+        if (parsed.username || parsed.password) {
+          savedLocalCreds = {
+            username: parsed.username?.trim() || "",
+            password: parsed.password?.trim() || "",
+          }
+        }
+      }
+    } catch {}
+
     const effectiveCreds =
       credentialsOverride?.username || credentialsOverride?.password
         ? {
@@ -1540,11 +1813,14 @@ export default function AISimulatorPage() {
             username: username.trim(),
             password: password.trim(),
           }
-        : undefined
+        : savedLocalCreds
 
     if (credentialsOverride?.username) {
       setUsername(credentialsOverride.username)
       if (credentialsOverride.password) setPassword(credentialsOverride.password)
+    } else if (savedLocalCreds?.username && !username) {
+      setUsername(savedLocalCreds.username)
+      if (savedLocalCreds.password && !password) setPassword(savedLocalCreds.password)
     }
 
     const postmanObj = postmanCollectionText.trim()
@@ -1571,11 +1847,19 @@ export default function AISimulatorPage() {
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           mode: "full_app",
+          viewports: [
+            {
+              name: "Active Simulator Viewport",
+              width: simulatorViewport.width,
+              height: simulatorViewport.height,
+            },
+          ],
           dummyTestFiles,
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
           allowTestPayments,
           allowActions: effectiveAllowActions,
+          recordVideo,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
           credentials: effectiveCreds,
@@ -1625,6 +1909,10 @@ export default function AISimulatorPage() {
 
   // Start Feature / Workflow Testing (Prompt -> Understand -> Targeted Discovery -> Focused Map -> Plan -> Execute -> Edge Cases -> Report)
   const handleStartWorkflowTesting = async (workflowPrompt?: string) => {
+    // Saved role workflows pass their role in a tagged prompt. Prefer that role
+    // over the global journey selector so the backend job metadata matches the flow.
+    const taggedRole = workflowPrompt?.match(/\[User role:\s*([^\]]+)\]/i)?.[1]?.trim()
+    const effectiveRole = taggedRole || (journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole)
     setBotError("")
     if (!targetUrl.trim()) {
       setBotError("Please specify a target URL to test.")
@@ -1661,19 +1949,35 @@ export default function AISimulatorPage() {
           projectDir: selectedProjectDir,
           mode: "feature_workflow",
           workflowPrompt: promptText,
+          viewports: [
+            {
+              name: "Active Simulator Viewport",
+              width: simulatorViewport.width,
+              height: simulatorViewport.height,
+            },
+          ],
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
           allowTestPayments,
           allowActions: effectiveAllowActions,
-          role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
+          recordVideo,
+          role: effectiveRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
-          credentials:
-            username || password
-              ? {
-                  username: username.trim(),
-                  password: password.trim(),
+          credentials: (() => {
+            if (username || password) {
+              return { username: username.trim(), password: password.trim() }
+            }
+            try {
+              const savedStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+              if (savedStr) {
+                const parsed = JSON.parse(savedStr)
+                if (parsed.username || parsed.password) {
+                  return { username: parsed.username?.trim() || "", password: parsed.password?.trim() || "" }
                 }
-              : undefined,
+              }
+            } catch {}
+            return undefined
+          })(),
           maxScreens: Math.max(maxScreens, 6),
           checkBackNavigation: checkBackNav,
           checkResponsive,
@@ -1716,6 +2020,24 @@ export default function AISimulatorPage() {
       setBotError(err?.message || "Failed to initiate Feature / Workflow Testing.")
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleRecordingControl = async (
+    action: "pause_recording" | "resume_recording" | "stop_recording",
+  ) => {
+    if (!currentJob?.id) return
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: currentJob.id, action }),
+      })
+      const data = await res.json()
+      if (data?.job) setCurrentJob(data.job)
+      else if (!res.ok) setBotError(data?.error || "Unable to change recording state")
+    } catch (err: any) {
+      setBotError(err?.message || "Unable to change recording state")
     }
   }
 
@@ -1836,6 +2158,18 @@ export default function AISimulatorPage() {
     [activeProject]
   )
 
+  // Never expose simulator content while authentication is unresolved or absent.
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-200 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+          <div className="h-8 w-8 rounded-full border-2 border-slate-700 border-t-indigo-500 animate-spin" />
+          <p className="text-sm">Checking authentication…</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-900 text-slate-100">
       {/* Main Workspace: Simulator Frame + Live AI Automation Dock */}
@@ -1864,7 +2198,7 @@ export default function AISimulatorPage() {
 
                 {/* Editor View Tab Link */}
                 <Link
-                  href="/?view=editor"
+                  href={activeProjectId && activeProjectId !== "ai-simulator-default" ? `/?project=${activeProjectId}&view=editor` : "/?view=editor"}
                   className="w-full py-2 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-slate-200 cursor-pointer"
                   title="Design Review Editor"
                 >
@@ -2110,19 +2444,60 @@ export default function AISimulatorPage() {
                         ? "bg-indigo-600 text-white shadow-xs font-semibold"
                         : "text-slate-400 hover:text-white hover:bg-slate-800/60"
                     }`}
-                    title="View Map and Test Plan in full width"
+                    title="View Stage tabs in full width (hide phone simulator)"
                   >
-                    <MapIcon className="h-3.5 w-3.5" />
-                    <span>App Map & Plan</span>
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    <span>Full Stage</span>
                   </button>
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {currentJob?.id && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleExportZip}
+                        disabled={isExportingZip}
+                        className="px-2.5 py-1 rounded-md bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
+                      >
+                        {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+                        <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetData}
+                        disabled={isResettingData}
+                        className="px-2 py-1 rounded-md bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        title="Reset discovered map screens and test plan data"
+                      >
+                        {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                        <span>Reset Data</span>
+                      </button>
+                    </>
+                  )}
+
                   {currentJob?.status === "running" && (
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                      <span>Live Testing In Flight</span>
-                    </div>
+                    <>
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                        <span>Live Testing In Flight</span>
+                      </div>
+                      {currentJob.recordingControl === "paused" ? (
+                        <button type="button" onClick={() => handleRecordingControl("resume_recording")} className="px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium">
+                          Resume Recording
+                        </button>
+                      ) : currentJob.recordingControl !== "stopped" ? (
+                        <button type="button" onClick={() => handleRecordingControl("pause_recording")} className="px-2 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-medium">
+                          Pause Recording
+                        </button>
+                      ) : null}
+                      {currentJob.recordingControl !== "stopped" && (
+                        <button type="button" onClick={() => handleRecordingControl("stop_recording")} className="px-2 py-1 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 text-[10px] font-medium">
+                          Stop Recording
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -2143,6 +2518,7 @@ export default function AISimulatorPage() {
                       initialWorkflowId={activeWorkflowId}
                       initialLiveMode={true}
                       initialUrl={targetUrl}
+                      onUrlChange={handleSimulatorUrlChange}
                       isOwner={true}
                       canEdit={true}
                       userRole="owner"
@@ -2157,12 +2533,15 @@ export default function AISimulatorPage() {
                         setIsSimulatorFullscreen((prev) => (typeof val === "boolean" ? val : !prev))
                       }
                       onNavigateView={(mode) => {
+                        const pQuery = activeProjectId && activeProjectId !== "ai-simulator-default" ? `&project=${activeProjectId}` : ""
                         if (mode === "dashboard") window.location.href = "/"
-                        else if (mode === "editor") window.location.href = "/?view=editor"
-                        else if (mode === "simulator") window.location.href = "/?view=simulator"
+                        else if (mode === "editor") window.location.href = `/?view=editor${pQuery}`
+                        else if (mode === "simulator") window.location.href = `/?view=simulator${pQuery}`
                       }}
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
+                      liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
+                      onViewportChange={handleSimulatorViewportChange}
                     />
                   </div>
                 )}
@@ -2175,15 +2554,18 @@ export default function AISimulatorPage() {
                         job={currentJob}
                         isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
                         targetUrl={targetUrl}
-                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode === "simulator" ? "chat" : stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         onStartWorkflowTest={handleStartWorkflowTesting}
+                        onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onOpenMapPage={() => handleSelectWorkspaceTab("map")}
                         isMapPageActive={stageViewMode === "map"}
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
                         fullPageView={true}
+                        isFullStage={workspaceLayoutMode === "stage"}
+                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
                       />
                     ) : (
                       <FullAppTestingView
@@ -2193,7 +2575,7 @@ export default function AISimulatorPage() {
                         onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onJobUpdate={(updated) => setCurrentJob(updated)}
-                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode === "simulator" || stageViewMode === "chat" ? "map" : stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         fullPageView={true}
                         hideSubNav={false}
@@ -2201,6 +2583,9 @@ export default function AISimulatorPage() {
                         isMapPageActive={stageViewMode === "map"}
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
+                        isFullStage={workspaceLayoutMode === "stage"}
+                        isBesideScreen={workspaceLayoutMode === "split"}
+                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
                       />
                     )}
                   </div>
@@ -2300,13 +2685,6 @@ export default function AISimulatorPage() {
                       </button>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setActiveDockTab("config")}
-                          className="px-2 py-0.5 rounded text-[10px] font-semibold text-purple-300 hover:text-white bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 transition cursor-pointer"
-                        >
-                          ⚙ Config
-                        </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -2850,8 +3228,8 @@ export default function AISimulatorPage() {
                                       key={idx}
                                       type="button"
                                       onClick={() => {
-                                        setTargetUrl(r.url)
-                                        handleSendChatCommand(`Test and inspect route ${r.path}`)
+                                        handleSimulatorUrlChange(r.url)
+                                        handleSendChatCommand(`Test and inspect route ${r.path}`, undefined, false, r.url)
                                       }}
                                       disabled={isSendingChat}
                                       className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition cursor-pointer disabled:opacity-50"
@@ -3030,7 +3408,7 @@ export default function AISimulatorPage() {
                           {/* Nebius Token Factory */}
                           <button
                             type="button"
-                            onClick={() => handleUpdateAiProvider("cloud")}
+                            onClick={() => handleUpdateAiProvider("nebius")}
                             className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
                               aiProvider === "nebius"
                                 ? "bg-purple-950/50 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/40"
@@ -3733,6 +4111,22 @@ export default function AISimulatorPage() {
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar text-xs">
+              {/* Optional browser session video recording */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-start gap-3">
+                <Video className="h-4 w-4 mt-0.5 text-indigo-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="record-session-video" className="font-semibold text-slate-100 cursor-pointer">Record test session video</label>
+                  <p className="text-[11px] text-slate-400 mt-1">Capture the browser journey with action overlays. The video is attached to the run report when recording and storage are available.</p>
+                </div>
+                <input
+                  id="record-session-video"
+                  type="checkbox"
+                  checked={recordVideo}
+                  onChange={(e) => setRecordVideo(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-indigo-500 cursor-pointer shrink-0"
+                />
+              </div>
+
               {/* 1. Upload Folder */}
               <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between">

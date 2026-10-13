@@ -1,6 +1,7 @@
 import fs from "fs"
 import path from "path"
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import { createClient } from "@supabase/supabase-js"
 import {
   AutomationJob,
@@ -15,14 +16,12 @@ import {
   ChecklistTestItem,
 } from "./types"
 import {
-  resolveAiApiKey,
-  NEBIUS_BASE_URL,
   analyzeScreenWithAI,
   generateAIExecutiveReport,
   interpretCommandWithAI,
   generateVisionThinkingModelAndChecklist,
-} from "./ai-gateway"
-import type { AICommandInterpretation } from "./ai-gateway"
+} from "./openrouter"
+import type { AICommandInterpretation } from "./openrouter"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { classifyPage, pickNextLink, isLayaAvailable, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
@@ -39,6 +38,7 @@ import {
   isFeatureWorkflowCommand,
 } from "./feature-workflow-engine"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
+import { emitSessionEvent } from "./job-store"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
   { name: "Mobile", width: 390, height: 844 },
@@ -119,6 +119,10 @@ export function appendLog(job: AutomationJob, level: AutomationLog["level"], mes
   }
   job.logs.push(log)
   saveJob(job)
+  emitSessionEvent(job, level === "error" ? "error" : "progress", {
+    message,
+    payload: { level },
+  })
   console.log(`[AI Bot][${job.id.slice(0, 6)}][${level.toUpperCase()}] ${message}`)
 }
 
@@ -149,6 +153,10 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
 
   const newJob: AutomationJob = {
     id: jobId,
+    sessionId: jobId,
+    sessionEventSequence: 0,
+    sessionEvents: [],
+    currentUrl: params.url.trim(),
     targetUrl: params.url.trim(),
     projectId: params.projectId,
     projectDir: params.projectDir,
@@ -181,6 +189,11 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
   }
 
   saveJob(newJob)
+  emitSessionEvent(newJob, "session_started", {
+    url: newJob.currentUrl,
+    message: "Shared testing session created; browser, map, chat and recording use this session ID.",
+    payload: { mode: newJob.mode || "chat" },
+  })
 
   // Launch execution asynchronously without awaiting
   setImmediate(() => {
@@ -786,21 +799,20 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
   }
 }
 
-async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
+export async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
-  const aiBase = (params.aiBaseUrl || NEBIUS_BASE_URL).trim()
-  const aiApiKey = resolveAiApiKey(aiBase, params.aiApiKey)
+  const openRouterKey = params.aiApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const aiBase = (params.aiBaseUrl || "").trim()
   const isLocalAi = Boolean(aiBase && (aiBase.includes("localhost") || aiBase.includes("127.0.0.1")))
   const isUnoRouter = aiBase.includes("unorouter.com")
-  const isNebius = aiBase.includes("tokenfactory.nebius.com")
-  const hasAiConfigured = isLocalAi || Boolean(aiApiKey)
+  const hasAiConfigured = isLocalAi || Boolean(openRouterKey)
   appendLog(job, "info", `Starting headless automation crawl on: ${job.targetUrl}`)
   if (!hasAiConfigured && aiBase && !isLocalAi) {
     appendLog(
       job,
       "warn",
       "AI provider key missing for the remote gateway — AI visual analysis and autonomous exploration will be skipped. " +
-        "Add a Nebius Token Factory API key in AI Settings, or configure NEBIUS_API_KEY on the server.",
+        "Add a free UnoRouter key at https://unorouter.com/token and paste it in AI Settings → OmniRouter.",
     )
   }
 
@@ -836,17 +848,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   let browser: Browser | null = null
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
     await page.setViewport({ width: 1440, height: 900 })
@@ -926,19 +928,34 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
           const passInput = await page.$('input[type="password"]')
 
           if (params.credentials?.username && userInput) {
-            await userInput.click({ count: 3 }).catch(() => {})
+            await (userInput as any).click({ count: 3 }).catch(() => {})
+            await page.keyboard.press("Backspace").catch(() => {})
             await userInput.type(params.credentials.username, { delay: 10 })
           }
           if (params.credentials?.password && passInput) {
-            await passInput.click({ count: 3 }).catch(() => {})
+            await (passInput as any).click({ count: 3 }).catch(() => {})
+            await page.keyboard.press("Backspace").catch(() => {})
             await passInput.type(params.credentials.password, { delay: 10 })
           }
 
           const submitSelector = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type="submit"]')) as (HTMLButtonElement | HTMLInputElement)[]
-            const btn = btns.find((b) => b.type === "submit" || /(sign in|login|log in|submit|continue)/i.test(b.textContent || b.value || ""))
+            const isVisible = (el: Element) => {
+              const rect = el.getBoundingClientRect()
+              const style = window.getComputedStyle(el)
+              return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+            }
+            const all = Array.from(
+              document.querySelectorAll(
+                'button, input[type="submit"], [role="button"], div[class*="cursor"], div[class*="r-cursor"], div[tabindex], div, a, span'
+              )
+            ) as HTMLElement[]
+            const btn =
+              all.find((b) => isVisible(b) && /^\s*(sign\s*in|log\s*in|login|continue|submit)\s*$/i.test(b.textContent || (b as any).value || "")) ||
+              all.find((b) => isVisible(b) && ((b as HTMLButtonElement).type === "submit" || b.getAttribute("type") === "submit")) ||
+              all.find((b) => isVisible(b) && /(sign in|login|log in|submit|continue)/i.test(b.textContent || (b as any).value || "") && (b.textContent || "").trim().length < 40)
             if (btn) {
-              btn.setAttribute("data-agent-auth-submit", "true")
+              const touchable = btn.closest('[class*="r-cursor"], [role="button"], button') || btn
+              touchable.setAttribute("data-agent-auth-submit", "true")
               return '[data-agent-auth-submit="true"]'
             }
             return null
@@ -1114,7 +1131,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         screenshotUrl: liveScreenshotUrl || "",
         command: cmdText,
         currentUrl: page.url(),
-        apiKey: aiApiKey,
+        apiKey: openRouterKey,
         baseUrl: params.aiBaseUrl,
         model: params.aiModel,
         pageContext,
@@ -1759,16 +1776,16 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
         primaryScreenshotUrl = await uploadScreenshot(Buffer.from(fallbackBuffer), job.projectId, "default")
       }
 
-      // 2.5 Nebius / OmniRouter / Local AI Model Visual QA Inspection
+      // 2.5 OpenRouter / Local AI Model Visual QA Inspection
       let aiAnalysisResult: { uxScore: number; summary: string } | undefined
       if (hasAiConfigured && primaryScreenshotUrl) {
-        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "OmniRouter" : isNebius ? "Nebius Token Factory" : "OpenAI-compatible AI gateway"
+        const providerName = isLocalAi ? "Local AI (Ollama / LM Studio)" : isUnoRouter ? "UnoRouter" : "OpenRouter Cloud"
         appendLog(job, "info", `Requesting ${providerName} visual review for "${screenTitle}" (${params.aiModel || "deepseek-v4-flash:free"})...`)
         const aiFinding = await analyzeScreenWithAI({
           screenshotUrl: primaryScreenshotUrl,
           screenTitle,
           screenUrl,
-          apiKey: aiApiKey,
+          apiKey: openRouterKey,
           baseUrl: params.aiBaseUrl,
           model: params.aiModel,
         })
@@ -1879,12 +1896,12 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
     // AI Executive Synthesis
     let aiExecSummary: { executiveSummary: string; keyStrengths: string[]; criticalFixes: string[]; overallScore: number } | undefined
     if (hasAiConfigured && job.screens.length > 0) {
-      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : isUnoRouter ? "OmniRouter" : isNebius ? "Nebius Token Factory" : "AI gateway"} (${params.aiModel || "deepseek-v4-flash:free"})...`)
+      appendLog(job, "info", `Generating AI executive summary via ${isLocalAi ? "Local AI" : isUnoRouter ? "UnoRouter" : "OpenRouter"} (${params.aiModel || "deepseek-v4-flash:free"})...`)
       const aiExec = await generateAIExecutiveReport({
         screensSummary: job.screens.map((s) => `${s.title} (${s.url})`).join(", "),
         detectedIssuesCount: job.issues.length,
         targetUrl: job.targetUrl,
-        apiKey: aiApiKey,
+        apiKey: openRouterKey,
         baseUrl: params.aiBaseUrl,
         model: params.aiModel,
       })

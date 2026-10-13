@@ -5,6 +5,7 @@
  */
 
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "@/lib/browser/secure-browser"
 import { createClient } from "@supabase/supabase-js"
 import path from "path"
 import fs from "fs"
@@ -195,17 +196,8 @@ export async function runJourney(opts: RunJourneyOptions): Promise<JourneyStep[]
   const visited = new Set<string>()
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
+    browser = await safePuppeteerLaunch({
       userDataDir: profileDir,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
     })
 
     const page = await browser.newPage()

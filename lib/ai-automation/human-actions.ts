@@ -68,21 +68,44 @@ async function isVisibleHandle(el: ElementHandle<Element>): Promise<boolean> {
   }
 }
 
-export async function humanMouseMove(page: Page, x: number, y: number): Promise<void> {
+export async function humanMouseMove(page: Page, targetX: number, targetY: number, label?: string): Promise<void> {
   await installVisualOverlay(page).catch(() => {})
-  try {
-    await page.mouse.move(x, y, { steps: HUMAN_PACE.mouseSteps })
-  } catch (err) {
-    console.warn("[human-actions] mouse.move failed:", (err as Error)?.message)
+  const startX: number = (page as any).__lastMouseX ?? 195
+  const startY: number = (page as any).__lastMouseY ?? 140
+
+  const steps = 8
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps
+    // Ease-out cubic: smooth deceleration as cursor approaches target
+    const ease = 1 - Math.pow(1 - t, 3)
+    const curX = Math.round(startX + (targetX - startX) * ease)
+    const curY = Math.round(startY + (targetY - startY) * ease)
+
+    try {
+      await page.mouse.move(curX, curY)
+    } catch {}
+
+    if (globalThis.__DUMMY_TEST_FRAME__) {
+      globalThis.__DUMMY_TEST_FRAME__.action = {
+        type: "move" as any,
+        target: label || "Element",
+        coordinates: { x: curX, y: curY },
+        description: `Moving to ${label || "element"}`,
+      }
+    }
+    await sleep(14)
   }
-  await animateCursorTo(page, x, y).catch(() => {})
-  await sleep(HUMAN_PACE.afterMoveMs)
+  await animateCursorTo(page, targetX, targetY, label).catch(() => {})
+
+  ;(page as any).__lastMouseX = targetX
+  ;(page as any).__lastMouseY = targetY
+  await sleep(30)
 }
 
 export async function humanClick(
   page: Page,
   el: ElementHandle<Element>,
-  opts?: { double?: boolean },
+  opts?: { double?: boolean; label?: string },
 ): Promise<Point | null> {
   try {
     await el.evaluate((node) => {
@@ -113,17 +136,45 @@ export async function humanClick(
     return null
   }
 
-  await humanMouseMove(page, pt.x, pt.y)
+  await humanMouseMove(page, pt.x, pt.y, opts?.label || "clicking")
   await triggerClickAnimation(page, pt.x, pt.y).catch(() => {})
 
-  try {
-    if (opts?.double) {
-      await page.mouse.click(pt.x, pt.y, { clickCount: 2 })
-    } else {
-      await page.mouse.click(pt.x, pt.y)
+  if (globalThis.__DUMMY_TEST_FRAME__) {
+    globalThis.__DUMMY_TEST_FRAME__.action = {
+      type: "click" as any,
+      target: opts?.label || "Element",
+      coordinates: pt,
+      description: `Clicking ${opts?.label || "element"}`,
     }
+  }
+
+  try {
+    // 1. Authentic human press duration (65ms hold) so React Native Web Pressable detects press
+    await page.mouse.move(pt.x, pt.y)
+    await page.mouse.down()
+    await sleep(65)
+    await page.mouse.up()
+
+    if (opts?.double) {
+      await sleep(100)
+      await page.mouse.down()
+      await sleep(65)
+      await page.mouse.up()
+    }
+
+    // 2. Direct DOM dispatch to trigger React Native Web onPress handler
+    await el.evaluate((node) => {
+      const target = (node as HTMLElement).closest('[tabindex="0"], button, [role="button"]') || node
+      if (typeof (target as HTMLElement).click === "function") {
+        ;(target as HTMLElement).click()
+      }
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }))
+    }).catch(() => {})
+
+    // 3. CDP ElementHandle click fallback
+    await el.click().catch(() => {})
   } catch (err) {
-    console.warn("[human-actions] mouse.click failed:", (err as Error)?.message)
+    console.warn("[human-actions] click failed:", (err as Error)?.message)
     return null
   }
 
@@ -137,7 +188,7 @@ export async function humanType(
   text: string,
   opts?: { maskInBanner?: boolean; label?: string },
 ): Promise<boolean> {
-  const pt = await humanClick(page, el, { double: true })
+  const pt = await humanClick(page, el, { double: true, label: "typing" })
   if (!pt) {
     console.warn("[human-actions] humanType aborted — could not focus field")
     return false
@@ -151,23 +202,57 @@ export async function humanType(
   } catch {
     /* best effort clear */
   }
-  await sleep(30)
+  await sleep(40)
 
-  const banner = opts?.maskInBanner
-    ? `${opts.label || "Password"}: ${"•".repeat(Math.min(text.length, 10))}`
-    : `${opts?.label || "Typing"}: ${text.slice(0, 40)}`
-  await showActionBanner(page, banner).catch(() => {})
+  // Visible character-by-character typing with authentic Playwright-paced human cadence (~30ms)
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    await page.keyboard.type(char, { delay: 0 })
 
-  try {
-    await page.keyboard.type(text, { delay: HUMAN_PACE.typeDelayMs })
-  } catch {
-    try {
-      await el.type(text, { delay: HUMAN_PACE.typeDelayMs })
-    } catch (err) {
-      console.warn("[human-actions] humanType failed:", (err as Error)?.message)
-      return false
+    const partial = text.slice(0, i + 1)
+    const displayPartial = opts?.maskInBanner ? "•".repeat(partial.length) : partial
+
+    if (i % 3 === 0 || i === text.length - 1) {
+      const bannerText = opts?.maskInBanner
+        ? `${opts?.label || "Password"}: ${displayPartial}`
+        : `${opts?.label || "Typing"}: ${partial}`
+      void showActionBanner(page, bannerText).catch(() => {})
+
+      if (globalThis.__DUMMY_TEST_FRAME__) {
+        globalThis.__DUMMY_TEST_FRAME__.banner = bannerText
+        globalThis.__DUMMY_TEST_FRAME__.action = {
+          type: "type" as any,
+          target: opts?.label || "Input",
+          value: displayPartial,
+          coordinates: pt,
+          description: `Typing: ${displayPartial}`,
+        }
+      }
     }
+
+    await sleep(30)
   }
+
+  // Ensure value took effect for React & React Native Web controlled inputs
+  try {
+    await el.evaluate((node, val) => {
+      const inp = node as HTMLInputElement
+      if (inp) {
+        const proto = inp.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+        if (setter) {
+          setter.call(inp, val)
+        } else {
+          inp.value = val
+        }
+        inp.dispatchEvent(new Event("input", { bubbles: true }))
+        inp.dispatchEvent(new Event("change", { bubbles: true }))
+      }
+    }, text)
+  } catch {}
+
   await sleep(HUMAN_PACE.betweenFieldsMs)
   return true
 }

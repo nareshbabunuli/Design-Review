@@ -32,6 +32,7 @@ import {
   ChevronRight,
   Play,
   Check,
+  Trash2,
 } from "lucide-react"
 
 interface TestFlowGraphProps {
@@ -41,6 +42,7 @@ interface TestFlowGraphProps {
   transitions?: AppWorkflowTransition[]
   plan?: FullAppTestPlan
   onSelectScreen?: (screenId: string) => void
+  onDeleteScreen?: (screenId: string) => void
   onViewScreenshot?: (url: string) => void
   onOpenMapPage?: () => void
   isBesideScreen?: boolean
@@ -234,6 +236,7 @@ export default function TestFlowGraph({
   transitions,
   plan,
   onSelectScreen,
+  onDeleteScreen,
   onViewScreenshot,
   onOpenMapPage,
   isBesideScreen = false,
@@ -248,7 +251,7 @@ export default function TestFlowGraph({
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Pan & Zoom state
-  const [zoom, setZoom] = useState(1.0)
+  const [zoom, setZoom] = useState<number>(1.0)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
   const panStartRef = useRef({ pointerX: 0, pointerY: 0, panX: 0, panY: 0 })
@@ -261,6 +264,7 @@ export default function TestFlowGraph({
   // Active dragging card
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
   const dragStartRef = useRef({ pointerX: 0, pointerY: 0, nodeX: 0, nodeY: 0 })
+  const hasDraggedRef = useRef(false)
 
   // Card Inspector state ("Big Card & Side Operations")
   const [inspectingNodeId, setInspectingNodeId] = useState<string | null>(null)
@@ -268,9 +272,38 @@ export default function TestFlowGraph({
   const [operationFilter, setOperationFilter] = useState<"all" | "passed" | "failed">("all")
   const [evidencePreviewModal, setEvidencePreviewModal] = useState<string | null>(null)
 
+  // Track locally deleted screen node IDs for instant UI responsiveness
+  const [deletedNodeIds, setDeletedNodeIds] = useState<Set<string>>(new Set())
+
+  const visibleNodes = useMemo(() => {
+    return graph.nodes.filter((n) => !deletedNodeIds.has(n.id))
+  }, [graph.nodes, deletedNodeIds])
+
+  const visibleEdges = useMemo(() => {
+    return graph.edges.filter(
+      (e) => !deletedNodeIds.has(e.from) && !deletedNodeIds.has(e.to)
+    )
+  }, [graph.edges, deletedNodeIds])
+
+  const handleDeleteNode = useCallback(
+    (nodeId: string, e?: React.MouseEvent) => {
+      e?.stopPropagation()
+      setDeletedNodeIds((prev) => {
+        const next = new Set(prev)
+        next.add(nodeId)
+        return next
+      })
+      if (inspectingNodeId === nodeId) {
+        setInspectingNodeId(null)
+      }
+      onDeleteScreen?.(nodeId)
+    },
+    [inspectingNodeId, onDeleteScreen]
+  )
+
   // Re-initialize layout when graph nodes change
   useEffect(() => {
-    setNodePositions((prev) => {
+    setNodePositions((prev: Record<string, NodePos>) => {
       const def = calculateDefaultLayout(graph)
       // Preserve existing positions if already moved
       const merged = { ...def }
@@ -300,8 +333,8 @@ export default function TestFlowGraph({
   }
 
   // Zoom controls
-  const handleZoomIn = () => setZoom((z) => Math.min(2.0, +(z + 0.15).toFixed(2)))
-  const handleZoomOut = () => setZoom((z) => Math.max(0.4, +(z - 0.15).toFixed(2)))
+  const handleZoomIn = () => setZoom((z: number) => Math.min(2.0, +(z + 0.15).toFixed(2)))
+  const handleZoomOut = () => setZoom((z: number) => Math.max(0.4, +(z - 0.15).toFixed(2)))
   const handleZoomReset = () => {
     setZoom(1.0)
     setPan({ x: 0, y: 0 })
@@ -312,7 +345,7 @@ export default function TestFlowGraph({
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const delta = e.deltaY < 0 ? 0.1 : -0.1
-      setZoom((z) => Math.max(0.4, Math.min(2.0, +(z + delta).toFixed(2))))
+      setZoom((z: number) => Math.max(0.4, Math.min(2.0, +(z + delta).toFixed(2))))
     }
   }
 
@@ -346,7 +379,7 @@ export default function TestFlowGraph({
     } else if (draggingNodeId) {
       const dx = (e.clientX - dragStartRef.current.pointerX) / zoom
       const dy = (e.clientY - dragStartRef.current.pointerY) / zoom
-      setNodePositions((prev) => ({
+      setNodePositions((prev: Record<string, NodePos>) => ({
         ...prev,
         [draggingNodeId]: {
           x: Math.round(dragStartRef.current.nodeX + dx),
@@ -370,21 +403,43 @@ export default function TestFlowGraph({
 
   // Card Dragging Handlers
   const handleCardPointerDown = (nodeId: string, e: React.PointerEvent) => {
+    if (e.button !== 0) return
     e.stopPropagation()
     const pos = nodePositions[nodeId] || { x: 0, y: 0 }
     setDraggingNodeId(nodeId)
+    hasDraggedRef.current = false
     dragStartRef.current = {
       pointerX: e.clientX,
       pointerY: e.clientY,
       nodeX: pos.x,
       nodeY: pos.y,
     }
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {}
   }
 
-  const handleCardPointerUp = (e: React.PointerEvent) => {
+  const handleCardPointerMove = (nodeId: string, e: React.PointerEvent) => {
+    if (draggingNodeId === nodeId) {
+      e.stopPropagation()
+      const dx = (e.clientX - dragStartRef.current.pointerX) / zoom
+      const dy = (e.clientY - dragStartRef.current.pointerY) / zoom
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasDraggedRef.current = true
+      }
+      setNodePositions((prev: Record<string, NodePos>) => ({
+        ...prev,
+        [nodeId]: {
+          x: Math.round(dragStartRef.current.nodeX + dx),
+          y: Math.round(dragStartRef.current.nodeY + dy),
+        },
+      }))
+    }
+  }
+
+  const handleCardPointerUp = (nodeId: string, e: React.PointerEvent) => {
     e.stopPropagation()
-    if (draggingNodeId) {
+    if (draggingNodeId === nodeId) {
       setDraggingNodeId(null)
       try {
         ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
@@ -417,8 +472,8 @@ export default function TestFlowGraph({
   // Current inspecting node & screen record
   const inspectingNode = useMemo(() => {
     if (!inspectingNodeId) return null
-    return graph.nodes.find((n) => n.id === inspectingNodeId) || null
-  }, [graph.nodes, inspectingNodeId])
+    return visibleNodes.find((n) => n.id === inspectingNodeId) || null
+  }, [visibleNodes, inspectingNodeId])
 
   const inspectingScreen = useMemo(() => {
     if (!inspectingNodeId) return null
@@ -446,11 +501,13 @@ export default function TestFlowGraph({
   const outgoingTransitions = useMemo(() => {
     if (!inspectingNodeId) return []
     const allTransitions = transitions || plan?.transitions || []
-    const directMatches = allTransitions.filter((t) => t.fromScreenId === inspectingNodeId)
+    const directMatches = allTransitions.filter(
+      (t) => t.fromScreenId === inspectingNodeId && !deletedNodeIds.has(t.toScreenId)
+    )
     if (directMatches.length > 0) return directMatches
 
-    // Fallback: derive from graph.edges
-    return graph.edges
+    // Fallback: derive from visibleEdges
+    return visibleEdges
       .filter((e) => e.from === inspectingNodeId)
       .map((e, idx) => ({
         id: `trans-${e.from}-${e.to}-${idx}`,
@@ -459,19 +516,19 @@ export default function TestFlowGraph({
         action: e.label,
         actionType: "click" as const,
       }))
-  }, [transitions, plan?.transitions, graph.edges, inspectingNodeId])
+  }, [transitions, plan?.transitions, visibleEdges, inspectingNodeId, deletedNodeIds])
 
   // Incoming transitions
   const incomingTransitions = useMemo(() => {
     if (!inspectingNodeId) return []
-    return graph.edges.filter((e) => e.to === inspectingNodeId)
-  }, [graph.edges, inspectingNodeId])
+    return visibleEdges.filter((e) => e.to === inspectingNodeId)
+  }, [visibleEdges, inspectingNodeId])
 
-  // Index of inspecting node among all nodes
+  // Index of inspecting node among visible nodes
   const inspectingIndex = useMemo(() => {
     if (!inspectingNodeId) return -1
-    return graph.nodes.findIndex((n) => n.id === inspectingNodeId)
-  }, [graph.nodes, inspectingNodeId])
+    return visibleNodes.findIndex((n) => n.id === inspectingNodeId)
+  }, [visibleNodes, inspectingNodeId])
 
   // Handle keyboard shortcut Escape to close inspector
   useEffect(() => {
@@ -505,70 +562,9 @@ export default function TestFlowGraph({
       data-canvas-surface="true"
     >
       {/* 1. FIGMA TOP TOOLBAR */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
-        {/* Left Badge & Legend */}
-        <div className="flex items-center gap-2 pointer-events-auto bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700/80 shadow-lg text-xs">
-          <div className="flex items-center gap-1.5 font-bold text-white">
-            <Compass className="h-4 w-4 text-indigo-400" />
-            <span>Figma-Style Workflow Canvas</span>
-          </div>
-          <span className="text-slate-500">•</span>
-          <span className="text-[11px] text-indigo-300 font-mono">
-            {graph.nodes.length} Nodes · {graph.edges.length} Transitions
-          </span>
-          {isBesideScreen && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-semibold">
-              Beside Simulator
-            </span>
-          )}
-          {isFullStage && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold">
-              Full Stage Map
-            </span>
-          )}
-          <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono">
-            Movable Cards
-          </span>
-        </div>
-
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-end pointer-events-none">
         {/* Right Controls */}
         <div className="flex items-center gap-1.5 pointer-events-auto bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-lg border border-slate-700/80 shadow-lg text-xs">
-          {/* Beside Screen / Split View Toggle */}
-          {onToggleBesideScreen && !isBesideScreen && !isFullStage && (
-            <>
-              <button
-                type="button"
-                onClick={onToggleBesideScreen}
-                className="p-1.5 rounded transition cursor-pointer flex items-center gap-1 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs"
-                title="Open beside phone simulator in main stage"
-              >
-                <Columns className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Open Beside Screen</span>
-              </button>
-              <div className="w-px h-4 bg-slate-700 mx-0.5" />
-            </>
-          )}
-
-          {/* Full Stage / Beside View Switcher when in main stage */}
-          {onToggleFullStage && (isBesideScreen || isFullStage) && (
-            <>
-              <button
-                type="button"
-                onClick={onToggleFullStage}
-                className={`p-1.5 rounded transition cursor-pointer flex items-center gap-1 text-[11px] font-semibold ${
-                  isFullStage
-                    ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/50"
-                    : "hover:bg-slate-800 text-slate-300 hover:text-white"
-                }`}
-                title={isFullStage ? "Split side-by-side with phone simulator" : "Expand map across full stage"}
-              >
-                <Columns className="h-3.5 w-3.5 text-indigo-400" />
-                <span className="hidden sm:inline">{isFullStage ? "Split Beside" : "Full Stage"}</span>
-              </button>
-              <div className="w-px h-4 bg-slate-700 mx-0.5" />
-            </>
-          )}
-
           {/* Zoom Out */}
           <button
             type="button"
@@ -618,27 +614,26 @@ export default function TestFlowGraph({
           <button
             type="button"
             onClick={() => {
-              if (onOpenMapPage && !isFullStage) {
-                // Open cleanly like another page!
+              if (onToggleFullStage) {
+                onToggleFullStage()
+              } else if (onOpenMapPage && !isFullStage) {
                 onOpenMapPage()
               } else {
                 setIsFullscreen(!isFullscreen)
               }
             }}
             className={`p-1.5 rounded transition cursor-pointer flex items-center gap-1 text-[11px] font-semibold ${
-              isFullscreen
-                ? "bg-indigo-600 text-white shadow-sm"
+              isFullStage || isFullscreen
+                ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/50"
                 : "hover:bg-slate-800 text-slate-300 hover:text-white"
             }`}
             title={
-              !isFullStage && onOpenMapPage
-                ? "Open map like another page in full view"
-                : isFullscreen
-                ? "Exit Fullscreen (Esc)"
-                : "Full Screen Canvas"
+              isFullStage
+                ? "Show phone simulation beside map (Split View)"
+                : "Hide phone simulation and expand map across full stage"
             }
           >
-            {isFullscreen ? (
+            {isFullStage || isFullscreen ? (
               <>
                 <Minimize2 className="h-3.5 w-3.5" />
                 <span>Exit Fullscreen</span>
@@ -646,7 +641,7 @@ export default function TestFlowGraph({
             ) : (
               <>
                 <Maximize2 className="h-3.5 w-3.5" />
-                <span>{isFullStage ? "Fullscreen" : "Full Page"}</span>
+                <span>Fullscreen</span>
               </>
             )}
           </button>
@@ -708,7 +703,7 @@ export default function TestFlowGraph({
               </filter>
             </defs>
 
-            {graph.edges.map((e, idx) => {
+            {visibleEdges.map((e, idx) => {
               const fromPos = nodePositions[e.from]
               const toPos = nodePositions[e.to]
               if (!fromPos || !toPos || e.from === e.to) return null
@@ -774,7 +769,7 @@ export default function TestFlowGraph({
           </svg>
 
           {/* HTML LAYER: MOVABLE / DRAGGABLE CARDS */}
-          {graph.nodes.map((node, i) => {
+          {visibleNodes.map((node, i) => {
             const pos = nodePositions[node.id] || {
               x: 60 + (i % 4) * 320,
               y: 60 + Math.floor(i / 4) * 200,
@@ -787,10 +782,12 @@ export default function TestFlowGraph({
               <div
                 key={node.id}
                 onPointerDown={(e) => handleCardPointerDown(node.id, e)}
-                onPointerUp={handleCardPointerUp}
+                onPointerMove={(e) => handleCardPointerMove(node.id, e)}
+                onPointerUp={(e) => handleCardPointerUp(node.id, e)}
+                onPointerCancel={(e) => handleCardPointerUp(node.id, e)}
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (!isDragging) {
+                  if (!hasDraggedRef.current) {
                     setInspectingNodeId(node.id)
                     setInspectorSubTab("operations")
                     if (onSelectScreen) {
@@ -798,12 +795,12 @@ export default function TestFlowGraph({
                     }
                   }
                 }}
-                className={`absolute select-none rounded-xl border transition-all cursor-grab active:cursor-grabbing flex flex-col justify-between overflow-hidden ${
+                className={`absolute select-none rounded-xl border cursor-grab active:cursor-grabbing flex flex-col justify-between overflow-hidden ${
                   isDragging
-                    ? "z-40 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/30 scale-[1.03]"
+                    ? "z-40 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/30 scale-[1.03] transition-none"
                     : inspectingNodeId === node.id
-                    ? "z-30 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/50 ring-2 ring-indigo-500/60"
-                    : "z-20 border-slate-700/80 bg-slate-900/95 hover:border-indigo-500/70 hover:shadow-xl shadow-lg"
+                    ? "z-30 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/50 ring-2 ring-indigo-500/60 transition-all"
+                    : "z-20 border-slate-700/80 bg-slate-900/95 hover:border-indigo-500/70 hover:shadow-xl shadow-lg transition-all"
                 }`}
                 style={{
                   width: `${CARD_WIDTH}px`,
@@ -818,12 +815,21 @@ export default function TestFlowGraph({
                     <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                       {node.id}
                     </span>
-                    <span className="text-[11px] font-bold text-white truncate max-w-[120px]">
+                    <span className="text-[11px] font-bold text-white truncate max-w-[105px]" title={node.title}>
                       {node.title.replace(/^S\d+\s*/i, "")}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1 text-slate-400">
+                  <div className="flex items-center gap-0.5 text-slate-400">
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteNode(node.id, e)}
+                      className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/60 transition cursor-pointer"
+                      title={`Delete screen ${node.id}`}
+                      aria-label={`Delete screen ${node.id}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
                     <GripVertical className="h-3.5 w-3.5 text-slate-500" />
                   </div>
                 </div>
@@ -834,7 +840,8 @@ export default function TestFlowGraph({
                     <img
                       src={node.screenshotUrl}
                       alt={node.title}
-                      className="w-full h-full object-cover object-top"
+                      className="w-full h-full object-cover object-top pointer-events-none select-none"
+                      draggable={false}
                       loading="lazy"
                     />
                   ) : (
@@ -892,16 +899,28 @@ export default function TestFlowGraph({
                 </div>
               </div>
 
-              {/* Prev / Next Node Switcher & Close */}
+              {/* Prev / Next Node Switcher & Delete & Close */}
               <div className="flex items-center gap-2 shrink-0">
-                {graph.nodes.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    handleDeleteNode(inspectingNode.id, e)
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-300 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 flex items-center gap-1.5 transition cursor-pointer"
+                  title="Delete this screen from application map"
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                  <span>Delete Screen</span>
+                </button>
+
+                {visibleNodes.length > 1 && (
                   <div className="flex items-center bg-slate-900 rounded-lg border border-slate-800 p-0.5 text-xs text-slate-300">
                     <button
                       type="button"
                       disabled={inspectingIndex <= 0}
                       onClick={() => {
                         if (inspectingIndex > 0) {
-                          setInspectingNodeId(graph.nodes[inspectingIndex - 1].id)
+                          setInspectingNodeId(visibleNodes[inspectingIndex - 1].id)
                         }
                       }}
                       className="p-1 rounded hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
@@ -910,14 +929,14 @@ export default function TestFlowGraph({
                       <ChevronLeft className="h-4 w-4" />
                     </button>
                     <span className="px-2 text-[10px] font-mono text-slate-400">
-                      {inspectingIndex + 1} / {graph.nodes.length}
+                      {inspectingIndex + 1} / {visibleNodes.length}
                     </span>
                     <button
                       type="button"
-                      disabled={inspectingIndex >= graph.nodes.length - 1}
+                      disabled={inspectingIndex >= visibleNodes.length - 1}
                       onClick={() => {
-                        if (inspectingIndex < graph.nodes.length - 1) {
-                          setInspectingNodeId(graph.nodes[inspectingIndex + 1].id)
+                        if (inspectingIndex < visibleNodes.length - 1) {
+                          setInspectingNodeId(visibleNodes[inspectingIndex + 1].id)
                         }
                       }}
                       className="p-1 rounded hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
@@ -1263,7 +1282,7 @@ export default function TestFlowGraph({
                       {outgoingTransitions.length > 0 ? (
                         outgoingTransitions.map((t, idx) => {
                           const targetScreen = screensMap.get(t.toScreenId)
-                          const targetNode = graph.nodes.find((n) => n.id === t.toScreenId)
+                          const targetNode = visibleNodes.find((n) => n.id === t.toScreenId)
 
                           return (
                             <div

@@ -16,6 +16,7 @@
 import path from "path"
 import fs from "fs"
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import { createClient } from "@supabase/supabase-js"
 
 import type {
@@ -33,7 +34,10 @@ import { discoverLocalProjectRoutes } from "./discover-routes"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 import { performVisibleLoginPlaywright } from "./human-actions"
+import { runHumanLikeDecisionLoop } from "./human-test-loop"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
+import { clearJobSecrets } from "./job-secret-vault"
+import { SessionVideoRecorder } from "./visual-recorder"
 
 export function isAutonomousCommand(cmd: string): boolean {
   return /(every page|all pages|full (test|audit|run)|autonomous|test every|explore( the app)?|end[\s-]?to[\s-]?end|\d+\s*scenarios?)/i.test(
@@ -59,19 +63,38 @@ async function maskSensitiveFields(page: any): Promise<() => Promise<void>> {
   try {
     await page.evaluate(() => {
       document.querySelectorAll('[data-qa-mask="1"]').forEach((el) => el.remove())
-      const boxes: HTMLElement[] = []
-      document
-        .querySelectorAll('input[type="password"], [data-sensitive="true"]')
-        .forEach((input) => {
-          const el = input as HTMLElement
-          const r = el.getBoundingClientRect()
-          if (r.width === 0 || r.height === 0) return
-          const box = document.createElement("div")
-          box.setAttribute("data-qa-mask", "1")
-          box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background:#0b0b0f;z-index:99999998;border-radius:4px;pointer-events:none;`
-          document.body.appendChild(box)
-          boxes.push(box)
-        })
+      const sensitive = /(password|passcode|otp|one[-_ ]?time|api[-_ ]?key|access[-_ ]?token|auth(?:orization)?|secret|private[-_ ]?key|client[-_ ]?secret|cvv|cvc)/i
+      const selector = [
+        'input[type="password"]',
+        'input[autocomplete="one-time-code"]',
+        'input[autocomplete*="password"]',
+        'input[autocomplete*="cc-csc"]',
+        '[data-sensitive="true"]',
+        '[data-private="true"]',
+      ].join(",")
+      const elements = Array.from(document.querySelectorAll(selector))
+      for (const el of Array.from(document.querySelectorAll("input,textarea,[contenteditable='true']"))) {
+        const node = el as HTMLElement
+        const attrs = [
+          node.getAttribute("name") || "",
+          node.getAttribute("id") || "",
+          node.getAttribute("placeholder") || "",
+          node.getAttribute("aria-label") || "",
+          node.getAttribute("data-testid") || "",
+          node.getAttribute("autocomplete") || "",
+        ].join(" ")
+        if (sensitive.test(attrs)) elements.push(node)
+      }
+      const unique = Array.from(new Set(elements))
+      for (const input of unique) {
+        const el = input as HTMLElement
+        const r = el.getBoundingClientRect()
+        if (r.width === 0 || r.height === 0) continue
+        const box = document.createElement("div")
+        box.setAttribute("data-qa-mask", "1")
+        box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background:#0b0b0f;z-index:2147483647;border-radius:4px;pointer-events:none;`
+        document.body.appendChild(box)
+      }
     })
   } catch {}
   return async () => {
@@ -289,9 +312,14 @@ async function runScenarioWithStagehand(
   } as any)
 
   const stopTracker = { done: false }
+  let stagePage: any = null
+  const takeShot = (suffix: string) => {
+    if (!stagePage) return Promise.resolve("")
+    return captureMasked(stagePage, job.projectId, suffix)
+  }
   try {
     await stagehand.init()
-    const stagePage: any = stagehand.context.activePage()
+    stagePage = stagehand.context.activePage()
     if (!stagePage) throw new Error("Stagehand attached but found no active page.")
 
     await stagePage.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {})
@@ -313,9 +341,10 @@ async function runScenarioWithStagehand(
       await performAutoLogin(job, stagePage, params)
     }
 
-    // Track every URL the agent actually visits, with a masked screenshot each.
+    // DOM-first discovery is run once centrally before scenario verification.
+
+        // Track every URL the agent actually visits, with a masked screenshot each.
     // Screenshots come from the Stagehand page itself — the agent's real view.
-    const takeShot = (suffix: string) => captureMasked(stagePage, job.projectId, suffix)
     const seen = new Map<string, string>()
     let prevUrl = ""
     const tracker = (async () => {
@@ -418,9 +447,10 @@ async function runScenarioWithStagehand(
       await tracker.catch(() => {})
     }
 
-    const actionList: any[] = Array.isArray(result?.actions) ? result.actions : []
-    out.agentSummary = result?.message || ""
-    out.agentSuccess = result?.success !== false && !out.error
+    const actionList: any[] = Array.isArray((result as any)?.actions) ? (result as any).actions : []
+    out.actionsTaken += actionList.length
+    out.agentSummary = (result as any)?.message || ""
+    out.agentSuccess = (result as any)?.success !== false && !out.error
 
     // Closed-loop recovery: when the browser produced concrete error evidence,
     // ask the same agent for one bounded alternate action informed by that evidence.
@@ -451,14 +481,14 @@ async function runScenarioWithStagehand(
           highlightCursor: true,
           page: stagePage,
         } as any)
-        const recoveryActions: any[] = Array.isArray(recovery?.actions) ? recovery.actions : []
+        const recoveryActions: any[] = Array.isArray((recovery as any)?.actions) ? (recovery as any).actions : []
         for (const action of recoveryActions) {
           const description = String(action?.action || action?.type || "recovery action")
           actionList.push({ ...action, action: `RECOVERY: ${description}` })
           if (RISKY_ACTION.test(description)) out.riskyHit = description
         }
-        out.actionsTaken = actionList.length
-        if (recovery?.message) out.agentSummary += `\nEvidence-driven recovery: ${recovery.message}`
+        out.actionsTaken += recoveryActions.length
+        if ((recovery as any)?.message) out.agentSummary += `\nEvidence-driven recovery: ${(recovery as any).message}`
         const recoveryScreenshotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-recovery`)
         addEvidence(out, "OBSERVE", "Captured the browser state after the evidence-driven recovery action.", {
           url: await stagePage.url().catch(() => job.targetUrl),
@@ -466,7 +496,7 @@ async function runScenarioWithStagehand(
           consoleErrors: pageErrors.slice(-5),
           actions: actionList.length,
         })
-        appendLog(job, recovery?.success === false ? "warn" : "info",
+        appendLog(job, (recovery as any)?.success === false ? "warn" : "info",
           `[${scenario.name}] Recovery attempted ${recoveryActions.length} alternate action(s).`)
       } catch (recoveryError: any) {
         appendLog(job, "warn", `[${scenario.name}] Recovery attempt failed: ${recoveryError?.message || String(recoveryError)}`)
@@ -559,8 +589,7 @@ export async function executeAutonomousJob(
   }
 
   let browser: Browser | null = null
-  let recorder: any = null
-  const recordingPath = path.join(dir, "recording.webm")
+  let recorder: SessionVideoRecorder | null = null
 
   try {
     const count = scenarioCountFromCommand(params.userInstruction || "", params.scenarioCount || 15)
@@ -600,20 +629,19 @@ export async function executeAutonomousJob(
     }
 
     // ---- Browser ----
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-        "--autoplay-policy=no-user-gesture-required",
-      ],
+    browser = await safePuppeteerLaunch({
+      args: ["--autoplay-policy=no-user-gesture-required"],
     })
     const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
+    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const isMobileVp = primaryVp.width <= 768
+    await page.setViewport({
+      width: primaryVp.width,
+      height: primaryVp.height,
+      deviceScaleFactor: 1,
+      isMobile: isMobileVp,
+      hasTouch: isMobileVp,
+    })
     page.on("pageerror", () => {})
     // Collect console errors for the issue list
     await page
@@ -630,15 +658,36 @@ export async function executeAutonomousJob(
       appendLog(job, "warn", `Initial navigation note: ${e?.message}`)
     })
 
-    // ---- Session video ----
+    // ---- Optional session video; shared recorder owns pause/resume segments ----
+    if (params.recordVideo !== false) {
+      recorder = new SessionVideoRecorder(page, job.projectId, job.id)
+      await recorder.start(job)
+    } else {
+      ;(job as any).recordingControl = "stopped"
+      saveJob(job)
+      appendLog(job, "info", "Session video recording disabled for this run.")
+    }
+
+    // ---- Central DOM-first discovery pass ----
+    // One run-level exploration pass inventories the page, explores safe local states,
+    // then visits queued same-origin routes and returns to each parent route.
     try {
-      const { PuppeteerScreenRecorder } = await import("puppeteer-screen-recorder")
-      recorder = new PuppeteerScreenRecorder(page, { followNewTab: true, fps: 25 })
-      await recorder.start(recordingPath)
-      appendLog(job, "info", "Session video recording started.")
-    } catch (err: any) {
-      appendLog(job, "warn", `Video recording unavailable: ${err?.message} — continuing without video.`)
-      recorder = null
+      job.currentStep = "DOM-first discovery: inventorying page and exploring safe interactions"
+      saveJob(job)
+      const discovery = await runHumanLikeDecisionLoop(job, page, {
+        maxSteps: 24,
+        layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
+        captureScreenshot: (suffix) => captureMasked(page, job.projectId, "dom-" + suffix),
+      })
+      job.issues.push(...discovery.issues)
+      appendLog(job, discovery.missedCoverage.length === 0 ? "success" : "info", `[DOMDiscovery] Central pass finished: ${discovery.actions.length} action(s), ${discovery.missedCoverage.length} unresolved candidate(s); ledger has ${job.actionLedger?.entries.length || 0} inventory/action record(s).`)
+      if (!discovery.completed) appendLog(job, "warn", "[DOMDiscovery] Coverage is not complete; unresolved candidates remain visible in the Action Ledger.")
+      saveJob(job)
+    } catch (discoveryError: any) {
+      const message = `[DOMDiscovery] Central discovery pass failed; autonomous coverage is incomplete: ${discoveryError?.message || String(discoveryError)}`
+      job.error = message
+      appendLog(job, "error", message)
+      saveJob(job)
     }
 
     // ---- Plan scenarios ----
@@ -787,28 +836,21 @@ export async function executeAutonomousJob(
       saveJob(job)
     }
 
-    // ---- Stop video, upload ----
-    let recordingUrl = ""
-    if (recorder) {
-      try {
-        await recorder.stop()
-        appendLog(job, "info", "Session recording stopped.")
-        if (fs.existsSync(recordingPath) && fs.statSync(recordingPath).size > 1024) {
-          recordingUrl = await uploadArtifact(
-            fs.readFileSync(recordingPath),
-            job.projectId,
-            "recording",
-            "video/webm",
-            "webm",
-          )
-          if (recordingUrl) appendLog(job, "success", "Session video uploaded.")
-          else appendLog(job, "warn", "Video upload failed — recording kept locally only.")
-        }
-      } catch (err: any) {
-        appendLog(job, "warn", `Recording finalization note: ${err?.message}`)
-      }
-    }
+    // ---- Stop shared video recorder and finalize all segments ----
+    const recordingUrl = recorder ? await recorder.stop(job) : ""
+    const recordingUrls = Array.isArray((job as any).recordingSegments) ? (job as any).recordingSegments : []
     job.recordingUrl = recordingUrl || undefined
+    job.recordingSegments = recordingUrls.length > 0 ? recordingUrls : undefined
+
+    if (getJob(job.id)?.status === "stopped") {
+      job.status = "stopped"
+      job.currentStep = "Automation stopped by user; recording finalized and secrets cleared."
+      job.finishedAt = new Date().toISOString()
+      clearJobSecrets(job.id)
+      appendLog(job, "warn", "Autonomous run stopped by user. Final report will not be marked completed.")
+      saveJob(job)
+      return
+    }
 
     // ---- Flow graph ----
     const flowGraph: FlowGraph = {
@@ -836,12 +878,14 @@ export async function executeAutonomousJob(
       totalIssues: job.issues.length,
       backNavigationScore: passRate,
       responsiveScore: passRate,
-      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}`,
-      recommendations,
+      summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.actionLedger ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.` : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 || job.domDiscoveryGraph?.truncated ? ` DOM-first discovery is incomplete${(job.actionLedger?.untested || 0) > 0 ? `: ${job.actionLedger?.untested || 0} inventory item(s) remain unresolved` : ""}${job.domDiscoveryGraph?.truncated ? "; route/state graph limit reached" : ""}; see the Action Ledger and discovery graph.` : ""}`,
+      recommendations: [...recommendations, ...((job.error?.startsWith("[DOMDiscovery]")) ? ["DOM-first discovery failed; do not treat this run as full application coverage."] : (job.actionLedger?.untested || 0) > 0 ? [`${job.actionLedger?.untested || 0} DOM inventory item(s) remain untested or unresolved.`] : [])],
       issues: job.issues,
       testCases,
       flowGraph,
+      domDiscoveryGraph: job.domDiscoveryGraph,
       recordingUrl: recordingUrl || undefined,
+      recordingSegments: recordingUrls.length > 0 ? recordingUrls : undefined,
       evidenceTrace: testCases.flatMap((t) => (t as TestCaseResult & { evidenceTrace?: EvidenceTrace[] }).evidenceTrace || []),
     } as AutomationJob["report"]
 
@@ -864,7 +908,7 @@ export async function executeAutonomousJob(
           steps,
         )
         job.chainedWorkflowId = created.workflowId
-        job.report.chainedWorkflowId = created.workflowId
+        if (job.report) job.report.chainedWorkflowId = created.workflowId
       } catch (err: any) {
         appendLog(job, "warn", `Workflow record note: ${err?.message}`)
       }
@@ -872,11 +916,17 @@ export async function executeAutonomousJob(
 
     job.progress = 100
     job.status = "completed"
-    job.currentStep = "Autonomous run completed."
+    const discoveryIncomplete = job.error?.startsWith("[DOMDiscovery]") || (job.actionLedger?.untested || 0) > 0 || Boolean(job.domDiscoveryGraph?.truncated)
+    const ledgerStatus = job.actionLedger
+      ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.`
+      : ""
+    job.currentStep = discoveryIncomplete
+      ? "Scenario execution finished; DOM discovery coverage is incomplete."
+      : "Autonomous run finished; review blocked actions and evidence."
     job.finishedAt = new Date().toISOString()
-    appendLog(job, "success", `Autonomous run finished: ${job.report.summary}`)
+    appendLog(job, discoveryIncomplete ? "warn" : "success", `Autonomous run finished: ${job.report?.summary || "report generated"}`)
     say(
-      `✅ Autonomous run complete: ${passed}/${testCases.length} scenarios passed, ${flowGraph.nodes.length} screens, ${job.issues.length} issues.${recordingUrl ? " Video attached in the Report tab." : ""}`,
+      `${discoveryIncomplete ? "⚠️ Scenario execution finished, but DOM discovery coverage is incomplete." : "✅ Autonomous run finished."} ${passed}/${testCases.length} scenarios passed, ${flowGraph.nodes.length} screens, ${job.issues.length} issues.${ledgerStatus}${recordingUrl ? " Video attached in the Report tab." : ""} Review the Action Ledger and report before treating coverage as complete.`,
       "completed",
     )
     saveJob(job)
@@ -888,6 +938,7 @@ export async function executeAutonomousJob(
     say(`❌ Autonomous run failed: ${job.error}`, "error")
     saveJob(job)
   } finally {
+    clearJobSecrets(job.id)
     if (recorder) {
       try { await recorder.stop().catch(() => {}) } catch {}
     }
@@ -896,4 +947,3 @@ export async function executeAutonomousJob(
     }
   }
 }
-

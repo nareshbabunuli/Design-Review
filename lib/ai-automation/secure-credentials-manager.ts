@@ -1,6 +1,7 @@
 import type { Page } from "puppeteer"
 import type { AutomationJob } from "./types"
 import { getJob, saveJob, appendLog } from "./job-store"
+import { getJobSecrets, clearJobSecrets } from "./job-secret-vault"
 
 /**
  * Global Session Secret Redactor.
@@ -48,10 +49,16 @@ class SecretRedactor {
     result = result.replace(/AKIA[0-9A-Z]{16}/g, "AKIA[REDACTED_AWS]")
     // Bearer tokens
     result = result.replace(/Bearer\s+([A-Za-z0-9_\-\.]{20,})/gi, "Bearer [REDACTED_TOKEN]")
-    // Password JSON fields
-    result = result.replace(/("(?:password|pass|secret|token|api_?key)"\s*:\s*")([^"]+)(")/gi, '$1[REDACTED]$3')
-    // Password form-urlencoded
-    result = result.replace(/((?:password|pass|secret|token|api_?key)=)([^&]+)/gi, "$1[REDACTED]")
+    // Credential and payment fields in JSON bodies
+    result = result.replace(
+      /("(?:password|pass|secret|token|api_?key|card_?number|cardnumber|cvv|cvc|security_?code|expiry|expiration)"\s*:\s*")([^"]+)(")/gi,
+      '$1[REDACTED]$3'
+    )
+    // Credential and payment fields in form-urlencoded bodies and query strings
+    result = result.replace(
+      /((?:password|pass|secret|token|api_?key|card_?number|cardnumber|cvv|cvc|security_?code|expiry|expiration)=)([^&]+)/gi,
+      "$1[REDACTED]"
+    )
 
     return result
   }
@@ -202,8 +209,8 @@ export async function waitForExternalVerification(
     await new Promise((r) => setTimeout(r, 800))
     const refreshed = getJob(job.id)
 
-    if (refreshed?.pendingVerification) {
-      job.pendingVerification = refreshed.pendingVerification
+    const vaultVerification = getJobSecrets(job.id)?.verification
+    if (vaultVerification) {
       break
     }
     if (refreshed?.status && refreshed.status !== "running") {
@@ -212,8 +219,8 @@ export async function waitForExternalVerification(
     }
   }
 
-  const pending = job.pendingVerification
-  job.pendingVerification = undefined
+  const pending = getJobSecrets(job.id)?.verification
+  clearJobSecrets(job.id)
 
   if (job.status !== "running") {
     return false
@@ -392,8 +399,7 @@ export async function promptAndFillSecureSettings(
     await new Promise((r) => setTimeout(r, 800))
     const refreshed = getJob(job.id)
 
-    if (refreshed?.pendingSettingsCredentials) {
-      job.pendingSettingsCredentials = refreshed.pendingSettingsCredentials
+    if (getJobSecrets(job.id)?.settingsCredentials) {
       break
     }
     if (refreshed?.status && refreshed.status !== "running") {
@@ -402,12 +408,12 @@ export async function promptAndFillSecureSettings(
     }
   }
 
-  const supplied = job.pendingSettingsCredentials
-  job.pendingSettingsCredentials = undefined
+  const supplied = getJobSecrets(job.id)?.settingsCredentials
+  clearJobSecrets(job.id)
 
   if (job.status !== "running") return false
 
-  if (!supplied || supplied.skip) {
+  if (!supplied || supplied.__skip === "true") {
     job.settingsState = "skipped"
     job.settingsPrompt = undefined
     job.requiredSettingsFields = undefined

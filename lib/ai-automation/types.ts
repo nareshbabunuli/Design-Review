@@ -20,11 +20,21 @@ export type AutomationIssue = {
     | "data_not_reflected"
     | "covered_element"
     | "focus_not_restored"
+    | "http_error"
+    | "request_failed"
+    | "empty_data_surface"
+  | "correlated_ui_data_failure"
   severity: "low" | "medium" | "high" | "blocker"
   viewport?: string
   description: string
   expected?: string
   actual?: string
+  /** Related browser, network and visible-data evidence observed in the same step. */
+  correlatedEvidence?: {
+    consoleErrors?: string[]
+    networkFailures?: Array<{ url: string; status?: number; errorText?: string; resourceType?: string }>
+    emptyDataSurfaces?: string[]
+  }
   timestamp: string
 }
 
@@ -127,6 +137,29 @@ export type FlowGraph = {
   edges: FlowGraphEdge[]
 }
 
+/** Bounded, observation-backed graph produced by the DOM-first discovery pass. */
+export type DomDiscoveryGraph = {
+  nodes: Array<{
+    id: string
+    url: string
+    title: string
+    observedAt: string
+    elementCount: number
+  }>
+  edges: Array<{
+    id: string
+    from: string
+    to: string
+    action: string
+    selector?: string
+    transition: "navigation" | "same_url_state"
+    status: "passed" | "failed" | "blocked"
+    observedAt: string
+    evidence?: string
+  }>
+  truncated: boolean
+}
+
 export type AutomationLog = {
   timestamp: string
   level: "info" | "success" | "warn" | "error"
@@ -148,8 +181,14 @@ export type AutomationReport = {
   testCases?: TestCaseResult[]
   /** Autonomous runs: Figma-style node/edge flow of visited screens. */
   flowGraph?: FlowGraph
+  /** DOM-first observed route/state transitions; kept separate from scenario flowGraph. */
+  domDiscoveryGraph?: DomDiscoveryGraph
   /** Autonomous runs: session recording (webm) URL. */
   recordingUrl?: string
+  /** Current recording control state for the live test session. */
+  recordingControl?: "recording" | "paused" | "stopped"
+  /** Uploaded recording clips when a paused run is split into segments. */
+  recordingSegments?: string[]
   /** Structured multi-step workflows executed during full app testing */
   workflows?: WorkflowRun[]
   /** Evidence-based failure report in Markdown format */
@@ -243,8 +282,11 @@ export type AgentAction = {
   selector?: string
   value?: string
   coordinates?: { x: number; y: number }
+  /** Source viewport used for coordinates so the UI can scale the cursor to its device frame. */
+  viewportWidth?: number
+  viewportHeight?: number
   observation?: string
-  status?: "pending" | "running" | "passed" | "failed"
+  status?: "pending" | "running" | "passed" | "failed" | "blocked"
   durationMs?: number
   timestamp: string
   screenshotUrl?: string
@@ -265,6 +307,51 @@ export type ActionableElementType =
   | "menu"
   | "file_upload"
   | "other"
+
+export type ActionLedgerStatus = "untested" | "running" | "passed" | "failed" | "blocked" | "skipped"
+
+export type ActionLedgerAttempt = {
+  status: Exclude<ActionLedgerStatus, "untested" | "running">
+  timestamp: string
+  observedOutcome?: string
+  error?: string
+  beforeScreenshotUrl?: string
+  afterScreenshotUrl?: string
+}
+
+export type ActionLedgerEntry = {
+  actionKey: string
+  screenId: string
+  screenUrl: string
+  screenPath: string
+  name: string
+  type: ActionableElementType
+  selector?: string
+  href?: string
+  interactionConfidence?: number
+  discoveryReason?: string[]
+  status: ActionLedgerStatus
+  attempts: number
+  discoveredAt: string
+  lastTestedAt?: string
+  workflowId?: string
+  error?: string
+  evidence?: { beforeScreenshotUrl?: string; afterScreenshotUrl?: string; observedOutcome?: string }
+  /** Most recent resolved outcomes, retained when the same action is retried. */
+  history?: ActionLedgerAttempt[]
+}
+
+export type ActionLedger = {
+  entries: ActionLedgerEntry[]
+  /** Stable queue of actions that still need execution. */
+  untestedQueue: string[]
+  updatedAt: string
+  total: number
+  untested: number
+  tested: number
+  failed: number
+  blocked: number
+}
 
 export type ActionableElement = {
   id: string
@@ -351,6 +438,16 @@ export type NetworkCallEvidence = {
   postData?: string
 }
 
+/** Resource failures captured for documents, scripts, styles, images, media and API requests. */
+export type ResourceIssueEvidence = {
+  url: string
+  resourceType: string
+  method: string
+  status?: number
+  errorText?: string
+  timestamp: string
+}
+
 export type StepEvidence = {
   expectedEffects: ObservedEffect[]
   observedEffect: ObservedEffect
@@ -417,6 +514,8 @@ export type TestPlanStep = {
     | "modal_close"
   targetName: string
   targetSelector?: string
+  /** Stable Action Ledger identity for the DOM action this step executes. */
+  actionKey?: string
   syntheticValue?: string
   fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
   expectedResult: string
@@ -462,8 +561,49 @@ export type FullAppTestPlan = {
   }
 }
 
+/** Events shared by the browser, map, chat, runner and recording views. */
+export type SessionEventType =
+  | "session_started"
+  | "navigation_requested"
+  | "navigation_completed"
+  | "browser_action"
+  | "screen_discovered"
+  | "test_result"
+  | "progress"
+  | "user_input"
+  | "recording"
+  | "evidence"
+  | "error"
+  | "session_stopped"
+
+export type SessionEvent = {
+  id: string
+  sequence: number
+  sessionId: string
+  type: SessionEventType
+  timestamp: string
+  url?: string
+  message?: string
+  payload?: Record<string, unknown>
+}
+
+export type PendingSessionNavigation = {
+  requestId: string
+  url: string
+  requestedAt: string
+}
+
 export type AutomationJob = {
   id: string
+  /** Stable identity for the shared live-testing session; defaults to the job ID. */
+  sessionId?: string
+  /** Monotonic cursor and bounded event history consumed by every live view. */
+  sessionEventSequence?: number
+  sessionEvents?: SessionEvent[]
+  /** Navigation requested by the UI; consumed at a safe browser action boundary. */
+  pendingSessionNavigation?: PendingSessionNavigation
+  /** Canonical live URL shared by every session view; screen URLs remain route-specific. */
+  currentUrl?: string
   targetUrl: string
   projectId: string
   status: AutomationJobStatus
@@ -482,6 +622,7 @@ export type AutomationJob = {
   screens: DiscoveredScreen[]
   issues: AutomationIssue[]
   report?: AutomationReport
+  actionLedger?: ActionLedger
   aiModel?: string
   aiBaseUrl?: string
   layaBaseUrl?: string
@@ -495,13 +636,19 @@ export type AutomationJob = {
   scenarios?: TestScenario[]
   testCases?: TestCaseResult[]
   flowGraph?: FlowGraph
+  /** DOM-first route/state graph; distinct from the Stagehand scenario graph. */
+  domDiscoveryGraph?: DomDiscoveryGraph
   recordingUrl?: string
+  recordingControl?: "recording" | "paused" | "stopped"
+  recordingSegments?: string[]
   /** Vision-driven thinking model & interactive UI checklist */
   thinkingModel?: AIThinkingModel
   checklist?: ChecklistTestItem[]
   /** Systematic Full App Testing & Feature Workflow architecture */
   fullAppTestPlan?: FullAppTestPlan
   testingPhase?: "discovery" | "planning" | "files" | "executing" | "reporting"
+  /** Plan review gate: execution cannot begin until the user approves the reviewed plan. */
+  planApprovalState?: "awaiting_review" | "approved" | "rejected"
   dummyTestFiles?: Record<string, { name: string; url: string; type: string }>
   /** Feature / Workflow Testing mode fields */
   workflowName?: string

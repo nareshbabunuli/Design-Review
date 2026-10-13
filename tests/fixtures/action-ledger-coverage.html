@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Action Ledger Coverage Fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; max-width: 920px; color: #111; }
+    h1 { font-size: 1.4rem; }
+    section { border: 1px solid #d0d7de; border-radius: 10px; padding: 14px 16px; margin: 14px 0; }
+    h2 { font-size: 1rem; margin: 0 0 10px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    button, a.btn { appearance: none; border: 1px solid #8c959f; background: #f6f8fa; border-radius: 6px; padding: 6px 12px; cursor: pointer; text-decoration: none; color: inherit; font: inherit; }
+    button.primary { background: #0969da; color: #fff; border-color: #0969da; }
+    button.danger { background: #cf222e; color: #fff; border-color: #cf222e; }
+    button.warn { background: #bf8700; color: #fff; border-color: #bf8700; }
+    [hidden] { display: none !important; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+    .tab[aria-selected="true"] { background: #0969da; color: #fff; border-color: #0969da; }
+    .panel { padding: 10px; background: #f6f8fa; border-radius: 8px; }
+    label { display: block; margin: 6px 0 2px; font-size: 0.9rem; }
+    input, select { width: min(320px, 100%); padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 6px; }
+    .msg { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #ddf4ff; }
+    .err { background: #ffebe9; }
+    .ok { background: #dafbe1; }
+    #otp-gate, #auth-panels > div { margin-top: 8px; }
+    .hint { color: #656d76; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Action Ledger Coverage Fixture</h1>
+  <p class="hint">Disposable page for checklist validation. No real network side effects beyond same-document UI changes.</p>
+
+  <section id="tab-section" data-fixture="tabs">
+    <h2>1. SPA-style tabs (same URL)</h2>
+    <div class="tabs" role="tablist">
+      <button role="tab" class="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview">Overview</button>
+      <button role="tab" class="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings">Settings</button>
+    </div>
+    <div id="panel-overview" class="panel" role="tabpanel">Overview content only.</div>
+    <div id="panel-settings" class="panel" role="tabpanel" hidden>
+      <button id="settings-save">Save settings</button>
+      <button id="settings-reset">Reset defaults</button>
+      <label><input type="checkbox" id="settings-notify" /> Enable notifications</label>
+    </div>
+  </section>
+
+  <section data-fixture="modal">
+    <h2>2. Modal with sibling actions</h2>
+    <button id="open-details-modal" class="primary">Open details modal</button>
+    <div id="details-modal" role="dialog" aria-label="Details modal" hidden>
+      <p>Modal body with sibling controls.</p>
+      <div class="row">
+        <button id="modal-edit">Edit item</button>
+        <button id="modal-duplicate">Duplicate</button>
+        <button id="modal-close">Close</button>
+      </div>
+      <div id="modal-edit-result" class="msg" hidden>Item edited.</div>
+    </div>
+  </section>
+
+  <section data-fixture="auth">
+    <h2>3. Auth branches</h2>
+    <div class="row">
+      <button id="show-login" class="primary">Login</button>
+      <button id="show-signup">Sign Up</button>
+      <button id="show-forgot">Forgot Password</button>
+    </div>
+    <div id="auth-panels">
+      <div id="login-panel" hidden>
+        <label>Email <input type="email" id="login-email" value="user@example.test" /></label>
+        <label>Password <input type="password" id="login-password" value="secret" /></label>
+        <button id="login-submit" class="primary">Sign in</button>
+      </div>
+      <div id="signup-panel" hidden>
+        <label>Name <input type="text" id="signup-name" /></label>
+        <label>Email <input type="email" id="signup-email" /></label>
+        <label>Password <input type="password" id="signup-password" /></label>
+        <button id="signup-submit" class="primary">Create account</button>
+      </div>
+      <div id="forgot-panel" hidden>
+        <label>Account email <input type="email" id="forgot-email" /></label>
+        <button id="forgot-submit" class="primary">Send reset link</button>
+      </div>
+    </div>
+    <div id="auth-result" class="msg" hidden></div>
+  </section>
+
+  <section data-fixture="form">
+    <h2>4. Profile form validation</h2>
+    <form id="profile-form" novalidate>
+      <label>Display name <input type="text" id="profile-name" name="name" value="Ada Lovelace" required /></label>
+      <label>Email <input type="email" id="profile-email" name="email" value="ada@example.test" required /></label>
+      <label>Website <input type="url" id="profile-url" name="url" placeholder="https://" /></label>
+      <div class="row">
+        <button type="submit" id="profile-submit" class="primary">Save profile</button>
+        <button type="button" id="profile-clear">Clear fields</button>
+      </div>
+    </form>
+    <div id="profile-result" class="msg" hidden></div>
+  </section>
+
+  <section data-fixture="otp">
+    <h2>5. Email / OTP checkpoint</h2>
+    <button id="request-otp" class="primary">Send verification code</button>
+    <div id="otp-gate" hidden>
+      <p class="hint">Simulate pausing for email confirmation.</p>
+      <label>OTP code <input type="text" id="otp-code" inputmode="numeric" maxlength="6" placeholder="123456" /></label>
+      <button id="confirm-otp" class="primary">Confirm code</button>
+    </div>
+    <div id="otp-result" class="msg" hidden></div>
+  </section>
+
+  <section data-fixture="safety">
+    <h2>6. Consequential actions (must stay blocked by default)</h2>
+    <div class="row">
+      <button id="pay-now" class="danger">Pay now</button>
+      <button id="delete-account" class="danger">Delete account</button>
+      <button id="send-invite" class="warn">Send invitation email</button>
+      <button id="change-password">Change password</button>
+    </div>
+  </section>
+
+  <section data-fixture="links">
+    <h2>7. Link classification</h2>
+    <div class="row">
+      <a class="btn" id="internal-link" href="/dashboard">Internal dashboard</a>
+      <a class="btn" id="hash-link" href="#details">Same-document hash</a>
+      <a class="btn" id="external-link" href="https://example.invalid/out">External</a>
+      <a class="btn" id="prefix-confusion" href="https://app.example.test.attacker.invalid/">Prefix confusion</a>
+    </div>
+    <div id="details" hidden class="panel">Hash target content <button id="hash-control">Hash control</button></div>
+  </section>
+
+  <script>
+    const tabs = [
+      ["tab-overview", "panel-overview"],
+      ["tab-settings", "panel-settings"],
+    ]
+    for (const [tabId, panelId] of tabs) {
+      document.getElementById(tabId).addEventListener("click", () => {
+        for (const [t, p] of tabs) {
+          document.getElementById(t).setAttribute("aria-selected", t === tabId ? "true" : "false")
+          document.getElementById(p).hidden = t !== tabId
+        }
+      })
+    }
+
+    const modal = document.getElementById("details-modal")
+    document.getElementById("open-details-modal").onclick = () => { modal.hidden = false }
+    document.getElementById("modal-close").onclick = () => { modal.hidden = true }
+    document.getElementById("modal-edit").onclick = () => {
+      const el = document.getElementById("modal-edit-result")
+      el.hidden = false
+    }
+    document.getElementById("modal-duplicate").onclick = () => {
+      const el = document.getElementById("modal-edit-result")
+      el.textContent = "Item duplicated."
+      el.hidden = false
+    }
+
+    function showAuth(which) {
+      for (const id of ["login-panel", "signup-panel", "forgot-panel"]) {
+        document.getElementById(id).hidden = id !== which
+      }
+    }
+    document.getElementById("show-login").onclick = () => showAuth("login-panel")
+    document.getElementById("show-signup").onclick = () => showAuth("signup-panel")
+    document.getElementById("show-forgot").onclick = () => showAuth("forgot-panel")
+    document.getElementById("login-submit").onclick = () => {
+      const box = document.getElementById("auth-result")
+      box.hidden = false
+      box.className = "msg ok"
+      box.textContent = "Signed in as " + document.getElementById("login-email").value
+    }
+    document.getElementById("signup-submit").onclick = () => {
+      const box = document.getElementById("auth-result")
+      box.hidden = false
+      box.className = "msg ok"
+      box.textContent = "Account created for " + (document.getElementById("signup-email").value || "(missing email)")
+    }
+    document.getElementById("forgot-submit").onclick = () => {
+      const box = document.getElementById("auth-result")
+      box.hidden = false
+      box.className = "msg"
+      box.textContent = "Reset link queued for " + (document.getElementById("forgot-email").value || "(missing email)")
+    }
+
+    document.getElementById("profile-clear").onclick = () => {
+      document.getElementById("profile-name").value = ""
+      document.getElementById("profile-email").value = ""
+      document.getElementById("profile-url").value = ""
+    }
+    document.getElementById("profile-form").addEventListener("submit", (e) => {
+      e.preventDefault()
+      const email = document.getElementById("profile-email")
+      const name = document.getElementById("profile-name")
+      const box = document.getElementById("profile-result")
+      box.hidden = false
+      if (!name.value.trim()) {
+        box.className = "msg err"
+        box.textContent = "Name is required."
+        return
+      }
+      if (!email.value.trim()) {
+        box.className = "msg err"
+        box.textContent = "Email is required."
+        return
+      }
+      if (!email.checkValidity()) {
+        box.className = "msg err"
+        box.textContent = "Email format is invalid."
+        return
+      }
+      box.className = "msg ok"
+      box.textContent = "Profile saved for " + name.value
+    })
+
+    document.getElementById("request-otp").onclick = () => {
+      document.getElementById("otp-gate").hidden = false
+      document.getElementById("otp-result").hidden = true
+    }
+    document.getElementById("confirm-otp").onclick = () => {
+      const code = document.getElementById("otp-code").value.trim()
+      const box = document.getElementById("otp-result")
+      box.hidden = false
+      if (code === "123456") {
+        box.className = "msg ok"
+        box.textContent = "Verification confirmed."
+      } else {
+        box.className = "msg err"
+        box.textContent = "Invalid code."
+      }
+    }
+
+    window.addEventListener("hashchange", () => {
+      document.getElementById("details").hidden = location.hash !== "#details"
+    })
+    if (location.hash === "#details") document.getElementById("details").hidden = false
+  </script>
+</body>
+</html>

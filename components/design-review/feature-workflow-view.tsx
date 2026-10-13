@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useEffect, useRef } from "react"
 import {
   Sparkles,
   Play,
@@ -25,6 +25,11 @@ import {
   Ban,
   Maximize2,
   ChevronRight,
+  Video,
+  Bot,
+  User,
+  MessageSquare,
+  Wand2,
 } from "lucide-react"
 import type {
   AutomationJob,
@@ -35,59 +40,59 @@ import type {
   FlowGraph,
 } from "@/lib/ai-automation/types"
 import TestFlowGraph from "./test-flow-graph"
-import { buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
+import { buildFigmaWorkflowMap, isFullAppCommand } from "@/lib/ai-automation/full-app-utils"
 
 interface FeatureWorkflowViewProps {
   job: AutomationJob | null
   isRunning: boolean
   targetUrl: string
-  activeSubTab?: "map" | "screens" | "plan" | "execution" | "files" | "coverage"
-  onSubTabChange?: (tab: "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
-  onStartWorkflowTest: (workflowPrompt: string) => Promise<void>
+  activeSubTab?: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+  onSubTabChange?: (tab: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
+  projectId?: string
+  onStartWorkflowTest: (workflowPrompt: string, role?: string, workflowName?: string) => Promise<void>
+  onStartFullAppTest?: () => Promise<void>
   onCancelJob?: () => void
   onOpenMapPage?: () => void
   isMapPageActive?: boolean
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
   fullPageView?: boolean
+  isFullStage?: boolean
+  onToggleFullStage?: () => void
 }
 
-const EXAMPLE_WORKFLOWS = [
+export interface BotWorkflowChatMessage {
+  id: string
+  sender: "user" | "agent"
+  text: string
+  timestamp: string
+  status?: "thinking" | "completed" | "error"
+  role?: string
+  spec?: FeatureWorkflowSpec
+  plan?: FullAppTestPlan
+  workflowPrompt?: string
+}
+
+const CONVERSATIONAL_PROMPT_SUGGESTIONS = [
   {
-    title: "Registration Flow",
-    prompt: "Test the registration flow.",
-    icon: "👤",
-    desc: "Sign up with valid synthetic details & verify onboarding/dashboard redirect.",
+    label: "🚀 Full App Test",
+    prompt: "Run full app test across all screens and user flows",
   },
   {
-    title: "Create New Task",
-    prompt: "I want to test creating a new task.",
-    icon: "📝",
-    desc: "Open task creation, fill title & description, save, and verify in list.",
+    label: "👤 Act as Customer & test checkout",
+    prompt: "Act as a customer and test the checkout flow with synthetic payment details",
   },
   {
-    title: "Upload Profile Picture",
-    prompt: "Test whether a user can upload a profile picture.",
-    icon: "🖼️",
-    desc: "Upload synthetic avatar photo and verify preview updates cleanly.",
+    label: "📝 Act as New User & test signup",
+    prompt: "Act as a new user and test registration with valid synthetic credentials",
   },
   {
-    title: "Cart & Checkout Process",
-    prompt: "Test the checkout process from adding a product to completing payment.",
-    icon: "💳",
-    desc: "Add product to cart, fill synthetic shipping details, complete checkout.",
+    label: "⚙️ Act as Admin & verify settings",
+    prompt: "Act as an admin and test user roles and project settings",
   },
   {
-    title: "Login & Reset Password",
-    prompt: "Test login, forgot password, and resetting the password.",
-    icon: "🔑",
-    desc: "Check credentials, request reset link, and verify confirmation message.",
-  },
-  {
-    title: "Caregiver Registration",
-    prompt: "Test caregiver registration and completing the first activity.",
-    icon: "🏥",
-    desc: "Complete specialized role onboarding and submit initial activity log.",
+    label: "⚠️ Test invalid inputs & edge cases",
+    prompt: "Test form validation with empty required fields and invalid formats",
   },
 ]
 
@@ -95,21 +100,40 @@ export default function FeatureWorkflowView({
   job,
   isRunning,
   targetUrl,
-  activeSubTab = "plan",
+  projectId = targetUrl || "default",
+  activeSubTab = "chat",
   onSubTabChange,
   onStartWorkflowTest,
+  onStartFullAppTest,
   onCancelJob,
   onOpenMapPage,
   isMapPageActive = false,
   testingMode = "feature_workflow",
   onSelectTestingMode,
   fullPageView = true,
+  isFullStage,
+  onToggleFullStage,
 }: FeatureWorkflowViewProps) {
-  const [workflowInput, setWorkflowInput] = useState("")
+  const [chatMessages, setChatMessages] = useState<BotWorkflowChatMessage[]>([
+    {
+      id: "bot-welcome",
+      sender: "agent",
+      text: "👋 I'm your AI Testing Bot. Describe any feature or workflow you want to test naturally.\n\nYou can tell me to act as any role (e.g. \"Act as a customer and test checkout\", \"Act as an admin to manage users\", or \"Test user signup with invalid email\"). I'll identify the path, generate a pre-flight plan, and test edge cases.",
+      timestamp: new Date().toISOString(),
+      status: "completed",
+    },
+  ])
+  const [chatInput, setChatInput] = useState("")
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analyzedSpec, setAnalyzedSpec] = useState<FeatureWorkflowSpec | null>(null)
   const [previewPlan, setPreviewPlan] = useState<FullAppTestPlan | null>(null)
+  const [activeRole, setActiveRole] = useState<string | null>(null)
   const [selectedScreenshotModal, setSelectedScreenshotModal] = useState<string | null>(null)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [chatMessages, isAnalyzing])
 
   // Determine active plan (from current live job or locally generated preview)
   const activePlan = useMemo(() => {
@@ -131,11 +155,67 @@ export default function FeatureWorkflowView({
     return job?.featureWorkflowSpec || analyzedSpec
   }, [job?.featureWorkflowSpec, analyzedSpec])
 
-  // Analyze workflow naturally via API
-  const handleAnalyzeWorkflow = async (promptToAnalyze: string) => {
-    const text = promptToAnalyze.trim()
-    if (!text) return
+  // Natural language chat / workflow analyzer
+  const handleSendChatMessage = async (customPrompt?: string) => {
+    const text = (customPrompt || chatInput).trim()
+    if (!text || isAnalyzing) return
+
+    setChatInput("")
     setIsAnalyzing(true)
+
+    // Extract role if user wrote "Act as [role]..." or "As a [role]..."
+    let detectedRole: string | undefined
+    const actMatch = text.match(
+      /(?:act\s+as\s+(?:a|an)?\s*([a-zA-Z0-9_\- ]+?)(?:\s+(?:and|to|who|testing|test)|\s*$)|(?:as\s+a|as\s+an)\s+([a-zA-Z0-9_\- ]+?)(?:\s+(?:user|and|to|who|testing|test)|\s*$))/i
+    )
+    if (actMatch) {
+      detectedRole = (actMatch[1] || actMatch[2])?.trim()
+    }
+
+    const userMsg: BotWorkflowChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: "user",
+      text,
+      timestamp: new Date().toISOString(),
+      role: detectedRole,
+    }
+
+    if (isFullAppCommand(text)) {
+      const thinkingId = `agent-think-${Date.now()}`
+      setChatMessages((prev) => [
+        ...prev,
+        userMsg,
+        {
+          id: thinkingId,
+          sender: "agent",
+          text: "🚀 **Full App Test initiated!** Running comprehensive systematic discovery, mapping, and complete test plan generation across the application.",
+          timestamp: new Date().toISOString(),
+          status: "completed",
+        },
+      ])
+      setIsAnalyzing(false)
+      if (onStartFullAppTest) {
+        await onStartFullAppTest()
+      } else {
+        await onStartWorkflowTest(text, undefined, "Full App Test")
+      }
+      if (onSubTabChange) onSubTabChange("execution")
+      return
+    }
+
+    const thinkingId = `agent-think-${Date.now()}`
+    const thinkingMsg: BotWorkflowChatMessage = {
+      id: thinkingId,
+      sender: "agent",
+      text: detectedRole
+        ? `Analyzing workflow acting as "${detectedRole}"... Identifying screens, synthetic data, and edge cases.`
+        : `Analyzing feature workflow... Identifying path, synthetic data, and edge cases.`,
+      timestamp: new Date().toISOString(),
+      status: "thinking",
+    }
+
+    setChatMessages((prev) => [...prev, userMsg, thinkingMsg])
+
     try {
       const res = await fetch("/api/ai-automation/workflow-plan", {
         method: "POST",
@@ -149,20 +229,69 @@ export default function FeatureWorkflowView({
       if (data.success && data.spec) {
         setAnalyzedSpec(data.spec)
         setPreviewPlan(data.plan)
-        if (onSubTabChange) onSubTabChange("plan")
+        if (detectedRole) setActiveRole(detectedRole)
+
+        const responseText = `I've analyzed the **${data.spec.workflowName}** workflow${
+          detectedRole ? ` acting as **${detectedRole}**` : ""
+        }.\n\n🎯 **Goal:** ${data.spec.userGoal}\n📍 **Starting point:** ${
+          data.spec.startingPoint
+        }\n🔄 **Target screens:** ${data.spec.likelyScreens.join(" → ")}\n🧪 **Edge cases planned:** ${
+          data.spec.edgeCases?.length || 0
+        } scenarios.`
+
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === thinkingId
+              ? {
+                  ...msg,
+                  text: responseText,
+                  status: "completed",
+                  spec: data.spec,
+                  plan: data.plan,
+                  role: detectedRole,
+                  workflowPrompt: text,
+                }
+              : msg
+          )
+        )
+      } else {
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === thinkingId
+              ? {
+                  ...msg,
+                  text: `I couldn't fully parse that workflow: ${data.error || "Please describe the feature in a bit more detail."}`,
+                  status: "error",
+                }
+              : msg
+          )
+        )
       }
-    } catch (err) {
-      console.error("Failed to analyze workflow:", err)
+    } catch (err: any) {
+      setChatMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === thinkingId
+            ? {
+                ...msg,
+                text: `Failed to analyze workflow: ${err?.message || "Network error. Please try again."}`,
+                status: "error",
+              }
+            : msg
+        )
+      )
     } finally {
       setIsAnalyzing(false)
     }
   }
 
   // Confirm and start execution
-  const handleRunTest = async (promptToRun?: string) => {
-    const text = (promptToRun || workflowInput || currentSpec?.userGoal || "").trim()
+  const handleRunTest = async (promptToRun?: string, roleOverride?: string, nameOverride?: string) => {
+    const text = (promptToRun || currentSpec?.userGoal || "").trim()
     if (!text) return
-    await onStartWorkflowTest(text)
+    const role = roleOverride || activeRole || "Customer"
+    const name = nameOverride || currentSpec?.workflowName || "Workflow test"
+    await onStartWorkflowTest(`[User role: ${role}] [Workflow: ${name}] ${text}`, role, name)
+    if (onSubTabChange) onSubTabChange("execution")
   }
 
   const passedSteps = activePlan?.steps?.filter((s) => s.status === "passed").length || 0
@@ -174,39 +303,22 @@ export default function FeatureWorkflowView({
       {/* 1. TOP HEADER: MODE TOGGLE & STATUS BANNER */}
       <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
-          {/* Mode Switcher Tabs */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-            <button
-              type="button"
-              onClick={() => onSelectTestingMode && onSelectTestingMode("feature_workflow")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                testingMode === "feature_workflow"
-                  ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-950"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Sparkles className="h-3.5 w-3.5 text-indigo-300" />
-              <span>Feature / Workflow Testing</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectTestingMode && onSelectTestingMode("full_app")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                testingMode === "full_app"
-                  ? "bg-indigo-600 text-white shadow-md"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Compass className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Full App Testing</span>
-            </button>
+          {/* Header Title: Test */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs shadow-xs">
+            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="font-bold text-white tracking-wide">Test</span>
           </div>
 
           {/* Workflow Badge if identified */}
           {currentSpec?.workflowName && (
             <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-xs">
               <span className="text-[10px] text-indigo-400 font-semibold uppercase">Workflow:</span>
-              <span className="font-bold text-white truncate max-w-[200px]">{currentSpec.workflowName}</span>
+              <span className="font-bold text-white truncate max-w-[180px]">{currentSpec.workflowName}</span>
+              {activeRole && (
+                <span className="text-[10px] bg-purple-900/60 border border-purple-500/40 px-1.5 py-0.2 rounded text-purple-200">
+                  Act as: {activeRole}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -225,12 +337,12 @@ export default function FeatureWorkflowView({
           ) : (
             <button
               type="button"
-              disabled={isAnalyzing || (!workflowInput.trim() && !currentSpec)}
+              disabled={isAnalyzing || !currentSpec}
               onClick={() => handleRunTest()}
               className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-indigo-950 disabled:opacity-50"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
-              <span>{job?.status === "completed" ? "Re-Run Workflow Test" : "Run Workflow Test"}</span>
+              <span>{job?.status === "completed" ? "Re-Run Test" : "Run Test"}</span>
             </button>
           )}
         </div>
@@ -246,10 +358,11 @@ export default function FeatureWorkflowView({
         </div>
       )}
 
-      {/* 3. WORKSPACE SUB-TABS: PLAN, MAP, SCREENS, EXECUTION, EDGE CASES, REPORT */}
+      {/* 3. WORKSPACE SUB-TABS: CHAT, PLAN, MAP, SCREENS, EXECUTION, REPORT */}
       <div className="px-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
         <div className="flex gap-1 py-1.5">
           {[
+            { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: isRunning },
             { id: "plan", label: "Workflow Test Plan", icon: ListChecks, count: activePlan?.steps?.length },
             { id: "map", label: "Focused Workflow Map", icon: MapIcon, count: activePlan?.screens?.length },
             { id: "screens", label: "Relevant Screens", icon: Layers, count: activePlan?.screens?.length },
@@ -300,169 +413,222 @@ export default function FeatureWorkflowView({
         )}
       </div>
 
-      {/* 4. WORKFLOW INPUT & DISCOVERY BAR (Shown when no test running or to re-prompt) */}
-      {(!isRunning || !job) && (
-        <div className="p-4 bg-slate-900/30 border-b border-slate-800 shrink-0 space-y-3">
-          {/* Main Question Heading */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-purple-400" />
-                What workflow or feature would you like to test?
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Describe it naturally. No technical routes, selectors, or button names required. The AI will identify the path, generate pre-flight steps, and verify edge cases.
-              </p>
-            </div>
-            {currentSpec && (
-              <button
-                type="button"
-                onClick={() => {
-                  setAnalyzedSpec(null)
-                  setPreviewPlan(null)
-                  setWorkflowInput("")
-                }}
-                className="text-[11px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer self-start"
-              >
-                <RotateCcw className="h-3 w-3" />
-                <span>Test Another Feature</span>
-              </button>
-            )}
-          </div>
-
-          {/* Workflow Input Form */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={workflowInput}
-                onChange={(e) => setWorkflowInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && workflowInput.trim()) {
-                    e.preventDefault()
-                    handleAnalyzeWorkflow(workflowInput)
-                  }
-                }}
-                placeholder="e.g. Test the registration flow, or I want to test creating a new task..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-inner"
-              />
-              {isAnalyzing && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-purple-300">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>Understanding...</span>
+      {/* 5. MAIN SUBTAB VIEWS */}
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4">
+        {/* SUBTAB 0: TESTING BOT CHAT CONVERSATION */}
+        {(activeSubTab === "chat" || !activeSubTab) && (
+          <div className="h-full flex flex-col max-w-4xl mx-auto space-y-3">
+            {/* Live running status banner */}
+            {isRunning && (
+              <div className="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/50 text-xs flex items-center justify-between gap-3 shadow-md shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Loader2 className="h-4 w-4 text-indigo-400 animate-spin shrink-0" />
+                  <span className="font-semibold text-white truncate">
+                    Testing in progress: {job?.currentStep || "Executing actions..."}
+                  </span>
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => onSubTabChange && onSubTabChange("execution")}
+                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 cursor-pointer"
+                >
+                  View Live Execution →
+                </button>
+              </div>
+            )}
+
+            {/* Chat Message Stream */}
+            <div className="flex-1 min-h-[350px] overflow-y-auto custom-scrollbar p-3.5 space-y-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+              {chatMessages.map((msg) => {
+                const isUser = msg.sender === "user"
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${isUser ? "items-end" : "items-start"} space-y-1`}
+                  >
+                    <div className="flex items-center gap-1.5 px-1 text-[10px] text-slate-500">
+                      {isUser ? (
+                        <>
+                          <span>You</span>
+                          {msg.role && (
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
+                              Role: {msg.role}
+                            </span>
+                          )}
+                          <span>· {msg.timestamp.slice(11, 16)}</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-4 h-4 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[10px] text-white">
+                            <Bot className="h-2.5 w-2.5" />
+                          </div>
+                          <span className="font-semibold text-indigo-400">Testing Bot</span>
+                          <span>· {msg.timestamp.slice(11, 16)}</span>
+                        </>
+                      )}
+                    </div>
+
+                    <div
+                      className={`rounded-2xl px-3.5 py-2.5 max-w-[88%] text-xs leading-relaxed ${
+                        isUser
+                          ? "bg-indigo-600 text-white rounded-tr-none shadow-md"
+                          : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none space-y-2.5 shadow-md"
+                      }`}
+                    >
+                      {msg.status === "thinking" ? (
+                        <div className="flex items-center gap-2 text-indigo-300 font-medium">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" />
+                          <span>{msg.text}</span>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{msg.text}</p>
+                      )}
+
+                      {/* Understood Workflow Spec Card & Execution CTA */}
+                      {msg.spec && (
+                        <div className="p-3 rounded-xl bg-slate-950 border border-indigo-500/40 shadow-lg space-y-2.5 text-xs text-slate-200">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="h-4 w-4 text-purple-400 shrink-0" />
+                              <div>
+                                <span className="font-bold text-white text-xs block">
+                                  {msg.spec.workflowName}
+                                </span>
+                                {msg.role && (
+                                  <span className="text-[10px] text-indigo-300 font-mono">
+                                    Persona: {msg.role}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={isRunning}
+                              onClick={() =>
+                                handleRunTest(msg.workflowPrompt, msg.role, msg.spec?.workflowName)
+                              }
+                              className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-950"
+                            >
+                              <Play className="h-3 w-3 fill-current" />
+                              <span>Execute Workflow Test</span>
+                            </button>
+                          </div>
+
+                          {/* Target Path progression */}
+                          {msg.spec.likelyScreens && msg.spec.likelyScreens.length > 0 && (
+                            <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] flex flex-wrap items-center gap-1.5">
+                              <span className="text-slate-400 font-semibold">Path:</span>
+                              {msg.spec.likelyScreens.map((sc, i) => (
+                                <React.Fragment key={i}>
+                                  <span className="px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-800 text-indigo-200 font-medium">
+                                    {sc}
+                                  </span>
+                                  {i < msg.spec!.likelyScreens.length - 1 && (
+                                    <ArrowRight className="h-3 w-3 text-slate-600 shrink-0" />
+                                  )}
+                                </React.Fragment>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Clarification if ambiguous */}
+                          {msg.spec.isAmbiguous && msg.spec.clarificationQuestion && (
+                            <div className="p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 text-[11px] text-amber-200 flex items-center gap-2">
+                              <HelpCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                              <span>{msg.spec.clarificationQuestion}</span>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                            <button
+                              type="button"
+                              onClick={() => onSubTabChange && onSubTabChange("plan")}
+                              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 cursor-pointer"
+                            >
+                              <ListChecks className="h-3 w-3" />
+                              <span>View Generated Steps ({msg.plan?.steps?.length || 0})</span>
+                            </button>
+                            <span className="text-slate-600">·</span>
+                            <button
+                              type="button"
+                              onClick={() => onSubTabChange && onSubTabChange("map")}
+                              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 cursor-pointer"
+                            >
+                              <MapIcon className="h-3 w-3" />
+                              <span>View Flow Map</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              <div ref={chatBottomRef} />
             </div>
 
-            <button
-              type="button"
-              disabled={!workflowInput.trim() || isAnalyzing}
-              onClick={() => handleAnalyzeWorkflow(workflowInput)}
-              className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-950 shrink-0"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Understand & Plan</span>
-            </button>
-          </div>
-
-          {/* 6 Quick Natural Workflow Examples */}
-          {!currentSpec && (
-            <div className="space-y-1.5 pt-1">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Click a popular workflow example to test:
+            {/* Prompt Suggestion Chips (Role starters, not fixed apps) */}
+            <div className="space-y-1.5 pt-1 shrink-0">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                Conversational Prompts &amp; Role Instructions:
               </span>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-                {EXAMPLE_WORKFLOWS.map((ex, idx) => (
+              <div className="flex flex-wrap gap-1.5">
+                {CONVERSATIONAL_PROMPT_SUGGESTIONS.map((sug, idx) => (
                   <button
                     key={idx}
                     type="button"
                     onClick={() => {
-                      setWorkflowInput(ex.prompt)
-                      handleAnalyzeWorkflow(ex.prompt)
+                      setChatInput(sug.prompt)
+                      handleSendChatMessage(sug.prompt)
                     }}
-                    className="p-2 rounded-lg bg-slate-950/80 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 text-left transition cursor-pointer group flex flex-col justify-between"
+                    disabled={isAnalyzing || isRunning}
+                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer disabled:opacity-50"
                   >
-                    <div>
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200 group-hover:text-white">
-                        <span>{ex.icon}</span>
-                        <span className="truncate">{ex.title}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 mt-1 leading-tight line-clamp-2">
-                        {ex.desc}
-                      </p>
-                    </div>
-                    <span className="text-[9px] text-indigo-400 font-semibold mt-2 group-hover:underline">
-                      Test Workflow →
-                    </span>
+                    {sug.label}
                   </button>
                 ))}
               </div>
             </div>
-          )}
 
-          {/* Understood Workflow Spec Card (When analyzed) */}
-          {currentSpec && (
-            <div className="p-3.5 rounded-xl bg-slate-950 border border-indigo-500/40 shadow-lg space-y-2.5 animate-in fade-in-50 duration-200">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
-                    <Sparkles className="h-4 w-4" />
+            {/* Conversational Input Bar */}
+            <div className="flex gap-2 shrink-0 pt-1">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && chatInput.trim()) {
+                      e.preventDefault()
+                      handleSendChatMessage()
+                    }
+                  }}
+                  disabled={isAnalyzing || isRunning}
+                  placeholder="Tell the testing bot what to test (e.g. 'Act as customer and test checkout', 'Test user profile update with invalid image')..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-inner disabled:opacity-50"
+                />
+                {isAnalyzing && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-purple-300">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Analyzing...</span>
                   </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white flex items-center gap-2">
-                      <span>Workflow: {currentSpec.workflowName}</span>
-                      <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                        Targeted Path Identified
-                      </span>
-                    </h3>
-                    <p className="text-[11px] text-slate-400">
-                      Goal: <strong className="text-slate-200">{currentSpec.userGoal}</strong>
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleRunTest()}
-                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-950"
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>Execute Workflow Test</span>
-                </button>
+                )}
               </div>
 
-              {/* Likely Screens Path Progression */}
-              <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] flex flex-wrap items-center gap-2">
-                <span className="text-slate-400 font-semibold">Target Path:</span>
-                {currentSpec.likelyScreens.map((sc, i) => (
-                  <React.Fragment key={i}>
-                    <span className="px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-800 text-indigo-200 font-medium">
-                      {sc}
-                    </span>
-                    {i < currentSpec.likelyScreens.length - 1 && (
-                      <ArrowRight className="h-3 w-3 text-slate-600 shrink-0" />
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-
-              {/* Clarification if Ambiguous */}
-              {currentSpec.isAmbiguous && currentSpec.clarificationQuestion && (
-                <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200 flex items-center gap-2">
-                  <HelpCircle className="h-4 w-4 text-amber-400 shrink-0" />
-                  <div>
-                    <span className="font-bold">Clarification Needed: </span>
-                    <span>{currentSpec.clarificationQuestion}</span>
-                  </div>
-                </div>
-              )}
+              <button
+                type="button"
+                disabled={!chatInput.trim() || isAnalyzing || isRunning}
+                onClick={() => handleSendChatMessage()}
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-950 shrink-0"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>Send</span>
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* 5. MAIN SUBTAB VIEWS */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4">
         {/* SUBTAB 1: WORKFLOW TEST PLAN (TEST-001, TEST-002, ...) */}
         {activeSubTab === "plan" && (
           <div className="space-y-4 max-w-5xl mx-auto">
@@ -572,9 +738,9 @@ export default function FeatureWorkflowView({
             ) : (
               <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">
                 <ListChecks className="h-8 w-8 text-slate-600 mx-auto" />
-                <h4 className="text-sm font-bold text-slate-300">No Workflow Plan Generated Yet</h4>
+                <h4 className="text-sm font-bold text-slate-300">No Test Plan Generated Yet</h4>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Type what workflow or feature you would like to test above or select an example chip to generate the pre-flight test plan.
+                  Describe what you would like to test in the Testing Bot Chat to generate the pre-flight test plan.
                 </p>
               </div>
             )}
@@ -615,7 +781,8 @@ export default function FeatureWorkflowView({
                   transitions={activePlan?.transitions}
                   plan={activePlan || undefined}
                   onViewScreenshot={(url) => setSelectedScreenshotModal(url)}
-                  isFullStage={true}
+                  isFullStage={isFullStage !== undefined ? isFullStage : true}
+                  onToggleFullStage={onToggleFullStage}
                 />
               </div>
             ) : (
@@ -846,6 +1013,37 @@ export default function FeatureWorkflowView({
               <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs">
                 <span className="font-bold text-white block">Executive Summary</span>
                 <p className="text-slate-300 leading-relaxed">{job.report.summary}</p>
+                {(job.report.recordingUrl || job.recordingUrl || (job.recordingSegments && job.recordingSegments.length > 0)) && (
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <span className="font-semibold text-slate-200 text-[11px] flex items-center gap-1.5">
+                      <Video className="h-3.5 w-3.5 text-indigo-400" /> Session recording
+                    </span>
+                    {(job.report.recordingUrl || job.recordingUrl) && (
+                      <video
+                        controls
+                        preload="metadata"
+                        src={job.report.recordingUrl || job.recordingUrl}
+                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
+                        aria-label="Recorded browser test session"
+                      />
+                    )}
+                    {job.recordingSegments && job.recordingSegments.length > 1 && (
+                      <div className="flex flex-wrap gap-2">
+                        {job.recordingSegments.map((url, index) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-indigo-300 underline underline-offset-2 hover:text-indigo-200"
+                          >
+                            Open recording segment {index + 1}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {job.report.recommendations && job.report.recommendations.length > 0 && (
                   <div className="pt-2 border-t border-slate-800 space-y-1">
                     <span className="font-semibold text-slate-400 text-[11px] block">Recommendations:</span>

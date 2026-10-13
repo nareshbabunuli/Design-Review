@@ -1,4 +1,5 @@
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import {
   AutomationJob,
   AutomationIssue,
@@ -25,6 +26,7 @@ import {
   createDummyFileBuffer,
 } from "./full-app-engine"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
+import { SessionVideoRecorder } from "./visual-recorder"
 
 /**
  * Checks if a user prompt is requesting Feature / Workflow Testing
@@ -43,7 +45,10 @@ export function isFeatureWorkflowCommand(text: string): boolean {
     t.includes("test checkout") ||
     t.includes("test upload") ||
     t.includes("test flow") ||
-    t.includes("specific feature")
+    t.includes("specific feature") ||
+    t.includes("act as") ||
+    t.includes("as a ") ||
+    t.includes("as an ")
   )
 }
 
@@ -525,6 +530,7 @@ export async function executeFeatureWorkflowJob(
   params: StartAutomationRequest
 ): Promise<void> {
   let browser: Browser | null = null
+  let videoRecorder: SessionVideoRecorder | null = null
 
   try {
     job.status = "running"
@@ -562,20 +568,25 @@ export async function executeFeatureWorkflowJob(
     )
 
     // Launch Headless Browser
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900 })
+    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const isMobileVp = primaryVp.width <= 768
+    await page.setViewport({
+      width: primaryVp.width,
+      height: primaryVp.height,
+      deviceScaleFactor: 1,
+      isMobile: isMobileVp,
+      hasTouch: isMobileVp,
+    })
+    if (params.recordVideo !== false) {
+      videoRecorder = new SessionVideoRecorder(page, job.projectId, job.id)
+      await videoRecorder.start(job)
+      appendLog(job, "info", "Session video recording enabled for this workflow run.")
+    } else {
+      appendLog(job, "info", "Session video recording disabled for this workflow run.")
+    }
 
     page.on("pageerror", (err: any) => {
       const errMsg = err?.message || String(err)
@@ -929,6 +940,13 @@ export async function executeFeatureWorkflowJob(
     job.fullAppTestPlan = workflowPlan
     job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
 
+    // Finalize optional session video before generating the report.
+    if (videoRecorder) {
+      const recordingUrl = await videoRecorder.stop(job)
+      if (recordingUrl) job.recordingUrl = recordingUrl
+      videoRecorder = null
+    }
+
     // Populate report object
     job.report = {
       totalScreensTested: screenNodes.length,
@@ -937,13 +955,14 @@ export async function executeFeatureWorkflowJob(
       totalIssues: job.issues.length,
       backNavigationScore: 100,
       responsiveScore: 100,
-      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.`,
+      summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.${job.recordingUrl ? " Session video attached." : ""}`,
       recommendations: [
         `Ensure all form validation error messages for "${spec.workflowName}" are accessible with aria-live attributes.`,
         `Maintain synthetic test data boundaries for workflow regressions.`,
       ],
       issues: job.issues,
       flowGraph: job.flowGraph,
+      recordingUrl: job.recordingUrl,
     }
 
     saveJob(job)
@@ -956,6 +975,11 @@ export async function executeFeatureWorkflowJob(
     appendLog(job, "error", `Fatal workflow failure: ${job.error}`)
     saveJob(job)
   } finally {
+    if (videoRecorder) {
+      // Ensure recording is finalized even if workflow execution fails before report generation.
+      const recordingUrl = await videoRecorder.stop(job).catch(() => "")
+      if (recordingUrl) job.recordingUrl = recordingUrl
+    }
     if (browser) {
       try {
         await browser.close()
