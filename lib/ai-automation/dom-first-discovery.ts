@@ -97,6 +97,8 @@ export type DomDiscoverySnapshot = {
  */
 export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> {
   return page.evaluate(() => {
+    const browserWindow = window as Window & { __name?: (fn: unknown, name?: string) => unknown }
+    browserWindow.__name ??= (fn) => fn
     const visible = (el: Element) => {
       const h = el as HTMLElement
       const r = h.getBoundingClientRect()
@@ -256,6 +258,8 @@ export async function resolveRankedLocator(
   for (const candidate of ordered) {
     try {
       const resolved = await page.evaluate((expected) => {
+        const browserWindow = window as Window & { __name?: (fn: unknown, name?: string) => unknown }
+        browserWindow.__name ??= (fn) => fn
         const roleOf = (el: Element) => {
           const h = el as HTMLElement
           const explicit = h.getAttribute("role")
@@ -312,10 +316,10 @@ export async function resolveRankedLocator(
         const parts: string[] = []
         let current: Element | null = el
         while (current && current !== document.documentElement) {
-          const parent = current.parentElement
+          const parent: Element | null = current.parentElement
           const tagName = current.tagName.toLowerCase()
           if (!parent) { parts.unshift(tagName); break }
-          const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
+          const siblings = (Array.from(parent.children) as Element[]).filter((child: Element) => child.tagName === current!.tagName)
           parts.unshift(siblings.length > 1 ? tagName + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tagName)
           const structural = parts.join(" > ")
           if (unique(structural)) return { selector: structural }
@@ -414,7 +418,7 @@ export async function exploreInternalLinkAndReturn(
       Object.entries(destination.counts).map(([kind, count]) => kind + "=" + count).join(", ") +
       "), forms=" + destination.forms + ", dialogs=" + destination.dialogs + "."
     const restored = await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
-    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: return to source URL failed."), restored, stateChanged: true }
+    return { destination, screenshotUrl, observation: summary + (restored ? " Returned to the source URL." : " WARNING: source URL restoration failed."), restored, stateChanged: true }
   } catch (error: any) {
     const restored = page.url() === sourceUrl || await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
     return { destination: null, observation: "Navigation exploration failed: " + String(error?.message || error) + (restored ? "; source URL restored." : "; source URL restoration failed."), restored }
