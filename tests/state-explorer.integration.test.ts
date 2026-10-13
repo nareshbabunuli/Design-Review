@@ -19,6 +19,7 @@ test("bounded explorer discovers safe menu, accordion, details, modal, and scrol
     assert.ok(report.states.some((state) => state.elements.some((element) => element.label === "Details-only action")), "native details state should expose its nested action");
     assert.ok(report.states.some((state) => state.elements.some((element) => element.label === "Confirm harmless fixture action")), "dialog state should expose modal actions");
     assert.ok(report.edges.some((edge) => edge.kind === "scroll"), "scrollable regions should be explored with a bounded budget");
+    assert.ok(report.edges.some((edge) => edge.toStateId !== edge.fromStateId && Boolean(edge.selector)), "state transitions must retain selectors so the full-app engine can replay discovered states");
     assert.ok(report.counts.attempted > 0);
     assert.ok(report.counts.restored > 0, "reversible transitions should restore the prior state");
     assert.ok(["exhausted", "truncated_max_depth", "truncated_max_states", "truncated_scroll_budget", "blocked_safety", "restore_failed"].includes(report.stopReason));
