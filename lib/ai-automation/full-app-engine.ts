@@ -1956,7 +1956,7 @@ export async function discoverAndMapApp(
         element.kind === "state-change" ? "toggle" :
         element.role === "button" ? "button" : "clickable"
       const key = [lowerLabel, type, selector || ""].join("|")
-      if (!selector || knownActionKeys.has(key)) continue
+      if (!selector || knownActionKeys.has(key) || element.risk !== "safe") continue
       actionables.push({
         id: `state-${state.signature}-${index + 1}`,
         name: element.label || element.tag,
@@ -1994,26 +1994,35 @@ export async function discoverAndMapApp(
   }
 
   // Publish the state graph to the same session/map data consumed by the UI.
-  job.domDiscoveryGraph = {
-    nodes: stateReport.states.map((state) => ({
+  const mergedGraphNodes = new Map((job.domDiscoveryGraph?.nodes || []).map((node) => [node.id, node]))
+  for (const state of stateReport.states) {
+    mergedGraphNodes.set(state.id, {
       id: state.id,
       url: state.url,
       title: state.title,
       observedAt: state.discoveredAt,
       elementCount: state.elements.length,
-    })),
-    edges: stateReport.edges.map((edge, index) => ({
+    })
+  }
+  const mergedGraphEdges = new Map((job.domDiscoveryGraph?.edges || []).map((edge) => [edge.id, edge]))
+  stateReport.edges.forEach((edge, index) => {
+    mergedGraphEdges.set(`state-edge-${index + 1}`, {
       id: `state-edge-${index + 1}`,
       from: edge.fromStateId,
       to: edge.toStateId,
       action: edge.action,
       selector: edge.selector,
-      transition: "same_url_state" as const,
-      status: edge.reversible && edge.toStateId !== edge.fromStateId ? "passed" as const : "blocked" as const,
+      transition: "same_url_state",
+      status: edge.reversible && edge.toStateId !== edge.fromStateId ? "passed" : "blocked",
       observedAt: new Date().toISOString(),
       evidence: edge.restorationError,
-    })),
-    truncated: stateReport.stopReason !== "exhausted" || stateReport.frontierRemaining > 0,
+    })
+  })
+  job.domDiscoveryGraph = {
+    nodes: Array.from(mergedGraphNodes.values()),
+    edges: Array.from(mergedGraphEdges.values()),
+    truncated: Boolean(job.domDiscoveryGraph?.truncated) ||
+      stateReport.stopReason !== "exhausted" || stateReport.frontierRemaining > 0,
   }
   for (const edge of stateReport.edges) {
     const fromScreenId = stateScreenIds.get(edge.fromStateId)
