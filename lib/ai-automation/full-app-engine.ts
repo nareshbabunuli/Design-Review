@@ -2550,7 +2550,7 @@ export async function executeStructuredTestPlan(
                 }
               }, replayStep.selector).catch(() => {})
             } else {
-              const matches = await page.$(replayStep.selector).catch(() => [])
+              const matches = await page.$$(replayStep.selector).catch(() => [])
               let target: ElementHandle<Element> | null = null
               for (const match of matches) {
                 if (await match.boundingBox().catch(() => null)) { target = match; break }
