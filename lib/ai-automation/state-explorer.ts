@@ -152,7 +152,12 @@ async function getProbes(
 ): Promise<Probe[]> {
   const probes: Probe[] = [];
   const activeDialogSelector = await page.evaluate(() => {
-    const dialog = document.querySelector("dialog[open],[role=dialog]:not([aria-hidden=true]),.modal[open],[data-modal][data-state=open]") as HTMLElement | null;
+    const dialog = Array.from(document.querySelectorAll("dialog[open],[role=dialog]:not([aria-hidden=true]),.modal[open],[data-modal][data-state=open]")).find((candidate) => {
+      const h = candidate as HTMLElement;
+      const rect = h.getBoundingClientRect();
+      const style = getComputedStyle(h);
+      return rect.width > 2 && rect.height > 2 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+    }) as HTMLElement | undefined;
     if (!dialog) return null;
     if (dialog.id) return "#" + CSS.escape(dialog.id);
     const label = dialog.getAttribute("aria-label");
