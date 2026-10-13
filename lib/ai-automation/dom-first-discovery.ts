@@ -1,4 +1,4 @@
-import type { ElementHandle, Page } from "puppeteer"
+import type { Page } from "puppeteer"
 
 
 export type DomNavigationEvent = {
@@ -248,71 +248,88 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
 }
 
 /** Revalidate ranked CSS locator candidates against the live DOM before acting. */
+/** Revalidate ranked locator candidates against the live DOM before acting. */
 export async function resolveRankedLocator(
   page: Page,
   candidates: RankedLocatorCandidate[],
 ): Promise<{ selector: string; strategy: RankedLocatorStrategy; confidence: number } | null> {
   const ordered = [...candidates].sort((a, b) => b.confidence - a.confidence)
   for (const candidate of ordered) {
-    let matches: ElementHandle[] = []
     try {
-      matches = await page["$"](candidate.selector)
-      const eligible: ElementHandle[] = []
-      for (const handle of matches) {
-        const matched = await handle.evaluate((el, expected) => {
+      const resolved = await page.evaluate((expected) => {
+        const roleOf = (el: Element) => {
+          const h = el as HTMLElement
+          const explicit = h.getAttribute("role")
+          if (explicit) return explicit
+          const tag = el.tagName.toLowerCase()
+          if (tag === "button" || tag === "summary") return "button"
+          if (tag === "a" && h.hasAttribute("href")) return "link"
+          if (tag === "textarea") return "textbox"
+          if (tag === "select") return "combobox"
+          if (tag === "input") {
+            const type = (h.getAttribute("type") || "text").toLowerCase()
+            if (type === "checkbox") return "checkbox"
+            if (type === "radio") return "radio"
+            if (["submit", "button", "reset", "image"].includes(type)) return "button"
+            return "textbox"
+          }
+          return ""
+        }
+        const nameOf = (el: Element) => {
+          const h = el as HTMLElement
+          const input = el as HTMLInputElement
+          const ids = (h.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+          const referenced = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
+          return String(h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
+            h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") || el.tagName)
+            .replace(/\\s+/g, " ").trim().slice(0, 120)
+        }
+        const matching = Array.from(document.querySelectorAll(expected.selector)).filter((el) => {
           const h = el as HTMLElement
           const style = getComputedStyle(h)
           const rect = h.getBoundingClientRect()
-          if (rect.width <= 2 || rect.height <= 2 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || h.getAttribute("aria-hidden") === "true") return false
-          if (expected.role) {
-            const tag = el.tagName.toLowerCase()
-            const type = (h.getAttribute("type") || "text").toLowerCase()
-            const nativeRole = h.getAttribute("role") || (tag === "button" || tag === "summary" ? "button" : tag === "a" && h.hasAttribute("href") ? "link" : tag === "textarea" ? "textbox" : tag === "select" ? "combobox" : tag === "input" && type === "checkbox" ? "checkbox" : tag === "input" && type === "radio" ? "radio" : tag === "input" && ["submit", "button", "reset", "image"].includes(type) ? "button" : tag === "input" ? "textbox" : "")
-            if (nativeRole !== expected.role) return false
-          }
-          if (expected.name) {
-            const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
-            const labelled = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
-            const accessible = (h.getAttribute("aria-label") || labelled || (h as HTMLInputElement).labels?.[0]?.textContent || h.innerText || (h as HTMLInputElement).placeholder || h.getAttribute("title") || "").replace(/\s+/g, " ").trim()
-            if (accessible !== expected.name) return false
-          }
+          if (rect.width <= 2 || rect.height <= 2 || style.display === "none" || style.visibility === "hidden" ||
+              style.opacity === "0" || h.getAttribute("aria-hidden") === "true") return false
+          if (expected.role && roleOf(el) !== expected.role) return false
+          if (expected.name && nameOf(el) !== expected.name) return false
           return true
-        }, { role: candidate.strategy === "role" ? candidate.role : undefined, name: candidate.name })
-        if (matched) eligible.push(handle)
-      }
-      if (eligible.length === 1) {
-        const chosen = eligible[0]
-        const selector = await chosen.evaluate((el) => {
-          const unique = (candidate: string) => { try { return document.querySelectorAll(candidate).length === 1 } catch { return false } }
-          const h = el as HTMLElement
-          if (h.id) { const byId = "#" + CSS.escape(h.id); if (unique(byId)) return byId }
-          for (const attr of ["data-testid", "data-test-id", "data-cy", "aria-label", "name"]) {
-            const value = h.getAttribute(attr)
-            if (!value) continue
-            const byAttr = el.tagName.toLowerCase() + "[" + attr + "=" + JSON.stringify(value) + "]"
-            if (unique(byAttr)) return byAttr
-          }
-          const parts: string[] = []
-          let current: Element | null = el
-          while (current && current !== document.documentElement) {
-            const parent = current.parentElement
-            const tagName = current.tagName.toLowerCase()
-            if (!parent) { parts.unshift(tagName); break }
-            const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
-            parts.unshift(siblings.length > 1 ? tagName + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tagName)
-            const candidate = parts.join(" > ")
-            if (unique(candidate)) return candidate
-            current = parent
-          }
-          return parts.join(" > ")
         })
-        for (const handle of matches) await handle.dispose().catch(() => {})
-        return { selector: selector || candidate.selector, strategy: candidate.strategy, confidence: candidate.confidence }
+        if (matching.length !== 1) return null
+        const el = matching[0]
+        const unique = (selector: string) => {
+          try { return document.querySelectorAll(selector).length === 1 } catch { return false }
+        }
+        const h = el as HTMLElement
+        if (h.id) {
+          const byId = "#" + CSS.escape(h.id)
+          if (unique(byId)) return { selector: byId }
+        }
+        for (const attr of ["data-testid", "data-test-id", "data-cy", "aria-label", "name"]) {
+          const value = h.getAttribute(attr)
+          if (!value) continue
+          const byAttr = el.tagName.toLowerCase() + "[" + attr + "=" + JSON.stringify(value) + "]"
+          if (unique(byAttr)) return { selector: byAttr }
+        }
+        const parts: string[] = []
+        let current: Element | null = el
+        while (current && current !== document.documentElement) {
+          const parent = current.parentElement
+          const tagName = current.tagName.toLowerCase()
+          if (!parent) { parts.unshift(tagName); break }
+          const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
+          parts.unshift(siblings.length > 1 ? tagName + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tagName)
+          const structural = parts.join(" > ")
+          if (unique(structural)) return { selector: structural }
+          current = parent
+        }
+        return parts.length ? { selector: parts.join(" > ") } : null
+      }, candidate)
+      if (resolved?.selector) {
+        return { selector: resolved.selector, strategy: candidate.strategy, confidence: candidate.confidence }
       }
     } catch {
-      // A stale/invalid candidate is skipped; the next ranked alternative is tried.
+      // Invalid or stale candidates are skipped in favor of the next ranked alternative.
     }
-    for (const handle of matches) await handle.dispose().catch(() => {})
   }
   return null
 }
