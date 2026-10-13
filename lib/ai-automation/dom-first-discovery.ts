@@ -256,7 +256,7 @@ export async function resolveRankedLocator(
   for (const candidate of ordered) {
     let matches: ElementHandle[] = []
     try {
-      matches = await page.$(candidate.selector)
+      matches = await page["$"](candidate.selector)
       const eligible: ElementHandle[] = []
       for (const handle of matches) {
         const matched = await handle.evaluate((el, expected) => {
