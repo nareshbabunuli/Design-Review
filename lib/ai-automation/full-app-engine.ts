@@ -1898,7 +1898,6 @@ export function generateStructuredTestPlan(
   options?: {
     isAuthenticated?: boolean
     postmanCollection?: string | Record<string, any>
-    credentials?: { username?: string; password?: string }
   }
 ): FullAppTestPlan {
   const steps: TestPlanStep[] = []
@@ -1918,6 +1917,11 @@ export function generateStructuredTestPlan(
   for (const screen of screens) {
     // If this screen was a pre-auth login wall and we are already authenticated:
     if (screen.isLoginWall && options?.isAuthenticated) {
+      // Login already ran during discovery. Only report a pass when that run left
+      // evidence: the post-login screen reached via "Submit Login Form".
+      const loginTransition = transitions.find((t) => t.fromScreenId === screen.id && t.actionType === "form_submit")
+      const postLogin = loginTransition ? screens.find((s) => s.id === loginTransition.toScreenId) : undefined
+      const hasEvidence = Boolean(postLogin?.screenshotUrl)
       steps.push({
         id: `step-${stepCounter++}`,
         screenId: screen.id,
@@ -1926,8 +1930,13 @@ export function generateStructuredTestPlan(
         actionType: "verify",
         targetName: "User Authentication",
         expectedResult: "User is successfully authenticated and redirected to application dashboard.",
-        actualResult: "Authentication passed with provided test credentials.",
-        status: "passed",
+        actualResult: hasEvidence
+          ? `Login submitted during discovery; landed on ${postLogin!.id} "${postLogin!.name}" (${postLogin!.path}).`
+          : "Session reports logged in, but no post-login screen evidence was captured during discovery.",
+        status: hasEvidence ? "passed" : "blocked",
+        verdict: hasEvidence ? "passed" : "blocked",
+        screenshotUrl: postLogin?.screenshotUrl,
+        evidenceTimestamp: postLogin?.discoveredAt,
       })
       continue
     }
@@ -2035,10 +2044,12 @@ export function generateStructuredTestPlan(
     )
     for (const input of standaloneInputs) {
       let syntheticVal = SYNTHETIC_TEST_DATA.fullName
+      // Never store real credentials in the plan (persisted + shown in Plan tab).
+      // executeStructuredTestPlan substitutes session credentials at fill time.
       if (input.inputType === "email" || /email/i.test(input.name)) {
-        syntheticVal = options?.credentials?.username?.trim() || SYNTHETIC_TEST_DATA.email
+        syntheticVal = SYNTHETIC_TEST_DATA.email
       } else if (input.inputType === "password" || /password/i.test(input.name)) {
-        syntheticVal = options?.credentials?.password?.trim() || SYNTHETIC_TEST_DATA.password
+        syntheticVal = SYNTHETIC_TEST_DATA.password
       } else if (input.inputType === "tel" || /phone|mobile/i.test(input.name)) {
         syntheticVal = SYNTHETIC_TEST_DATA.phone
       } else if (/first/i.test(input.name)) {
@@ -2340,6 +2351,11 @@ export async function executeStructuredTestPlan(
       passedCount++
       testedScreensSet.add(step.screenId)
       appendLog(job, "success", `[EXECUTE ${i + 1}/${testPlan.steps.length}] ${step.screenId} ${step.screenName} -> ${step.targetName}: PASSED`)
+      continue
+    }
+    if (step.status === "blocked") {
+      blockedCount++
+      appendLog(job, "warn", `[EXECUTE ${i + 1}/${testPlan.steps.length}] ${step.screenId} ${step.screenName} -> ${step.targetName}: BLOCKED (${step.actualResult || "pre-resolved"})`)
       continue
     }
 
@@ -3852,7 +3868,6 @@ export async function executeFullAppTestingJob(
       testPlan = generateStructuredTestPlan(job.targetUrl, discovery.screens, discovery.transitions, {
         isAuthenticated: job.authState === "logged_in",
         postmanCollection: params.postmanCollection || job.postmanCollection,
-        credentials: sessionCreds,
       })
       linkTestPlanStepsToLedger(job, testPlan)
       queueUnplannedLedgerActions(job, testPlan)
