@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>State exploration fixture</title>
+  <style>
+    body { font: 16px sans-serif; margin: 0; padding: 24px; }
+    section, article { margin: 16px 0; padding: 12px; border: 1px solid #bbb; }
+    [hidden] { display: none !important; }
+    .scroll-region { height: 110px; overflow-y: auto; border: 1px solid #888; }
+    .item { min-height: 44px; padding: 8px; }
+    dialog { border: 1px solid #333; padding: 24px; }
+  </style>
+</head>
+<body>
+  <h1>State exploration fixture</h1>
+  <nav aria-label="Primary">
+    <button id="menu-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="fixture-menu">Open actions</button>
+    <div id="fixture-menu" role="menu" hidden>
+      <button role="menuitem" id="menu-item-profile">Profile action</button>
+      <button role="menuitem" data-testid="menu-item-settings">Settings action</button>
+    </div>
+  </nav>
+
+  <section aria-labelledby="accordion-heading">
+    <h2 id="accordion-heading">Accordion</h2>
+    <button id="accordion-trigger" aria-expanded="false" aria-controls="accordion-panel">Advanced settings</button>
+    <div id="accordion-panel" hidden>
+      <label for="conditional-field">Conditional field</label>
+      <input id="conditional-field" name="conditionalField" placeholder="Revealed after expanding">
+    </div>
+  </section>
+
+  <section>
+    <h2>Modal</h2>
+    <button id="open-modal" aria-haspopup="dialog">Open confirmation modal</button>
+    <dialog id="fixture-dialog" aria-labelledby="dialog-title">
+      <h2 id="dialog-title">Confirm action</h2>
+      <button id="dialog-confirm">Confirm harmless fixture action</button>
+      <button id="dialog-close">Close dialog</button>
+    </dialog>
+  </section>
+
+  <section>
+    <h2>Icon-only action</h2>
+    <button id="icon-action" aria-label="Open details" data-testid="open-details">
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M4 12h16M12 4l8 8-8 8" stroke="currentColor" fill="none"/></svg>
+    </button>
+    <button id="duplicate-name-a" name="duplicateName">First duplicate name</button>
+    <button id="duplicate-name-b" name="duplicateName">Second duplicate name</button>
+  </section>
+
+  <section>
+    <h2>Lazy list and nested scrolling</h2>
+    <div class="scroll-region" id="lazy-scroll-region" aria-label="Lazy results">
+      <div class="item">Result one</div>
+      <div class="item">Result two</div>
+      <div class="item">Result three</div>
+      <div class="item">Result four</div>
+      <div class="item">Result five</div>
+      <div class="item">Result six</div>
+    </div>
+    <button id="load-more" data-testid="load-more">Load more results</button>
+    <div id="more-results" aria-live="polite"></div>
+  </section>
+
+  <script>
+    const menuTrigger = document.querySelector("#menu-trigger");
+    const menu = document.querySelector("#fixture-menu");
+    menuTrigger.addEventListener("click", () => {
+      const open = menuTrigger.getAttribute("aria-expanded") !== "true";
+      menuTrigger.setAttribute("aria-expanded", String(open));
+      menu.hidden = !open;
+    });
+    const accordionTrigger = document.querySelector("#accordion-trigger");
+    const accordionPanel = document.querySelector("#accordion-panel");
+    accordionTrigger.addEventListener("click", () => {
+      const open = accordionTrigger.getAttribute("aria-expanded") !== "true";
+      accordionTrigger.setAttribute("aria-expanded", String(open));
+      accordionPanel.hidden = !open;
+    });
+    const dialog = document.querySelector("#fixture-dialog");
+    document.querySelector("#open-modal").addEventListener("click", () => dialog.showModal());
+    document.querySelector("#dialog-close").addEventListener("click", () => dialog.close());
+    document.querySelector("#dialog-confirm").addEventListener("click", () => {
+      document.querySelector("#dialog-title").textContent = "Action verified";
+      dialog.close();
+    });
+    let extraLoaded = false;
+    document.querySelector("#load-more").addEventListener("click", () => {
+      if (extraLoaded) return;
+      extraLoaded = true;
+      const extra = document.createElement("button");
+      extra.id = "lazy-loaded-action";
+      extra.textContent = "Lazy-loaded action";
+      document.querySelector("#more-results").append(extra);
+    });
+  </script>
+</body>
+</html>
