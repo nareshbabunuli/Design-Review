@@ -1994,7 +1994,7 @@ export async function discoverAndMapApp(
   }
 
   // Publish the state graph to the same session/map data consumed by the UI.
-  const mergedGraphNodes = new Map((job.domDiscoveryGraph?.nodes || []).map((node) => [node.id, node]))
+  const mergedGraphNodes = new Map<string, import("./types").DomDiscoveryGraph["nodes"][number]>((job.domDiscoveryGraph?.nodes || []).map((node) => [node.id, node] as const))
   for (const state of stateReport.states) {
     mergedGraphNodes.set(state.id, {
       id: state.id,
@@ -2004,7 +2004,7 @@ export async function discoverAndMapApp(
       elementCount: state.elements.length,
     })
   }
-  const mergedGraphEdges = new Map((job.domDiscoveryGraph?.edges || []).map((edge) => [edge.id, edge]))
+  const mergedGraphEdges = new Map<string, import("./types").DomDiscoveryGraph["edges"][number]>((job.domDiscoveryGraph?.edges || []).map((edge) => [edge.id, edge] as const))
   stateReport.edges.forEach((edge, index) => {
     mergedGraphEdges.set(`state-edge-${index + 1}`, {
       id: `state-edge-${index + 1}`,
@@ -2538,7 +2538,8 @@ export async function executeStructuredTestPlan(
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
         const targetBasePath = targetScreen.path.split("#")[0]
-        if (!page.url().includes(targetBasePath)) {
+        const targetOrigin = new URL(targetScreen.url).origin
+        if (normalizePath(page.url(), targetOrigin) !== targetBasePath) {
           await page.goto(targetScreen.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
           await new Promise((r) => setTimeout(r, 400))
         }
