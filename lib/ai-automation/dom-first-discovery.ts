@@ -1,4 +1,4 @@
-import type { Page } from "puppeteer"
+import type { ElementHandle, Page } from "puppeteer"
 
 
 export type DomNavigationEvent = {
@@ -139,9 +139,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
         candidates.push(candidate)
       }
       const role = roleOf(el)
-      const base = role ? (el.tagName.toLowerCase() + ",[role=" + JSON.stringify(role) + "]") : el.tagName.toLowerCase()
       if (role && label) {
-        const selector = '[aria-label=' + JSON.stringify(label) + '],[aria-labelledby]'
         add({ strategy: "role", selector: role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase(), role, name: label, confidence: 0.98, uniqueAtDiscovery: false, context: "active document" })
       }
       const testId = h.getAttribute("data-testid") || h.getAttribute("data-test-id") || h.getAttribute("data-cy")
