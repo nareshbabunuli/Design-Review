@@ -61,6 +61,7 @@ import {
   LogOut,
   Plug,
   User,
+  Archive,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -221,6 +222,60 @@ export default function AISimulatorPage() {
 
   // Active Automation Job State
   const [currentJob, setCurrentJob] = useState<AutomationJob | null>(null)
+  const [isExportingZip, setIsExportingZip] = useState(false)
+  const [isResettingData, setIsResettingData] = useState(false)
+
+  const handleExportZip = async () => {
+    if (!currentJob?.id || isExportingZip) return
+    setIsExportingZip(true)
+    try {
+      const res = await fetch(`/api/ai-automation/export-zip?jobId=${currentJob.id}`)
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        throw new Error(errJson.error || "Failed to generate export zip")
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      const disposition = res.headers.get("content-disposition") || ""
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch?.[1] || `test-bundle-${currentJob.id.slice(0, 8)}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      alert(`Export failed: ${err?.message || "Could not generate ZIP bundle"}`)
+    } finally {
+      setIsExportingZip(false)
+    }
+  }
+
+  const handleResetData = async () => {
+    if (!currentJob?.id || isResettingData) return
+    const confirmed = window.confirm(
+      "Are you sure you want to reset all discovered screens and test plan data? This will clear the current map and tests so you can start a fresh run."
+    )
+    if (!confirmed) return
+
+    setIsResettingData(true)
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: currentJob.id, action: "reset_test_data" }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Could not reset map data")
+      if (data.job) setCurrentJob(data.job)
+    } catch (err: any) {
+      alert(`Reset failed: ${err?.message || "Could not reset data"}`)
+    } finally {
+      setIsResettingData(false)
+    }
+  }
+
   const lastSessionEventSequenceRef = useRef<Record<string, number>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [botError, setBotError] = useState("")
@@ -280,7 +335,7 @@ export default function AISimulatorPage() {
 
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
-  type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+  type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage" | "chat"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
 
   // Workspace layout mode: "device" (Phone Simulator) | "split" (Side-by-Side) | "stage" (Map & Plan)
@@ -307,7 +362,7 @@ export default function AISimulatorPage() {
       const tabParam = params.get("tab") || params.get("view")
       if (
         tabParam &&
-        ["simulator", "map", "screens", "plan", "execution", "files", "coverage"].includes(tabParam)
+        ["simulator", "map", "screens", "plan", "execution", "files", "coverage", "chat"].includes(tabParam)
       ) {
         setStageViewMode(tabParam as StageViewMode)
         if (tabParam === "simulator") {
@@ -318,6 +373,67 @@ export default function AISimulatorPage() {
       }
     }
   }, [])
+
+  // Load project from URL search param if provided (e.g. ?projectId=... or ?project=...)
+  useEffect(() => {
+    if (typeof window === "undefined" || !supabase) return
+    const params = new URLSearchParams(window.location.search)
+    const pId = params.get("projectId") || params.get("project") || params.get("id")
+    if (!pId || pId === "ai-simulator-default") return
+
+    setActiveProjectId(pId)
+
+    const fetchProject = async () => {
+      try {
+        const { data: pData } = await supabase
+          .from("projects")
+          .select("id, title, user_id, figma_url")
+          .eq("id", pId)
+          .single()
+
+        if (pData) {
+          const { data: wData } = await supabase
+            .from("workflows")
+            .select("id, project_id, title, design_a, design_b, figma_url, our_notes, client_message, client_task_done, reason, is_done")
+            .eq("project_id", pId)
+
+          const loadedProject: Project = {
+            id: pData.id,
+            title: pData.title,
+            isExpanded: true,
+            userId: pData.user_id,
+            figmaUrl: pData.figma_url,
+            workflows: (wData || []).map((w: any) => ({
+              id: w.id,
+              projectId: w.project_id,
+              title: w.title,
+              designA: w.design_a,
+              designB: w.design_b,
+              figmaUrl: w.figma_url,
+              ourNotes: w.our_notes || "",
+              clientMessage: w.client_message || "",
+              clientTaskDone: w.client_task_done,
+              reason: w.reason || "",
+              isDone: w.is_done,
+              comments: [],
+              revisions: [],
+            })),
+          }
+
+          setProjects((prev) => {
+            const filtered = prev.filter((p) => p.id !== pId)
+            return [loadedProject, ...filtered]
+          })
+          if (loadedProject.workflows.length > 0) {
+            setActiveWorkflowId(loadedProject.workflows[0].id)
+          }
+        }
+      } catch (err) {
+        console.warn("[AI Simulator] Failed to load project from query param:", err)
+      }
+    }
+    fetchProject()
+  }, [supabase])
 
   // Full App Test Plan & Figma-Style Workflow Map Synthesis
   const activePlan = useMemo(() => {
@@ -576,24 +692,25 @@ export default function AISimulatorPage() {
     let active = true
     const checkLaya = async () => {
       try {
-        const res = await fetch(`/api/ai-automation/laya-health?baseUrl=${encodeURIComponent(layaBaseUrl)}`, {
-          signal: AbortSignal.timeout(2500),
-        }).catch(() => null)
+        const res = await fetch(`/api/ai-automation/laya-health?baseUrl=${encodeURIComponent(layaBaseUrl)}`)
         if (!res || !res.ok) {
           if (active) setIsLayaLive(false)
           return
         }
         const data = await res.json().catch(() => null)
         if (active) setIsLayaLive(Boolean(data?.live))
-      } catch {
+      } catch (err: any) {
+        if (err?.name === "AbortError") return
         if (active) setIsLayaLive(false)
       }
     }
-    checkLaya()
-    const timer = setInterval(checkLaya, 12000)
+    void checkLaya()
+    const intervalTimer = setInterval(() => {
+      void checkLaya()
+    }, 15000)
     return () => {
       active = false
-      clearInterval(timer)
+      clearInterval(intervalTimer)
     }
   }, [enableLaya, layaBaseUrl])
 
@@ -691,27 +808,41 @@ export default function AISimulatorPage() {
       const skip = /^\s*skip\b/i.test(textToSend)
       const pwMatch = textToSend.match(/(?:password|pass|pwd)\s*[:=]?\s*(\S+)/i)
       const userMatch = textToSend.match(/(?:e-?mail|username|user|login)\s*[:=]?\s*(\S+)/i)
-      let username = userMatch?.[1]
+      const emailOnlyMatch = textToSend.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
+
+      let username = userMatch?.[1] || (emailOnlyMatch ? emailOnlyMatch[0] : undefined)
       let password = pwMatch?.[1]
-      if (!skip && (!username || !password)) {
+      if (!skip && !username && !password) {
         const parts = textToSend.split(/[\s,;/|:]+/).filter(Boolean)
         if (parts.length === 2) [username, password] = parts
+        else if (parts.length === 1 && parts[0].includes("@")) username = parts[0]
       }
       const now = Date.now()
-      if (!skip && (!username || !password)) {
+      if (!skip && !username) {
         setChatHistory((prev) => [
           ...prev,
           { id: `user-${now}`, sender: "user", text: textToSend.replace(/(pass(?:word)?|pwd)\s*[:=]?\s*\S+/i, "$1: ****"), timestamp: new Date().toISOString(), status: "completed" },
-          { id: `agent-${now}`, sender: "agent", text: "I couldn't read that. Type it like `email: you@example.com password: yourpass`, or type `skip` to continue without logging in.", timestamp: new Date().toISOString(), status: "completed" },
+          { id: `agent-${now}`, sender: "agent", text: "Please enter your email (e.g. `you@example.com`) or `email: you@example.com password: yourpass`, or type `skip` to test without logging in.", timestamp: new Date().toISOString(), status: "completed" },
         ])
         setChatInput("")
         return
       }
       setChatInput("")
+      const displayLabel = skip
+        ? "skip"
+        : password
+        ? `email: ${username} password: ****`
+        : `email: ${username}`
+      const botResponse = skip
+        ? "Skipping login. Mapping only the public screens."
+        : password
+        ? "Got credentials. Typing details into the login form and continuing."
+        : `Using email: ${username}. Continuing test execution.`
+
       setChatHistory((prev) => [
         ...prev,
-        { id: `user-${now}`, sender: "user", text: skip ? "skip" : `email: ${username} password: ****`, timestamp: new Date().toISOString(), status: "completed" },
-        { id: `agent-${now}`, sender: "agent", text: skip ? "Skipping login. Mapping only the public screens." : "Got it. Typing those details into the login form and continuing.", timestamp: new Date().toISOString(), status: "completed" },
+        { id: `user-${now}`, sender: "user", text: displayLabel, timestamp: new Date().toISOString(), status: "completed" },
+        { id: `agent-${now}`, sender: "agent", text: botResponse, timestamp: new Date().toISOString(), status: "completed" },
       ])
       await fetch("/api/ai-automation/status", {
         method: "POST",
@@ -719,7 +850,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify(
           skip
             ? { jobId: currentJob.id, action: "skip_auth" }
-            : { jobId: currentJob.id, action: "provide_credentials", username, password }
+            : { jobId: currentJob.id, action: "provide_credentials", username, password: password || "" }
         ),
       }).catch(() => {})
       return
@@ -1647,6 +1778,20 @@ export default function AISimulatorPage() {
       return
     }
 
+    let savedLocalCreds: { username?: string; password?: string } | undefined
+    try {
+      const savedStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+      if (savedStr) {
+        const parsed = JSON.parse(savedStr)
+        if (parsed.username || parsed.password) {
+          savedLocalCreds = {
+            username: parsed.username?.trim() || "",
+            password: parsed.password?.trim() || "",
+          }
+        }
+      }
+    } catch {}
+
     const effectiveCreds =
       credentialsOverride?.username || credentialsOverride?.password
         ? {
@@ -1658,11 +1803,14 @@ export default function AISimulatorPage() {
             username: username.trim(),
             password: password.trim(),
           }
-        : undefined
+        : savedLocalCreds
 
     if (credentialsOverride?.username) {
       setUsername(credentialsOverride.username)
       if (credentialsOverride.password) setPassword(credentialsOverride.password)
+    } else if (savedLocalCreds?.username && !username) {
+      setUsername(savedLocalCreds.username)
+      if (savedLocalCreds.password && !password) setPassword(savedLocalCreds.password)
     }
 
     const postmanObj = postmanCollectionText.trim()
@@ -1805,13 +1953,21 @@ export default function AISimulatorPage() {
           recordVideo,
           role: effectiveRole,
           layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
-          credentials:
-            username || password
-              ? {
-                  username: username.trim(),
-                  password: password.trim(),
+          credentials: (() => {
+            if (username || password) {
+              return { username: username.trim(), password: password.trim() }
+            }
+            try {
+              const savedStr = typeof window !== "undefined" ? localStorage.getItem("simulator_auth_credentials") : null
+              if (savedStr) {
+                const parsed = JSON.parse(savedStr)
+                if (parsed.username || parsed.password) {
+                  return { username: parsed.username?.trim() || "", password: parsed.password?.trim() || "" }
                 }
-              : undefined,
+              }
+            } catch {}
+            return undefined
+          })(),
           maxScreens: Math.max(maxScreens, 6),
           checkBackNavigation: checkBackNav,
           checkResponsive,
@@ -2032,7 +2188,7 @@ export default function AISimulatorPage() {
 
                 {/* Editor View Tab Link */}
                 <Link
-                  href="/?view=editor"
+                  href={activeProjectId && activeProjectId !== "ai-simulator-default" ? `/?project=${activeProjectId}&view=editor` : "/?view=editor"}
                   className="w-full py-2 flex flex-col items-center justify-center relative transition group text-slate-500 hover:text-slate-200 cursor-pointer"
                   title="Design Review Editor"
                 >
@@ -2286,25 +2442,30 @@ export default function AISimulatorPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isDummyTestActive}
-                    onClick={() => {
-                      if (workspaceLayoutMode === "stage") {
-                        setWorkspaceLayoutMode("split")
-                      }
-                      window.dispatchEvent(new CustomEvent("run-simulator-dummy-test"))
-                    }}
-                    className={`px-2.5 py-1 rounded-md text-xs flex items-center gap-1.5 shadow-sm transition font-bold ${
-                      isDummyTestActive
-                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait animate-pulse"
-                        : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 cursor-pointer"
-                    }`}
-                    title="Run dummy test with mouse operations and form filling on login form"
-                  >
-                    <Play className={`h-3 w-3 fill-current ${isDummyTestActive ? "animate-spin" : ""}`} />
-                    <span>{isDummyTestActive ? "Running Dummy Test…" : "Dummy Test: Form & Mouse"}</span>
-                  </button>
+                  {currentJob?.id && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleExportZip}
+                        disabled={isExportingZip}
+                        className="px-2.5 py-1 rounded-md bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
+                      >
+                        {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+                        <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetData}
+                        disabled={isResettingData}
+                        className="px-2 py-1 rounded-md bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        title="Reset discovered map screens and test plan data"
+                      >
+                        {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                        <span>Reset Data</span>
+                      </button>
+                    </>
+                  )}
 
                   {currentJob?.status === "running" && (
                     <>
@@ -2362,9 +2523,10 @@ export default function AISimulatorPage() {
                         setIsSimulatorFullscreen((prev) => (typeof val === "boolean" ? val : !prev))
                       }
                       onNavigateView={(mode) => {
+                        const pQuery = activeProjectId && activeProjectId !== "ai-simulator-default" ? `&project=${activeProjectId}` : ""
                         if (mode === "dashboard") window.location.href = "/"
-                        else if (mode === "editor") window.location.href = "/?view=editor"
-                        else if (mode === "simulator") window.location.href = "/?view=simulator"
+                        else if (mode === "editor") window.location.href = `/?view=editor${pQuery}`
+                        else if (mode === "simulator") window.location.href = `/?view=simulator${pQuery}`
                       }}
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
@@ -2382,9 +2544,10 @@ export default function AISimulatorPage() {
                         job={currentJob}
                         isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
                         targetUrl={targetUrl}
-                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode === "simulator" ? "chat" : stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         onStartWorkflowTest={handleStartWorkflowTesting}
+                        onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onOpenMapPage={() => handleSelectWorkspaceTab("map")}
                         isMapPageActive={stageViewMode === "map"}
@@ -2402,7 +2565,7 @@ export default function AISimulatorPage() {
                         onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onJobUpdate={(updated) => setCurrentJob(updated)}
-                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode === "simulator" || stageViewMode === "chat" ? "map" : stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         fullPageView={true}
                         hideSubNav={false}

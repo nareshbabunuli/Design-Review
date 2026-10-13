@@ -16,6 +16,7 @@
 import path from "path"
 import fs from "fs"
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import { createClient } from "@supabase/supabase-js"
 
 import type {
@@ -628,17 +629,8 @@ export async function executeAutonomousJob(
     }
 
     // ---- Browser ----
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-        "--autoplay-policy=no-user-gesture-required",
-      ],
+    browser = await safePuppeteerLaunch({
+      args: ["--autoplay-policy=no-user-gesture-required"],
     })
     const page = await browser.newPage()
     const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }

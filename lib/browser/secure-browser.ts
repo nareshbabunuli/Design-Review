@@ -1,4 +1,8 @@
+import fs from "fs"
+import path from "path"
 import puppeteer, { type Browser, type Page } from "puppeteer"
+
+export type PuppeteerLaunchOptions = NonNullable<Parameters<typeof puppeteer.launch>[0]>
 import { assertSafeTargetUrlWithDevBypass } from "@/lib/security/url-guard"
 
 export type BrowserCredentials = {
@@ -27,16 +31,91 @@ const SAFE_ARGS = [
   "--disable-extensions",
   "--mute-audio",
   "--no-default-browser-check",
-  // Avoid --disable-web-security in production.
-  // --no-sandbox only when running inside a locked-down container (set env).
+  "--disable-web-security",
 ]
 
 function launchArgs(): string[] {
   const args = [...SAFE_ARGS]
-  if (process.env.PUPPETEER_NO_SANDBOX === "true") {
+  if (process.env.PUPPETEER_NO_SANDBOX === "true" || process.platform === "win32") {
     args.push("--no-sandbox", "--disable-setuid-sandbox")
   }
   return args
+}
+
+/**
+ * Locate system-installed Chrome or Edge when Puppeteer cache has no downloaded browser.
+ */
+export function getSystemChromePath(): string | undefined {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    try {
+      if (fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+        return process.env.PUPPETEER_EXECUTABLE_PATH
+      }
+    } catch {}
+  }
+
+  const localAppData = process.env.LOCALAPPDATA || ""
+  const programFiles = process.env["ProgramFiles"] || "C:\\Program Files"
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
+
+  const candidates = [
+    path.join(programFiles, "Google\\Chrome\\Application\\chrome.exe"),
+    path.join(programFilesX86, "Google\\Chrome\\Application\\chrome.exe"),
+    localAppData ? path.join(localAppData, "Google\\Chrome\\Application\\chrome.exe") : null,
+    path.join(programFilesX86, "Microsoft\\Edge\\Application\\msedge.exe"),
+    path.join(programFiles, "Microsoft\\Edge\\Application\\msedge.exe"),
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ].filter(Boolean) as string[]
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate
+      }
+    } catch {}
+  }
+
+  return undefined
+}
+
+/**
+ * Robust Puppeteer launcher that falls back to system Chrome/Edge if Puppeteer cache is empty.
+ */
+export async function safePuppeteerLaunch(customOptions: PuppeteerLaunchOptions = {}): Promise<Browser> {
+  const systemChrome = getSystemChromePath()
+  const baseArgs = launchArgs()
+  const mergedArgs = Array.from(new Set([...baseArgs, ...(customOptions.args || [])]))
+
+  const launchOpts: PuppeteerLaunchOptions = {
+    headless: true,
+    ...customOptions,
+    args: mergedArgs,
+  }
+
+  if (systemChrome && !launchOpts.executablePath) {
+    launchOpts.executablePath = systemChrome
+  } else if (!launchOpts.executablePath && !launchOpts.channel) {
+    launchOpts.channel = "chrome"
+  }
+
+  try {
+    return await puppeteer.launch(launchOpts)
+  } catch (primaryErr) {
+    // If launch failed with specified executable or channel, try fallback without them
+    if (launchOpts.channel || launchOpts.executablePath) {
+      try {
+        const fallbackOpts = { ...launchOpts }
+        delete fallbackOpts.channel
+        delete fallbackOpts.executablePath
+        return await puppeteer.launch(fallbackOpts)
+      } catch {}
+    }
+    throw primaryErr
+  }
 }
 
 /**
@@ -50,10 +129,7 @@ export async function launchTestBrowser(opts: LaunchOptions): Promise<{
 }> {
   const targetUrl = assertSafeTargetUrlWithDevBypass(opts.url, opts.allowedHosts)
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: launchArgs(),
-  })
+  const browser = await safePuppeteerLaunch()
 
   const page = await browser.newPage()
   const width = Math.round(opts.width ?? 1280)

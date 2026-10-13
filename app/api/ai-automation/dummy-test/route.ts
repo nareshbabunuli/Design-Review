@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import puppeteer from "puppeteer"
+import { safePuppeteerLaunch } from "@/lib/browser/secure-browser"
 import {
   humanClick,
   humanType,
@@ -55,15 +56,7 @@ export async function POST(req: NextRequest) {
     steps.push(`Target URL: ${targetUrl}`)
     steps.push(`Credentials: ${username} / ••••••••`)
 
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })

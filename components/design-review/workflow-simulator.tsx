@@ -2442,22 +2442,6 @@ export function WorkflowSimulator({
                   <span>{isLiveCanvas ? "Live App" : "Screenshot"}</span>
                 </button>
 
-                {/* Dummy Test Button: Mouse & Form Filling */}
-                <button
-                  type="button"
-                  onClick={runDummyFormFillTest}
-                  disabled={isDummyTestRunning}
-                  className={`flex px-2 py-0.5 rounded text-[10px] font-bold border items-center gap-1 transition cursor-pointer shrink-0 shadow-xs ${
-                    isDummyTestRunning
-                      ? "bg-amber-500/20 text-amber-300 border-amber-500/50 animate-pulse"
-                      : "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 border-amber-400"
-                  }`}
-                  title="Run dummy test with mouse operations and form filling on login form"
-                >
-                  <Play className="w-3 h-3 fill-current" />
-                  <span>{isDummyTestRunning ? "Running Dummy…" : "Dummy Test"}</span>
-                </button>
-
                 {/* Capture button in Panel B for fullscreen mode */}
                 {isFullscreen && (
                   <button

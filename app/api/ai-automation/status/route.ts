@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getJob, cancelJob, saveJob } from "@/lib/ai-automation/runner"
+import { getJob, cancelJob, saveJob, executeJob, appendLog } from "@/lib/ai-automation/runner"
 import {
   requireUser,
   requireProjectAccess,
@@ -230,18 +230,46 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "approve_test_plan") {
-      if (job.status !== "running" || !job.fullAppTestPlan || job.planApprovalState !== "awaiting_review") {
+      if (!job.fullAppTestPlan || (job.planApprovalState !== "awaiting_review" && job.planApprovalState !== "approved")) {
         return NextResponse.json({ error: "This job is not waiting for plan approval." }, { status: 409 })
       }
       job.planApprovalState = "approved"
+      const wasRunning = job.status === "running"
+      job.status = "running"
+      job.currentStep = "Test plan approved. Executing test plan..."
       saveJob(job)
       emitSessionEvent(job, "user_input", {
-        message: "User approved the test plan. Execution will continue in the current browser session.",
+        message: "User approved the test plan. Execution will continue.",
         payload: { action: "approve_test_plan", planId: job.fullAppTestPlan.id },
       })
+
+      if (!wasRunning) {
+        setImmediate(() => {
+          executeJob(job, {
+            url: job.targetUrl,
+            projectId: job.projectId,
+            mode: "full_app",
+            role: job.role,
+            layaBaseUrl: job.layaBaseUrl,
+            viewports: job.viewports,
+            maxScreens: job.maxScreens,
+            aiModel: job.aiModel,
+            aiBaseUrl: job.aiBaseUrl,
+            dummyTestFiles: job.dummyTestFiles,
+            uploadFilesDir: job.uploadFilesDir,
+            postmanCollection: job.postmanCollection,
+          }).catch((err) => {
+            console.error(`[AI Bot] Fatal error running approved job ${job.id}:`, err)
+            job.status = "failed"
+            job.error = err?.message || "Execution error"
+            saveJob(job)
+          })
+        })
+      }
+
       return NextResponse.json({
         success: true,
-        message: "Plan approved. Continuing the current browser session.",
+        message: "Plan approved. Continuing execution.",
         job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
       })
     }
@@ -326,20 +354,70 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "provide_credentials") {
-      if (!username || !password) {
+      if (!username && !password) {
         return NextResponse.json(
-          { error: "username and password required" },
+          { error: "username or email required" },
           { status: 400 }
         )
       }
+      const safeUser = String(username || "")
+      const safePass = String(password || "")
       setJobSecrets(jobId, {
-        credentials: { username: String(username), password: String(password) },
+        credentials: { username: safeUser, password: safePass },
       })
-      // Keep a runtime-only copy for legacy runner paths; job-store strips it from disk.
-      ;(job as any).pendingCredentials = { username: String(username), password: String(password) }
-      ;(job as any).authState = "logged_in"
-      ;(job as any).authPrompt = undefined
-      saveJob(job)
+      ;(job as any).pendingCredentials = { username: safeUser, password: safePass }
+      if (!job.messages) job.messages = []
+      job.messages.push({
+        id: `msg-user-cred-${Date.now()}`,
+        sender: "user",
+        text: safePass ? `Credentials provided for ${safeUser}` : `Email provided: ${safeUser}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      // Sync provided credentials to plan steps
+      if (job.fullAppTestPlan?.steps) {
+        for (const s of job.fullAppTestPlan.steps) {
+          if (s.actionType === "fill") {
+            const isEmail = /e-?mail/i.test(s.targetName) || /e-?mail/i.test(s.targetSelector || "")
+            const isUser = /user|login/i.test(s.targetName) || /user|login/i.test(s.targetSelector || "")
+            const isPass = /pass/i.test(s.targetName) || /pass/i.test(s.targetSelector || "")
+            if ((isEmail || isUser) && safeUser) s.syntheticValue = safeUser
+            if (isPass && safePass) s.syntheticValue = safePass
+          }
+        }
+      }
+
+      if (job.status !== "running") {
+        job.status = "running"
+        saveJob(job)
+        setImmediate(() => {
+          executeJob(job, {
+            url: job.targetUrl,
+            projectId: job.projectId,
+            mode: "full_app",
+            credentials: { username: safeUser, password: safePass },
+          }).catch((err) => {
+            console.error(`[AI Bot] Fatal error running job with credentials ${job.id}:`, err)
+          })
+        })
+      } else {
+        saveJob(job)
+      }
+      return NextResponse.json({
+        success: true,
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "update_step_value") {
+      const { stepId, value } = body
+      if (job.fullAppTestPlan?.steps && stepId) {
+        const targetStep = job.fullAppTestPlan.steps.find((s) => s.id === stepId)
+        if (targetStep) {
+          targetStep.syntheticValue = String(value ?? "")
+          saveJob(job)
+        }
+      }
       return NextResponse.json({
         success: true,
         job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
@@ -354,6 +432,42 @@ export async function POST(req: NextRequest) {
       saveJob(job)
       return NextResponse.json({
         success: true,
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
+    if (action === "reset_test_data") {
+      // Clear all map data and test plan data
+      job.screens = []
+      ;(job as any).appMap = undefined
+      job.fullAppTestPlan = undefined
+      job.planApprovalState = undefined
+      job.actionLedger = undefined
+      job.issues = []
+      job.testingPhase = undefined
+      job.currentStep = "Map and test data reset. Ready for a new test run."
+      job.authState = "none"
+      job.authPrompt = undefined
+      job.pendingCredentials = undefined
+      job.error = undefined
+
+      appendLog(job, "info", "[RESET] Application screen map, test plan, and execution data have been reset.")
+      if (!job.messages) job.messages = []
+      job.messages.push({
+        id: `msg-reset-${Date.now()}`,
+        sender: "agent",
+        text: "🔄 Screen map and test plan data have been cleared. You can now re-scan, run a new pre-flight plan, or start testing fresh.",
+        timestamp: new Date().toISOString(),
+      })
+      emitSessionEvent(job, "user_input", {
+        message: "Map and test data reset by user.",
+        payload: { action: "reset_test_data" },
+      })
+      saveJob(job)
+
+      return NextResponse.json({
+        success: true,
+        message: "Map and test data reset successfully.",
         job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
       })
     }

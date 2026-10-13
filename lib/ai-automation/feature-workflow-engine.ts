@@ -1,4 +1,5 @@
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import {
   AutomationJob,
   AutomationIssue,
@@ -44,7 +45,10 @@ export function isFeatureWorkflowCommand(text: string): boolean {
     t.includes("test checkout") ||
     t.includes("test upload") ||
     t.includes("test flow") ||
-    t.includes("specific feature")
+    t.includes("specific feature") ||
+    t.includes("act as") ||
+    t.includes("as a ") ||
+    t.includes("as an ")
   )
 }
 
@@ -564,17 +568,7 @@ export async function executeFeatureWorkflowJob(
     )
 
     // Launch Headless Browser
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
     const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }

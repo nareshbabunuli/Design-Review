@@ -1,4 +1,5 @@
 import puppeteer, { Browser, Page, CDPSession } from "puppeteer"
+import { safePuppeteerLaunch } from "@/lib/browser/secure-browser"
 
 interface ScreencastSession {
   browser: Browser
@@ -165,18 +166,11 @@ export class ScreencastManager {
     }
 
     console.log("[ScreencastManager] Launching fast Chrome instance for Canvas Screencast...")
-    const browser = await puppeteer.launch({
-      headless: true,
+    const browser = await safePuppeteerLaunch({
       args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
-        "--disable-extensions",
         "--disable-component-extensions-with-background-pages",
         "--disable-default-apps",
         "--mute-audio",

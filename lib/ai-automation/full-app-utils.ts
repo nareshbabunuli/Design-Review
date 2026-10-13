@@ -29,6 +29,9 @@ export function isFullAppCommand(text: string): boolean {
   const t = text.toLowerCase()
   return (
     t.includes("full app") ||
+    t.includes("full test") ||
+    t.includes("entire app") ||
+    t.includes("test everything") ||
     t.includes("map and test") ||
     t.includes("map app") ||
     t.includes("systematic test") ||

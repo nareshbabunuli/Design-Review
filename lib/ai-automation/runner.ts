@@ -1,6 +1,7 @@
 import fs from "fs"
 import path from "path"
 import puppeteer, { type Browser, type Page } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import { createClient } from "@supabase/supabase-js"
 import {
   AutomationJob,
@@ -798,7 +799,7 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
   }
 }
 
-async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
+export async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
   const openRouterKey = params.aiApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
   const aiBase = (params.aiBaseUrl || "").trim()
@@ -847,17 +848,7 @@ async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   let browser: Browser | null = null
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
     await page.setViewport({ width: 1440, height: 900 })

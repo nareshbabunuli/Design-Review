@@ -2,6 +2,7 @@ import fs from "fs"
 import path from "path"
 import os from "os"
 import puppeteer, { type Browser, type Page, type ElementHandle } from "puppeteer"
+import { safePuppeteerLaunch } from "../browser/secure-browser"
 import {
   AutomationJob,
   AutomationIssue,
@@ -935,7 +936,7 @@ async function hasLoginWall(page: Page): Promise<boolean> {
 async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): Promise<boolean> {
   try {
     // 1. Wait briefly for inputs to mount in SPA
-    await page.waitForSelector('input[type="password"]', { timeout: 8000 }).catch(() => null)
+    await page.waitForSelector('input[type="password"], input[type="email"], input[name*="user" i], input[name*="email" i]', { timeout: 8000 }).catch(() => null)
 
     const inputsFound = await page.evaluate(() => {
       const isVisible = (el: HTMLElement) => {
@@ -951,16 +952,15 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
       }
 
       const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).find(isVisible)
-      if (!pw) return false
-
-      const scope = pw.closest("form") || document
+      const scope = (pw && pw.closest("form")) || document
       const user = (Array.from(
         scope.querySelectorAll(
           'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[placeholder*="user" i], input[type="text"], input:not([type])'
         )
       ) as HTMLInputElement[]).find((x) => isVisible(x) && x.type !== "password")
 
-      return { hasPw: true, hasUser: Boolean(user) }
+      if (!pw && !user) return false
+      return { hasPw: Boolean(pw), hasUser: Boolean(user) }
     })
 
     if (!inputsFound) return false
@@ -1105,8 +1105,8 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
         )
       ) as HTMLElement[]
 
-      const isAuthExact = (t: string) => /^\s*(sign\s*in|log\s*in|login|continue|submit)\s*$/i.test(t.trim())
-      const isAuthContains = (t: string) => /\b(sign\s*in|log\s*in|login|continue|submit)\b/i.test(t.trim())
+      const isAuthExact = (t: string) => /^\s*(sign\s*in|log\s*in|login|continue|submit|next)\s*$/i.test(t.trim())
+      const isAuthContains = (t: string) => /\b(sign\s*in|log\s*in|login|continue|submit|next)\b/i.test(t.trim())
 
       // Priority 1: exact text match on visible element
       const exact = all.find((el) => isVisible(el) && isAuthExact(el.textContent || (el as any).value || ""))
@@ -1214,7 +1214,7 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
         return { hasVisiblePw, urlChanged, errorMatch }
       }, startUrl)
 
-      if (status.urlChanged || !status.hasVisiblePw) {
+      if (status.urlChanged || (inputsFound.hasPw && !status.hasVisiblePw) || (!inputsFound.hasPw && !(await hasLoginWall(page)))) {
         await new Promise((r) => setTimeout(r, 1200))
         return true
       }
@@ -1235,25 +1235,39 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
  * waits for the UI to supply them (or skip). Returns true when logged in.
  */
 async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: LoginCreds): Promise<boolean> {
-  let active: LoginCreds | undefined = creds && creds.password ? creds : undefined
+  let active: LoginCreds | undefined = creds && (creds.username || creds.password) ? creds : undefined
 
   for (let attempt = 0; attempt < 3; attempt++) {
     if (!active) {
       job.authState = "awaiting_credentials"
       job.authPrompt =
         attempt === 0
-          ? "Login required. Enter test credentials to continue testing the authenticated app, or skip."
-          : "Login failed with those credentials. Try again or skip."
+          ? "Login or email required. Enter your email (and password if needed) to continue testing, or skip."
+          : "Login or email attempt failed. Try again or skip."
       job.pendingCredentials = undefined
-      job.currentStep = "Waiting for login credentials..."
-      appendLog(job, "warn", "[AUTH] Login wall detected and no credentials available - waiting for user input.")
+      job.currentStep = "Waiting for login or email..."
+      appendLog(job, "warn", "[AUTH] Login or email required on this screen - waiting for user input.")
+
+      if (!job.messages) job.messages = []
+      job.messages.push({
+        id: `msg-auth-${Date.now()}`,
+        sender: "agent",
+        text: attempt === 0
+          ? "🔐 Login or email required on this screen. Please enter your email (and password if needed), or type 'skip'."
+          : "⚠️ Login or email verification didn't succeed. Please enter your email or password again, or type 'skip'.",
+        timestamp: new Date().toISOString(),
+      })
+      emitSessionEvent(job, "user_input", {
+        message: "Login or email required to continue testing.",
+        payload: { authState: "awaiting_credentials", prompt: job.authPrompt },
+      })
       saveJob(job)
 
       const deadline = Date.now() + 10 * 60 * 1000
       while (!job.pendingCredentials && job.status === "running" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500))
         const vaultCreds = getJobSecrets(job.id)?.credentials
-        if (vaultCreds && vaultCreds.password) {
+        if (vaultCreds && (vaultCreds.username || vaultCreds.password)) {
           job.pendingCredentials = { username: vaultCreds.username, password: vaultCreds.password }
           break
         }
@@ -1280,23 +1294,31 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
       active = supplied
     }
 
-    secretRedactor.registerMultiple([active.username, active.password])
-    appendLog(job, "info", "[AUTH] Typing provided test credentials and submitting the login form...")
+    if (active.username) secretRedactor.registerMultiple([active.username])
+    if (active.password) secretRedactor.registerMultiple([active.password])
+    appendLog(job, "info", `[AUTH] Typing credentials for ${active.username || "user"} and submitting...`)
     job.authPrompt = undefined
-    job.currentStep = "Logging in with provided credentials..."
+    job.currentStep = "Submitting credentials..."
     saveJob(job)
 
     if (await attemptLogin(job, page, active)) {
       if (creds) Object.assign(creds, { username: active.username, password: active.password })
       job.authState = "logged_in"
       job.authPrompt = undefined
-      appendLog(job, "success", `[AUTH] Logged in. Now at ${secretRedactor.redact(page.url())}`)
+      appendLog(job, "success", `[AUTH] Logged in successfully. Now at ${secretRedactor.redact(page.url())}`)
+      if (!job.messages) job.messages = []
+      job.messages.push({
+        id: `msg-auth-ok-${Date.now()}`,
+        sender: "agent",
+        text: `✅ Successfully authenticated with ${active.username || "credentials"}. Resuming test execution.`,
+        timestamp: new Date().toISOString(),
+      })
       saveJob(job)
       return true
     }
 
     job.authState = "login_failed"
-    appendLog(job, "error", "[AUTH] Login failed - password field still present after submit.")
+    appendLog(job, "error", "[AUTH] Authentication failed - screen still requires login after submit.")
     saveJob(job)
     active = undefined
   }
@@ -1876,6 +1898,7 @@ export function generateStructuredTestPlan(
   options?: {
     isAuthenticated?: boolean
     postmanCollection?: string | Record<string, any>
+    credentials?: { username?: string; password?: string }
   }
 ): FullAppTestPlan {
   const steps: TestPlanStep[] = []
@@ -2013,9 +2036,9 @@ export function generateStructuredTestPlan(
     for (const input of standaloneInputs) {
       let syntheticVal = SYNTHETIC_TEST_DATA.fullName
       if (input.inputType === "email" || /email/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.email
+        syntheticVal = options?.credentials?.username?.trim() || SYNTHETIC_TEST_DATA.email
       } else if (input.inputType === "password" || /password/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.password
+        syntheticVal = options?.credentials?.password?.trim() || SYNTHETIC_TEST_DATA.password
       } else if (input.inputType === "tel" || /phone|mobile/i.test(input.name)) {
         syntheticVal = SYNTHETIC_TEST_DATA.phone
       } else if (/first/i.test(input.name)) {
@@ -2189,6 +2212,12 @@ export async function executeStructuredTestPlan(
 
   const isProd = isProductionLike(testPlan.targetUrl)
   const isPaymentPermitted = options?.allowTestPayments === true
+
+  const startingHadLoginWall = await hasLoginWall(page)
+  if (startingHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
+    appendLog(job, "warn", "[AUTH] Login or email wall detected before test execution - requesting credentials...")
+    await authenticateIfNeeded(job, page, credentials)
+  }
 
   for (let i = 0; i < testPlan.steps.length; i++) {
     // Consume navigation requests only at a safe action boundary. Completed steps,
@@ -2794,9 +2823,22 @@ export async function executeStructuredTestPlan(
         }
       } else if (step.actionType === "fill") {
         let inputVal = step.syntheticValue || SYNTHETIC_TEST_DATA.fullName
-        if (credentials?.password) {
-          if (/pass/i.test(step.targetName)) inputVal = credentials.password
-          else if (credentials.username && /e-?mail|user|login/i.test(step.targetName)) inputVal = credentials.username
+        const isEmailField = /e-?mail/i.test(step.targetName) || /e-?mail/i.test(step.targetSelector || "")
+        const isUsernameField = /user|login/i.test(step.targetName) || /user|login/i.test(step.targetSelector || "")
+        const isPasswordField = /pass/i.test(step.targetName) || /pass/i.test(step.targetSelector || "")
+
+        if (isEmailField && credentials?.username) {
+          inputVal = credentials.username
+        } else if (isUsernameField && credentials?.username) {
+          inputVal = credentials.username
+        } else if (isPasswordField && credentials?.password) {
+          inputVal = credentials.password
+        } else if (isEmailField && !credentials?.username && job.authState !== "skipped") {
+          appendLog(job, "warn", `[AUTH] Email input field "${step.targetName}" detected. Prompting user for email...`)
+          await authenticateIfNeeded(job, page, credentials)
+          if (credentials?.username) {
+            inputVal = credentials.username
+          }
         }
         const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(step.targetName)
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
@@ -3668,17 +3710,7 @@ export async function executeFullAppTestingJob(
     appendLog(job, "info", `🚀 [FULL APP TESTING] Target: ${job.targetUrl}`)
     appendLog(job, "info", "Architecture: DISCOVER → MAP → CREATE TEST PLAN → EXECUTE → VERIFY → REPORT")
 
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-web-security",
-        "--hide-scrollbars",
-        "--disable-extensions",
-      ],
-    })
+    browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
     const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
@@ -3773,90 +3805,107 @@ export async function executeFullAppTestingJob(
     }
 
     const sessionCreds: { username?: string; password?: string } = { ...(params.credentials || {}) }
-    const discovery = await discoverAndMapApp(job, page, job.targetUrl, {
-      maxScreens: params.maxScreens || 10,
-      credentials: sessionCreds,
-    })
+    const vaultCreds = getJobSecrets(job.id)?.credentials
+    if (vaultCreds) {
+      if (!sessionCreds.username && vaultCreds.username) sessionCreds.username = vaultCreds.username
+      if (!sessionCreds.password && vaultCreds.password) sessionCreds.password = vaultCreds.password
+    }
+    let testPlan: FullAppTestPlan
 
-    // Populate screens for UI compatibility
-    job.screens = discovery.screens.map((s) => {
-      const shots: Record<string, string> = {}
-      if (s.screenshotUrl) shots["Desktop"] = s.screenshotUrl
-      return {
-        url: s.url,
-        path: s.path,
-        title: `${s.id} ${s.name}`,
-        screenshotUrl: s.screenshotUrl,
-        testedAt: new Date().toISOString(),
-        screenshots: shots,
-        backNavigationStatus: "passed" as const,
-        responsiveStatus: "passed" as const,
-        issuesCount: 0,
+    if (job.planApprovalState === "approved" && job.fullAppTestPlan && job.fullAppTestPlan.steps?.length > 0) {
+      testPlan = job.fullAppTestPlan
+      appendLog(
+        job,
+        "info",
+        `⚡ Executing approved test plan with ${testPlan.steps.length} steps directly.`
+      )
+    } else {
+      const discovery = await discoverAndMapApp(job, page, job.targetUrl, {
+        maxScreens: params.maxScreens || 10,
+        credentials: sessionCreds,
+      })
+
+      // Populate screens for UI compatibility
+      job.screens = discovery.screens.map((s) => {
+        const shots: Record<string, string> = {}
+        if (s.screenshotUrl) shots["Desktop"] = s.screenshotUrl
+        return {
+          url: s.url,
+          path: s.path,
+          title: `${s.id} ${s.name}`,
+          screenshotUrl: s.screenshotUrl,
+          testedAt: new Date().toISOString(),
+          screenshots: shots,
+          backNavigationStatus: "passed" as const,
+          responsiveStatus: "passed" as const,
+          issuesCount: 0,
+        }
+      })
+
+      // PHASE 2: Generate Structured Test Plan from Discovered Map
+      job.testingPhase = "planning"
+      job.currentStep = "Phase 2: Generating structured test plan and actionable element inventory..."
+      job.progress = 30
+      saveJob(job)
+
+      appendLog(job, "info", "Phase 2: Generating structured test plan from discovered screens & elements...")
+      testPlan = generateStructuredTestPlan(job.targetUrl, discovery.screens, discovery.transitions, {
+        isAuthenticated: job.authState === "logged_in",
+        postmanCollection: params.postmanCollection || job.postmanCollection,
+        credentials: sessionCreds,
+      })
+      linkTestPlanStepsToLedger(job, testPlan)
+      queueUnplannedLedgerActions(job, testPlan)
+      job.fullAppTestPlan = testPlan
+      job.flowGraph = buildFigmaWorkflowMap(testPlan)
+      saveJob(job)
+
+      appendLog(
+        job,
+        "info",
+        `📋 Test Plan Generated: ${testPlan.steps.length} test steps across ${testPlan.screens.length} screens (${testPlan.requiredFileTypes.length} file upload types detected).`
+      )
+
+      // MAP & PLAN FIRST: keep the authenticated browser and recording alive while
+      // the user reviews the plan. Execution resumes only after explicit approval.
+      job.planApprovalState = "awaiting_review"
+      job.testingPhase = "planning"
+      job.currentStep = "Test plan ready. Review it in the Plan tab, chat to revise it, then approve execution."
+      job.progress = 35
+      saveJob(job)
+      emitSessionEvent(job, "progress", {
+        message: "Authenticated discovery is complete. The test plan is waiting for review and approval.",
+        payload: { phase: "plan_review", stepCount: testPlan.steps.length, screenCount: testPlan.screens.length },
+      })
+      appendLog(job, "info", "⏸️ Execution paused for plan review. Revise the plan in chat or approve it to continue this same browser session.")
+
+      while (job.status === "running" && job.planApprovalState !== "approved") {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        const refreshed = getJob(job.id)
+        if (!refreshed) {
+          job.status = "failed"
+          job.error = "The testing job disappeared while waiting for plan approval."
+          saveJob(job)
+          return
+        }
+        if (refreshed.status !== "running") {
+          job.status = refreshed.status
+          return
+        }
+        if (refreshed.fullAppTestPlan && refreshed.fullAppTestPlan.id === testPlan.id) {
+          Object.assign(testPlan, refreshed.fullAppTestPlan)
+          job.fullAppTestPlan = testPlan
+        }
+        job.planApprovalState = refreshed.planApprovalState
       }
-    })
 
-    // PHASE 2: Generate Structured Test Plan from Discovered Map
-    job.testingPhase = "planning"
-    job.currentStep = "Phase 2: Generating structured test plan and actionable element inventory..."
-    job.progress = 30
-    saveJob(job)
-
-    appendLog(job, "info", "Phase 2: Generating structured test plan from discovered screens & elements...")
-    const testPlan = generateStructuredTestPlan(job.targetUrl, discovery.screens, discovery.transitions, {
-      isAuthenticated: job.authState === "logged_in",
-      postmanCollection: params.postmanCollection || job.postmanCollection,
-    })
-    linkTestPlanStepsToLedger(job, testPlan)
-    queueUnplannedLedgerActions(job, testPlan)
-    job.fullAppTestPlan = testPlan
-    job.flowGraph = buildFigmaWorkflowMap(testPlan)
-    saveJob(job)
-
-    appendLog(
-      job,
-      "info",
-      `📋 Test Plan Generated: ${testPlan.steps.length} test steps across ${testPlan.screens.length} screens (${testPlan.requiredFileTypes.length} file upload types detected).`
-    )
-
-    // MAP & PLAN FIRST: keep the authenticated browser and recording alive while
-    // the user reviews the plan. Execution resumes only after explicit approval.
-    job.planApprovalState = "awaiting_review"
-    job.testingPhase = "planning"
-    job.currentStep = "Test plan ready. Review it in the Plan tab, chat to revise it, then approve execution."
-    job.progress = 35
-    saveJob(job)
-    emitSessionEvent(job, "progress", {
-      message: "Authenticated discovery is complete. The test plan is waiting for review and approval.",
-      payload: { phase: "plan_review", stepCount: testPlan.steps.length, screenCount: testPlan.screens.length },
-    })
-    appendLog(job, "info", "⏸️ Execution paused for plan review. Revise the plan in chat or approve it to continue this same browser session.")
-
-    while (job.status === "running" && job.planApprovalState !== "approved") {
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      const refreshed = getJob(job.id)
-      if (!refreshed) {
-        job.status = "failed"
-        job.error = "The testing job disappeared while waiting for plan approval."
-        saveJob(job)
-        return
-      }
-      if (refreshed.status !== "running") {
-        job.status = refreshed.status
-        return
-      }
-      if (refreshed.fullAppTestPlan && refreshed.fullAppTestPlan.id === testPlan.id) {
-        Object.assign(testPlan, refreshed.fullAppTestPlan)
+      if (job.status !== "running" || job.planApprovalState !== "approved") return
+      // Use the latest server-persisted revision, not the original generated plan.
+      const approvedJob = getJob(job.id)
+      if (approvedJob?.fullAppTestPlan?.id === testPlan.id) {
+        Object.assign(testPlan, approvedJob.fullAppTestPlan)
         job.fullAppTestPlan = testPlan
       }
-      job.planApprovalState = refreshed.planApprovalState
-    }
-
-    if (job.status !== "running" || job.planApprovalState !== "approved") return
-    // Use the latest server-persisted revision, not the original generated plan.
-    const approvedJob = getJob(job.id)
-    if (approvedJob?.fullAppTestPlan?.id === testPlan.id) {
-      Object.assign(testPlan, approvedJob.fullAppTestPlan)
-      job.fullAppTestPlan = testPlan
     }
     job.testingPhase = "files"
     job.currentStep = "Plan approved. Preparing test assets before execution..."
