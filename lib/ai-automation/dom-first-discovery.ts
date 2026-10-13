@@ -247,7 +247,6 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
   })
 }
 
-/** Revalidate ranked CSS locator candidates against the live DOM before acting. */
 /** Revalidate ranked locator candidates against the live DOM before acting. */
 export async function resolveRankedLocator(
   page: Page,
@@ -278,11 +277,11 @@ export async function resolveRankedLocator(
         const nameOf = (el: Element) => {
           const h = el as HTMLElement
           const input = el as HTMLInputElement
-          const ids = (h.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+          const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
           const referenced = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
           return String(h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
             h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") || el.tagName)
-            .replace(/\\s+/g, " ").trim().slice(0, 120)
+            .replace(/\s+/g, " ").trim().slice(0, 120)
         }
         const matching = Array.from(document.querySelectorAll(expected.selector)).filter((el) => {
           const h = el as HTMLElement
