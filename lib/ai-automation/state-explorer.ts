@@ -72,6 +72,7 @@ type Probe = {
 type Capture = {
   snapshot: DomDiscoverySnapshot;
   signature: string;
+  restorationSignature: string;
 };
 
 type ScrollPosition = { selector: string; top: number; left: number };
@@ -119,7 +120,7 @@ async function capture(page: Page): Promise<Capture> {
   });
   const route = new URL(snapshot.url).pathname;
   const visibleInventory = snapshot.elements.map((element) => element.tag + ":" + element.role + ":" + element.label).sort().join("|");
-  return { snapshot, signature: hash([route, vector, visibleInventory].join("::")) };
+  return { snapshot, signature: hash([route, vector, visibleInventory].join("::")), restorationSignature: hash([route, vector].join("::")) };
 }
 
 function toState(captureResult: Capture, depth: number, trigger?: string): ExploredUiState {
@@ -147,8 +148,16 @@ async function getProbes(
   includeTabs: boolean,
   scrollSteps: Map<string, number>,
   maxScrollSteps: number,
+  onScrollTruncated?: () => void,
 ): Promise<Probe[]> {
   const probes: Probe[] = [];
+  const activeDialogSelector = await page.evaluate(() => {
+    const dialog = document.querySelector("dialog[open],[role=dialog]:not([aria-hidden=true]),.modal[open],[data-modal][data-state=open]") as HTMLElement | null;
+    if (!dialog) return null;
+    if (dialog.id) return "#" + CSS.escape(dialog.id);
+    const label = dialog.getAttribute("aria-label");
+    return label ? "[aria-label=" + JSON.stringify(label) + "]" : null;
+  });
   for (const element of captureResult.snapshot.elements) {
     if (!element.enabled || element.risk !== "safe" || !element.locators?.length) continue;
     const label = element.label;
@@ -161,6 +170,14 @@ async function getProbes(
     if (!kind) continue;
     const selector = await uniqueSelector(page, element.selector);
     if (!selector) continue;
+    if (activeDialogSelector) {
+      const insideDialog = await page.evaluate(({ css, dialogCss }) => {
+        const target = document.querySelector(css);
+        const dialog = document.querySelector(dialogCss);
+        return !!target && !!dialog && dialog.contains(target);
+      }, { css: selector, dialogCss: activeDialogSelector });
+      if (!insideDialog) continue;
+    }
     const live = await page.evaluate((css) => {
       const el = document.querySelector(css) as HTMLElement | null;
       if (!el) return null;
@@ -223,6 +240,7 @@ async function getProbes(
   });
   for (const region of regions) {
     const used = scrollSteps.get(region.key) ?? 0;
+    if (region.canScroll && used >= maxScrollSteps) onScrollTruncated?.();
     if (region.canScroll && used < maxScrollSteps) {
       probes.push({
         selector: region.selector,
@@ -308,11 +326,11 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
     if (expandedStates.has(state.signature)) return;
     expandedStates.add(state.signature);
     if (state.depth >= limits.maxDepth) {
-      const candidates = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps);
+      const candidates = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps, () => markStop("truncated_scroll_budget"));
       if (candidates.length) { truncated += candidates.length; markStop("truncated_max_depth"); }
       return;
     }
-    const probes = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps);
+    const probes = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps, () => markStop("truncated_scroll_budget"));
     for (const probe of probes) {
       if (states.length >= limits.maxStates) {
         truncated++;
@@ -362,7 +380,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
         if (probe.kind === "scroll") await restoreScroll(page, scrollBefore);
         else await restoreDisclosure(page, probe);
         const restoredCapture = await capture(page);
-        if (restoredCapture.signature !== before.signature) {
+        if (restoredCapture.restorationSignature !== before.restorationSignature) {
           branched++;
           edges[edges.length - 1].reversible = false;
           edges[edges.length - 1].restorationError = "state signature did not return to its pre-probe value";
