@@ -91,7 +91,7 @@ function hash(value: string): string {
 async function capture(page: Page): Promise<Capture> {
   const snapshot = await inspectPageDom(page);
   const vector = await page.evaluate(() => {
-    const text = (el: Element) => ((el as HTMLElement).innerText || "").replace(/\\s+/g, " ").trim().slice(0, 100);
+    const text = (el: Element) => ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim().slice(0, 100);
     const activeTab = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"],[role="tab"][data-state="active"]'))
       .map(text).join("|");
     const dialogs = Array.from(document.querySelectorAll('dialog[open],[role="dialog"]:not([aria-hidden="true"]),.modal[open],[data-modal][data-state="open"]'))
@@ -311,7 +311,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
   const edges: ExplorationEdge[] = [];
   const expandedStates = new Set<string>();
   const scrollSteps = new Map<string, number>();
-  let attempted = 0, restored = 0, branched = 0, blocked = 0, truncated = 0;
+  let attempted = 0, restored = 0, branched = 0, blocked = 0, truncated = 0, frontierRemaining = 0;
   let stopReason: ExplorationStopReason = "exhausted";
 
   const markStop = (reason: ExplorationStopReason) => {
@@ -327,11 +327,11 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
     expandedStates.add(state.signature);
     if (state.depth >= limits.maxDepth) {
       const candidates = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps, () => markStop("truncated_scroll_budget"));
-      if (candidates.length) { truncated += candidates.length; markStop("truncated_max_depth"); }
+      if (candidates.length) { truncated += candidates.length; frontierRemaining += candidates.length; markStop("truncated_max_depth"); }
       return;
     }
     const probes = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps, () => markStop("truncated_scroll_budget"));
-    for (const probe of probes) {
+    for (let probeIndex = 0; probeIndex < probes.length; probeIndex++) {\n      const probe = probes[probeIndex];
       if (states.length >= limits.maxStates) {
         truncated++;
         markStop("truncated_max_states");
@@ -412,7 +412,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
     states,
     edges,
     stopReason,
-    frontierRemaining: stopReason === "exhausted" ? 0 : truncated,
+    frontierRemaining,
     limits,
     counts: { discovered: states.length, attempted, restored, branched, blocked, truncated },
   };
