@@ -167,6 +167,7 @@ async function getProbes(
     else if (element.role === "tab") kind = "tab";
     else if (element.kind === "state-change" && /expand|accordion|advanced|more options|show details|filter|dialog|modal|open confirmation/i.test(lower)) kind = "expand";
     else if (/menu|actions|dropdown/i.test(lower)) kind = "menu";
+    else if (element.kind === "state-change") kind = "expand";
     if (!kind) continue;
     const selector = await uniqueSelector(page, element.selector);
     if (!selector) continue;
@@ -191,6 +192,7 @@ async function getProbes(
       };
     }, selector);
     if (!live) continue;
+    if (live.popup === "menu") kind = "menu";
     if (kind === "menu" && (live.expanded === "true" || !(live.popup === "menu" || live.hasControls || /menu|actions|dropdown/i.test(lower)))) continue;
     if (kind === "expand" && (live.expanded === "true" || !(live.expanded === "false" || live.hasControls || live.popup === "dialog"))) continue;
     if (kind === "details" && (live.tag !== "summary" || live.detailsOpen)) continue;
@@ -388,6 +390,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
           edges[edges.length - 1].reversible = false;
           edges[edges.length - 1].restorationError = "state signature did not return to its pre-probe value";
           markStop("restore_failed");
+          frontierRemaining += probes.length - probeIndex - 1;
           return;
         }
         restored++;
