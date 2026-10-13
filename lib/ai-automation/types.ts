@@ -397,6 +397,8 @@ export type AppScreenNode = {
   }>
   isNewDiscovery?: boolean
   isLoginWall?: boolean
+  /** Replayable UI-state path from the route root, used before executing actions discovered in overlays/disclosures/scroll regions. */
+  statePath?: Array<{ action: string; selector: string; kind: "expand" | "menu" | "details" | "tab" | "scroll" }>
   discoveredAt: string
 }
 
