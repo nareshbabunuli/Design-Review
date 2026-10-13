@@ -140,7 +140,11 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       }
       const role = roleOf(el)
       if (role && label) {
-        add({ strategy: "role", selector: role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase(), role, name: label, confidence: 0.98, uniqueAtDiscovery: false, context: "active document" })
+        const roleSelector = role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase()
+        const uniqueNamedMatch = (() => {
+          try { return Array.from(document.querySelectorAll(roleSelector)).filter((candidate) => roleOf(candidate) === role && labelOf(candidate) === label).length === 1 } catch { return false }
+        })()
+        add({ strategy: "role", selector: roleSelector, role, name: label, confidence: 0.98, uniqueAtDiscovery: uniqueNamedMatch, context: "active document" })
       }
       const testId = h.getAttribute("data-testid") || h.getAttribute("data-test-id") || h.getAttribute("data-cy")
       if (testId) {
@@ -214,7 +218,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const stateChange = role === "tab" || role === "switch" || role === "checkbox" || role === "radio" ||
         h.hasAttribute("aria-expanded") || h.hasAttribute("aria-pressed") || h.hasAttribute("aria-controls")
       return {
-        selector: locators.find((candidate) => candidate.uniqueAtDiscovery)?.selector || selectorOf(el),
+        selector: locators.find((candidate) => candidate.uniqueAtDiscovery && candidate.strategy !== "role" && candidate.strategy !== "label-text")?.selector || selectorOf(el),
         locators,
         tag: el.tagName.toLowerCase(),
         role,
@@ -263,7 +267,7 @@ export async function resolveRankedLocator(
           if (expected.role) {
             const tag = el.tagName.toLowerCase()
             const type = (h.getAttribute("type") || "text").toLowerCase()
-            const nativeRole = h.getAttribute("role") || (tag === "button" || tag === "summary" ? "button" : tag === "a" && h.hasAttribute("href") ? "link" : tag === "textarea" ? "textbox" : tag === "select" ? "combobox" : tag === "input" && type === "checkbox" ? "checkbox" : tag === "input" && type === "radio" ? "radio" : tag === "input" ? "textbox" : "")
+            const nativeRole = h.getAttribute("role") || (tag === "button" || tag === "summary" ? "button" : tag === "a" && h.hasAttribute("href") ? "link" : tag === "textarea" ? "textbox" : tag === "select" ? "combobox" : tag === "input" && type === "checkbox" ? "checkbox" : tag === "input" && type === "radio" ? "radio" : tag === "input" && ["submit", "button", "reset", "image"].includes(type) ? "button" : tag === "input" ? "textbox" : "")
             if (nativeRole !== expected.role) return false
           }
           if (expected.name) {
@@ -277,10 +281,33 @@ export async function resolveRankedLocator(
         if (matched) eligible.push(handle)
       }
       if (eligible.length === 1) {
-        const index = matches.indexOf(eligible[0])
-        const chosen = matches[index]
-        for (const handle of matches) if (handle !== chosen) await handle.dispose().catch(() => {})
-        return { selector: candidate.selector, strategy: candidate.strategy, confidence: candidate.confidence }
+        const chosen = eligible[0]
+        const selector = await chosen.evaluate((el) => {
+          const unique = (candidate: string) => { try { return document.querySelectorAll(candidate).length === 1 } catch { return false } }
+          const h = el as HTMLElement
+          if (h.id) { const byId = "#" + CSS.escape(h.id); if (unique(byId)) return byId }
+          for (const attr of ["data-testid", "data-test-id", "data-cy", "aria-label", "name"]) {
+            const value = h.getAttribute(attr)
+            if (!value) continue
+            const byAttr = el.tagName.toLowerCase() + "[" + attr + "=" + JSON.stringify(value) + "]"
+            if (unique(byAttr)) return byAttr
+          }
+          const parts: string[] = []
+          let current: Element | null = el
+          while (current && current !== document.documentElement) {
+            const parent = current.parentElement
+            const tagName = current.tagName.toLowerCase()
+            if (!parent) { parts.unshift(tagName); break }
+            const siblings = Array.from(parent.children).filter((child) => child.tagName === current!.tagName)
+            parts.unshift(siblings.length > 1 ? tagName + ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : tagName)
+            const candidate = parts.join(" > ")
+            if (unique(candidate)) return candidate
+            current = parent
+          }
+          return parts.join(" > ")
+        })
+        for (const handle of matches) await handle.dispose().catch(() => {})
+        return { selector: selector || candidate.selector, strategy: candidate.strategy, confidence: candidate.confidence }
       }
     } catch {
       // A stale/invalid candidate is skipped; the next ranked alternative is tried.
