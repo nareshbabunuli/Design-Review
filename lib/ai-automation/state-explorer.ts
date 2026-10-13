@@ -20,6 +20,7 @@ export type ExplorationEdge = {
   fromStateId: string;
   toStateId: string;
   action: string;
+  selector?: string;
   kind: ExplorationTransitionKind;
   reversible: boolean;
   restorationError?: string;
@@ -350,7 +351,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
       if (probe.kind === "tab") {
         blocked++;
         markStop("blocked_safety");
-        edges.push({ fromStateId: state.id, toStateId: state.id, action: probe.label, kind: probe.kind, reversible: false, restorationError: "blocked_safety: tab changes are not auto-clicked because they may replace unsaved form state" });
+        edges.push({ fromStateId: state.id, toStateId: state.id, action: probe.label, selector: probe.selector, kind: probe.kind, reversible: false, restorationError: "blocked_safety: tab changes are not auto-clicked because they may replace unsaved form state" });
         continue;
       }
       const before = await capture(page);
@@ -384,7 +385,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
           states.push(child);
           await options.onState?.(child);
         }
-        edges.push({ fromStateId: state.id, toStateId: child.id, action: probe.label, kind: probe.kind, reversible: true });
+        edges.push({ fromStateId: state.id, toStateId: child.id, action: probe.label, selector: probe.selector, kind: probe.kind, reversible: true });
         await visit(after, child);
 
         if (probe.kind === "scroll") await restoreScroll(page, scrollBefore);
@@ -405,6 +406,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
           fromStateId: state.id,
           toStateId: state.id,
           action: probe.label,
+          selector: probe.selector,
           kind: probe.kind,
           reversible: false,
           restorationError: error instanceof Error ? error.message : String(error),
