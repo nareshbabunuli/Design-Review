@@ -54,8 +54,22 @@ export async function drainDomNavigationEvents(page: Page): Promise<DomNavigatio
   }).catch(() => [])
 }
 
+export type RankedLocatorStrategy = "role" | "attribute" | "label-text" | "structural"
+
+export type RankedLocatorCandidate = {
+  strategy: RankedLocatorStrategy
+  selector: string
+  role?: string
+  name?: string
+  attribute?: string
+  confidence: number
+  uniqueAtDiscovery: boolean
+  context?: string
+}
+
 export type DomDiscoveryElement = {
   selector: string
+  locators: RankedLocatorCandidate[]
   tag: string
   role: string
   label: string
@@ -99,6 +113,60 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
         h.innerText || input.placeholder || input.name || input.title || el.tagName
       return String(label).replace(/\s+/g, " ").trim().slice(0, 120)
     }
+    const roleOf = (el: Element) => {
+      const explicit = el.getAttribute("role")
+      if (explicit) return explicit
+      const tag = el.tagName.toLowerCase()
+      if (tag === "button" || tag === "summary") return "button"
+      if (tag === "a" && el.hasAttribute("href")) return "link"
+      if (tag === "textarea") return "textbox"
+      if (tag === "select") return "combobox"
+      if (tag === "input") {
+        const type = (el.getAttribute("type") || "text").toLowerCase()
+        if (type === "checkbox") return "checkbox"
+        if (type === "radio") return "radio"
+        if (type === "submit" || type === "button" || type === "reset") return "button"
+        return "textbox"
+      }
+      return ""
+    }
+    const cssAttr = (name: string, value: string) => "[" + name + "=" + JSON.stringify(value) + "]"
+    const locatorCandidatesOf = (el: Element, label: string): RankedLocatorCandidate[] => {
+      const h = el as HTMLElement
+      const candidates: RankedLocatorCandidate[] = []
+      const add = (candidate: RankedLocatorCandidate) => {
+        if (!candidate.selector || candidates.some((item) => item.strategy === candidate.strategy && item.selector === candidate.selector && item.role === candidate.role && item.name === candidate.name)) return
+        candidates.push(candidate)
+      }
+      const role = roleOf(el)
+      const base = role ? (el.tagName.toLowerCase() + ",[role=" + JSON.stringify(role) + "]") : el.tagName.toLowerCase()
+      if (role && label) {
+        const selector = '[aria-label=' + JSON.stringify(label) + '],[aria-labelledby]'
+        add({ strategy: "role", selector: role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase(), role, name: label, confidence: 0.98, uniqueAtDiscovery: false, context: "active document" })
+      }
+      const testId = h.getAttribute("data-testid") || h.getAttribute("data-test-id") || h.getAttribute("data-cy")
+      if (testId) {
+        const attr = h.hasAttribute("data-testid") ? "data-testid" : h.hasAttribute("data-test-id") ? "data-test-id" : "data-cy"
+        const selector = cssAttr(attr, testId)
+        add({ strategy: "attribute", selector, attribute: attr, confidence: 0.96, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      if (h.id) {
+        const selector = "#" + CSS.escape(h.id)
+        add({ strategy: "attribute", selector, attribute: "id", confidence: 0.94, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      const name = h.getAttribute("name")
+      if (name) {
+        const selector = el.tagName.toLowerCase() + cssAttr("name", name)
+        add({ strategy: "attribute", selector, attribute: "name", confidence: 0.91, uniqueAtDiscovery: document.querySelectorAll(selector).length === 1, context: "active document" })
+      }
+      if (label) {
+        const textSelector = el.tagName.toLowerCase() + ':not([aria-label])'
+        add({ strategy: "label-text", selector: textSelector, role: role || undefined, name: label, confidence: 0.78, uniqueAtDiscovery: false, context: "active document" })
+      }
+      const structural = selectorOf(el)
+      add({ strategy: "structural", selector: structural, confidence: 0.45, uniqueAtDiscovery: (() => { try { return document.querySelectorAll(structural).length === 1 } catch { return false } })(), context: "active document" })
+      return candidates.sort((a, b) => b.confidence - a.confidence)
+    }
     const selectorOf = (el: Element) => {
       const h = el as HTMLElement
       if (h.id && document.querySelectorAll("#" + CSS.escape(h.id)).length === 1) return "#" + CSS.escape(h.id)
@@ -133,6 +201,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const h = el as HTMLElement
       const input = el as HTMLInputElement
       const label = labelOf(el)
+      const locators = locatorCandidatesOf(el, label)
       const role = h.getAttribute("role") || ""
       const href = el instanceof HTMLAnchorElement || el instanceof HTMLAreaElement ? el.href : undefined
       const target = h.getAttribute("target") || ""
@@ -147,7 +216,8 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const stateChange = role === "tab" || role === "switch" || role === "checkbox" || role === "radio" ||
         h.hasAttribute("aria-expanded") || h.hasAttribute("aria-pressed") || h.hasAttribute("aria-controls")
       return {
-        selector: selectorOf(el),
+        selector: locators.find((candidate) => candidate.uniqueAtDiscovery)?.selector || selectorOf(el),
+        locators,
         tag: el.tagName.toLowerCase(),
         role,
         label,
@@ -173,6 +243,53 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       }).length,
     }
   })
+}
+
+/** Revalidate ranked CSS locator candidates against the live DOM before acting. */
+export async function resolveRankedLocator(
+  page: Page,
+  candidates: RankedLocatorCandidate[],
+): Promise<{ selector: string; strategy: RankedLocatorStrategy; confidence: number } | null> {
+  const ordered = [...candidates].sort((a, b) => b.confidence - a.confidence)
+  for (const candidate of ordered) {
+    let matches: ElementHandle[] = []
+    try {
+      matches = await page.$(candidate.selector)
+      const eligible: ElementHandle[] = []
+      for (const handle of matches) {
+        const matched = await handle.evaluate((el, expected) => {
+          const h = el as HTMLElement
+          const style = getComputedStyle(h)
+          const rect = h.getBoundingClientRect()
+          if (rect.width <= 2 || rect.height <= 2 || style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || h.getAttribute("aria-hidden") === "true") return false
+          if (expected.role) {
+            const tag = el.tagName.toLowerCase()
+            const type = (h.getAttribute("type") || "text").toLowerCase()
+            const nativeRole = h.getAttribute("role") || (tag === "button" || tag === "summary" ? "button" : tag === "a" && h.hasAttribute("href") ? "link" : tag === "textarea" ? "textbox" : tag === "select" ? "combobox" : tag === "input" && type === "checkbox" ? "checkbox" : tag === "input" && type === "radio" ? "radio" : tag === "input" ? "textbox" : "")
+            if (nativeRole !== expected.role) return false
+          }
+          if (expected.name) {
+            const ids = (h.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean)
+            const labelled = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
+            const accessible = (h.getAttribute("aria-label") || labelled || (h as HTMLInputElement).labels?.[0]?.textContent || h.innerText || (h as HTMLInputElement).placeholder || h.getAttribute("title") || "").replace(/\\s+/g, " ").trim()
+            if (accessible !== expected.name) return false
+          }
+          return true
+        }, { role: candidate.strategy === "role" ? candidate.role : undefined, name: candidate.name })
+        if (matched) eligible.push(handle)
+      }
+      if (eligible.length === 1) {
+        const index = matches.indexOf(eligible[0])
+        const chosen = matches[index]
+        for (const handle of matches) if (handle !== chosen) await handle.dispose().catch(() => {})
+        return { selector: candidate.selector, strategy: candidate.strategy, confidence: candidate.confidence }
+      }
+    } catch {
+      // A stale/invalid candidate is skipped; the next ranked alternative is tried.
+    }
+    for (const handle of matches) await handle.dispose().catch(() => {})
+  }
+  return null
 }
 
 function discoveryStateSignature(snapshot: DomDiscoverySnapshot): string {
