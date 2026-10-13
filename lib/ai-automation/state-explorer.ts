@@ -137,20 +137,18 @@ function probesFromCapture(
   parentId: string,
   depth: number,
   includeTabs: boolean,
-  scrollStepsByRegion: Map<string, number>,
 ): Probe[] {
   const probes: Probe[] = [];
   for (const element of capture.snapshot.elements) {
     if (!element.enabled || element.risk !== "safe" || !element.locators?.length) continue;
     const lower = element.label.toLowerCase();
-    const expandedFalse = /aria-expanded=false/.test(element.locators.map((l) => l.selector).join(" "));
     const kind = element.kind;
     const isExpand = element.kind === "state-change" && (
       /expand|collapse|accordion|advanced|more options|show details|filters?/i.test(lower) ||
       !!element.href && element.href.startsWith("#")
     );
     // State is checked from live DOM during execution; this is only a candidate shortlist.
-    const selector = element.locators[0].selector;
+    const selector = element.selector;
     const probeKind: ExplorationTransitionKind | null =
       isExpand ? "expand" :
       /menu|actions|options|dropdown/i.test(lower) ? "menu" :
@@ -259,11 +257,20 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
   const scrollStepsByRegion = new Map<string, number>();
   let attempted = 0, restoredCount = 0, branched = 0, blocked = 0, truncated = 0;
   let stopReason: ExplorationStopReason = "exhausted";
-  const enqueueFrom = (capture: StateCapture, state: ExploredUiState) => {
-    frontier.push(...probesFromCapture(capture, state.id, state.depth, options.includeTabs ?? true, scrollStepsByRegion));
+  const enqueueFrom = async (capture: StateCapture, state: ExploredUiState) => {
+    frontier.push(...probesFromCapture(capture, state.id, state.depth, options.includeTabs ?? true));
+    const regions = await readScrollRegions(page).catch(() => []);
+    for (const region of regions) {
+      const used = scrollStepsByRegion.get(region.key) ?? 0;
+      if (used >= limits.maxScrollSteps) continue;
+      const key = "scroll:" + region.key + ":" + used;
+      if (!visitedProbes.has(key + "@" + state.id)) {
+        frontier.push({ selector: region.selector, label: "Scroll " + region.key + " (step " + (used + 1) + ")", kind: "scroll", depth: state.depth, parentId: state.id, key });
+      }
+    }
   };
   await options.onState?.(first);
-  enqueueFrom(initial, first);
+  await enqueueFrom(initial, first);
 
   while (frontier.length) {
     const probe = frontier.shift()!;
@@ -293,8 +300,15 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
       }
       return result;
     });
-    const liveKind = probe.kind === "scroll" ? "scroll" : await liveProbeKind(page, probe.selector);
-    if (probe.kind !== "scroll" && !liveKind) { blocked++; continue; }
+    let resolvedSelector = probe.selector;
+    if (probe.kind !== "scroll") {
+      const element = current.snapshot.elements.find((item) => item.label === probe.label && item.locators?.length);
+      const locator = element ? await resolveRankedLocator(page, element.locators) : null;
+      if (!locator) { blocked++; continue; }
+      resolvedSelector = locator.selector;
+      const liveKind = await liveProbeKind(page, resolvedSelector);
+      if (!liveKind || (probe.kind !== "details" && liveKind !== probe.kind)) { blocked++; continue; }
+    }
     attempted++;
     let actionSucceeded = false;
     try {
@@ -302,11 +316,13 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
         await page.evaluate((selector) => {
           let el: Element | null = null;
           try { el = document.querySelector(selector); } catch {}
-          if (!el) return;
+          if (!el) return false;
           const h = el as HTMLElement;
+          const before = h.scrollTop;
           h.scrollTop = Math.min(h.scrollHeight, h.scrollTop + Math.max(100, Math.floor(h.clientHeight * 0.75)));
-        }, probe.selector);
-        actionSucceeded = true;
+          return h.scrollTop !== before;
+        }, probe.selector).then((moved) => { actionSucceeded = moved; });
+        if (actionSucceeded) scrollStepsByRegion.set(probe.key.split(":").slice(1, -1).join(":"), (scrollStepsByRegion.get(probe.key.split(":").slice(1, -1).join(":")) ?? 0) + 1);
       } else if (probe.kind === "details") {
         await page.evaluate((selector) => {
           const summary = document.querySelector(selector);
@@ -315,9 +331,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
         }, probe.selector);
         actionSucceeded = true;
       } else {
-        const element = current.snapshot.elements.find((item) => item.label === probe.label && item.locators?.length);
-        const locator = element ? await resolveRankedLocator(page, element.locators) : null;
-        if (locator) { await page.click(locator.selector); actionSucceeded = true; }
+        await page.click(resolvedSelector); actionSucceeded = true;
       }
       if (!actionSucceeded) { blocked++; continue; }
       const revealed = await captureState(page);
@@ -347,7 +361,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
       }
       const restoredCapture = await captureState(page);
       const restoredState = stateBySignature.get(restoredCapture.signature) || stateBySignature.get(probe.parentId);
-      if (restoredState) enqueueFrom(revealed, child);
+      if (restoredState) await enqueueFrom(revealed, child);
     } catch (error) {
       blocked++;
       edges.push({
