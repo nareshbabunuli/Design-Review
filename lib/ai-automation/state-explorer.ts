@@ -331,9 +331,12 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
       return;
     }
     const probes = await getProbes(page, current, options.includeTabs ?? true, scrollSteps, limits.maxScrollSteps, () => markStop("truncated_scroll_budget"));
-    for (let probeIndex = 0; probeIndex < probes.length; probeIndex++) {\n      const probe = probes[probeIndex];
+    for (let probeIndex = 0; probeIndex < probes.length; probeIndex++) {
+      const probe = probes[probeIndex];
       if (states.length >= limits.maxStates) {
-        truncated++;
+        const remaining = probes.length - probeIndex;
+        truncated += remaining;
+        frontierRemaining += remaining;
         markStop("truncated_max_states");
         return;
       }
@@ -399,6 +402,7 @@ export async function exploreUiStates(page: Page, options: StateExplorerOptions 
           restorationError: error instanceof Error ? error.message : String(error),
         });
         markStop("blocked_safety");
+        frontierRemaining += probes.length - probeIndex - 1;
         // Do not continue from a state we cannot prove is restored.
         return;
       }
