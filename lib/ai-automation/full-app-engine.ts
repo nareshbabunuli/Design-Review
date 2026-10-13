@@ -1887,6 +1887,9 @@ export async function discoverAndMapApp(
   })
 
   const rootState = stateReport.states[0]
+  const rootElementKeys = new Set(rootState.elements.map((element) =>
+    [element.tag, element.role, element.label.trim().toLowerCase(), element.href || ""].join("|")
+  ))
   const rootRoutePath = normalizePath(rootState.url, origin)
   const rootScreen = screens.find((screen) => screen.id === pathScreenMap.get(rootRoutePath)) ||
     screens.find((screen) => normalizePath(screen.url, origin) === rootRoutePath) || screens[0]
@@ -1935,12 +1938,23 @@ export async function discoverAndMapApp(
     const inventory = captured?.inventory
     const routePath = normalizePath(state.url, origin)
     const screenId = `S${String(screenSeq++).padStart(3, "0")}`
-    const baseActions = inventory?.actionableElements || []
+    // State screens should contain newly revealed controls, not a duplicate of every
+    // background action from the route. Overlay descendants remain eligible even if
+    // they share a label with an action behind the overlay.
+    const newlyRevealedElements = state.elements.filter((element) =>
+      !rootElementKeys.has([element.tag, element.role, element.label.trim().toLowerCase(), element.href || ""].join("|")) ||
+      element.kind === "overlay"
+    )
+    const newlyRevealedLabels = newlyRevealedElements.map((element) => element.label.trim().toLowerCase()).filter(Boolean)
+    const baseActions = (inventory?.actionableElements || []).filter((element) => {
+      const name = element.name.trim().toLowerCase()
+      return newlyRevealedLabels.some((label) => label === name || label.includes(name) || name.includes(label))
+    })
     const actionables = [...baseActions]
     const knownActionKeys = new Set(actionables.map((element) =>
       [element.name.trim().toLowerCase(), element.type, element.selector || ""].join("|")
     ))
-    for (const [index, element] of state.elements.entries()) {
+    for (const [index, element] of newlyRevealedElements.entries()) {
       const selector = element.locators?.find((candidate) =>
         candidate.strategy === "attribute" && candidate.uniqueAtDiscovery
       )?.selector || element.selector
@@ -1977,7 +1991,12 @@ export async function discoverAndMapApp(
       path: `${routePath}#state-${state.signature}`,
       screenshotUrl: captured?.screenshotUrl,
       actionableElements: actionables,
-      forms: inventory?.forms || [],
+      forms: (inventory?.forms || []).filter((form) =>
+        Boolean(form.isInsideModal) ||
+        form.fields.some((field) => newlyRevealedLabels.some((label) =>
+          label.includes(field.trim().toLowerCase()) || field.trim().toLowerCase().includes(label)
+        ))
+      ),
       statePath: replayPath,
       discoveredAt: state.discoveredAt,
     }
