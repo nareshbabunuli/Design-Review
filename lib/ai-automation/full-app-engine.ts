@@ -1140,7 +1140,7 @@ async function attachRankedLocatorCandidates(
 ): Promise<Awaited<ReturnType<typeof extractActionableInventory>>> {
   const snapshot = await inspectPageDom(page).catch(() => null)
   if (!snapshot) return inventory
-  const normalize = (value: string) => value.trim().replace(/\\s+/g, " ").toLowerCase()
+  const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase()
   for (const action of inventory.actionableElements) {
     const exact = snapshot.elements.find((element) => element.selector === action.selector)
     const labelMatches = snapshot.elements.filter((element) => normalize(element.label) === normalize(action.name))
@@ -2946,6 +2946,7 @@ export async function discoverAndMapApp(
 
   // Return to the start screen before test planning
   await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+  saveJob(job)
 
   return { screens, transitions }
 }
