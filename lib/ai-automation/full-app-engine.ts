@@ -24,7 +24,7 @@ import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes, matchRouteForPath } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
-import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { isLayaAvailable, layaPredict, classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 
 import {
   SYNTHETIC_TEST_DATA,
@@ -501,12 +501,21 @@ async function enrichInventoryWithLaya(
   ).slice(0, 16)
 
   if (candidates.length === 0) return elements
+  if (candidates.length === 1) {
+    candidates[0].interactionConfidence = 0.95
+    candidates[0].discoveryReason = [
+      ...(candidates[0].discoveryReason || []),
+      "Single primary workflow action on screen",
+    ]
+    return elements
+  }
 
   try {
     const criteria: Record<string, string> = {}
     candidates.forEach((c, idx) => {
       criteria[`item_${idx}`] = `[${c.type.toUpperCase()}] "${c.name}" (${c.selector || "selector"})`
     })
+    criteria["none"] = "None of the above controls"
 
     const questions: Record<string, any> = {
       primary_actions: {
@@ -1496,7 +1505,7 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
  * Handles a login wall: uses provided creds if any, otherwise pauses the job and
  * waits for the UI to supply them (or skip). Returns true when logged in.
  */
-async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: LoginCreds): Promise<boolean> {
+export async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: LoginCreds): Promise<boolean> {
   let active: LoginCreds | undefined = creds && (creds.username || creds.password) ? creds : undefined
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -2201,7 +2210,7 @@ export async function discoverAndMapApp(
   job: AutomationJob,
   page: Page,
   baseUrl: string,
-  options: { maxScreens?: number; credentials?: LoginCreds; projectDir?: string } = {}
+  options: { maxScreens?: number; credentials?: LoginCreds; projectDir?: string; layaUrl?: string } = {}
 ): Promise<{
   screens: AppScreenNode[]
   transitions: AppWorkflowTransition[]
@@ -2223,6 +2232,8 @@ export async function discoverAndMapApp(
 
   let screenSeq = 1
 
+  const layaUrl = options.layaUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
+
   // Records the page's current state as a screen (reuses ID if path already known).
   const mapCurrentScreen = async (forceNew = false): Promise<{ id: string; isNew: boolean }> => {
     const curPath = normalizePath(page.url(), origin)
@@ -2231,18 +2242,86 @@ export async function discoverAndMapApp(
       if (known) return { id: known, isNew: false }
     }
 
-    const inv = await extractActionableInventory(page)
+    // Pass A: Extract top-of-viewport actionable elements & forms
+    const inv = await extractActionableInventory(page, layaUrl)
+
+    // Pass B: Progressive Viewport Scrolling (Top-to-Bottom Exploration)
+    try {
+      const scrollMetrics = await page.evaluate(() => ({
+        scrollHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 0),
+        innerHeight: window.innerHeight || 800,
+      })).catch(() => ({ scrollHeight: 0, innerHeight: 800 }))
+
+      if (scrollMetrics.scrollHeight > scrollMetrics.innerHeight + 100) {
+        appendLog(job, "info", `[SCROLL DISCOVERY] Page is scrollable (${scrollMetrics.scrollHeight}px > ${scrollMetrics.innerHeight}px). Scanning below fold...`)
+        const stepSize = Math.max(250, Math.floor(scrollMetrics.innerHeight * 0.75))
+        const maxScroll = Math.min(scrollMetrics.scrollHeight, scrollMetrics.innerHeight * 4)
+        let currentScroll = 0
+        while (currentScroll + stepSize < maxScroll) {
+          currentScroll += stepSize
+          await page.evaluate((y) => window.scrollTo({ top: y, behavior: "instant" }), currentScroll).catch(() => {})
+          await new Promise((r) => setTimeout(r, 180))
+
+          const scrolledInv = await extractActionableInventory(page, layaUrl)
+          for (const el of scrolledInv.actionableElements) {
+            if (!inv.actionableElements.some((e) => e.selector === el.selector || (e.name === el.name && e.type === el.type))) {
+              inv.actionableElements.push(el)
+            }
+          }
+          for (const form of scrolledInv.forms) {
+            if (!inv.forms.some((f) => f.id === form.id || f.selector === form.selector)) {
+              inv.forms.push(form)
+            }
+          }
+        }
+        // Restore scroll to top
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })).catch(() => {})
+        await new Promise((r) => setTimeout(r, 150))
+      }
+    } catch (scrollErr: any) {
+      console.warn("[Progressive Scroll Discovery]", scrollErr?.message)
+    }
+
     const id = `S${String(screenSeq++).padStart(3, "0")}`
     let shot = ""
     try {
       const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
       shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
     } catch {}
+
+    // Laya Vision: visual classification and blocking UI check
+    let layaInfo: { pageType?: string; hasBlockingIssue?: boolean; ready?: boolean } = {}
+    try {
+      const pageText = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => "")
+      const layaResult = await classifyPage(pageText, page.url(), layaUrl, shot)
+      if (layaResult) {
+        layaInfo = layaResult
+        if (layaResult.hasBlockingIssue) {
+          job.issues.push({
+            id: `issue-vis-${Date.now()}`,
+            screenUrl: page.url(),
+            screenTitle: `Screen ${id}`,
+            type: "layout_shift",
+            severity: "high",
+            description: `Laya Vision detected a potential visual layout or blocking UI issue on ${page.url()}`,
+            timestamp: new Date().toISOString(),
+          })
+        }
+      }
+    } catch (layaErr: any) {
+      console.warn("[Laya Vision Classification]", layaErr?.message)
+    }
+
     const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
     const compLoc = getComponentLocationForPath(curPath)
+    const rawName = deriveScreenName(curPath, inv.heading, inv.modalTitle, pageHasLoginWall)
+    const displayName = layaInfo.pageType && layaInfo.pageType !== "other" && (!inv.heading || inv.heading.length < 3)
+      ? `${layaInfo.pageType.charAt(0).toUpperCase() + layaInfo.pageType.slice(1)} Screen (${curPath})`
+      : rawName
+
     const node: AppScreenNode = {
       id,
-      name: deriveScreenName(curPath, inv.heading, inv.modalTitle, pageHasLoginWall),
+      name: displayName,
       url: page.url(),
       path: curPath,
       componentLocation: compLoc,
@@ -2252,6 +2331,9 @@ export async function discoverAndMapApp(
       forms: inv.forms,
       isLoginWall: pageHasLoginWall,
       discoveredAt: new Date().toISOString(),
+      pageType: layaInfo.pageType,
+      hasBlockingIssue: layaInfo.hasBlockingIssue,
+      isReady: layaInfo.ready,
     }
     screens.push(node)
     pathScreenMap.set(curPath, id)
@@ -2263,7 +2345,7 @@ export async function discoverAndMapApp(
     appendLog(
       job,
       "success",
-      `[DISCOVERY] Screen ${node.id}: "${node.name}" (${node.path}) mapped with ${node.actionableElements.length} actionable elements.`
+      `[DISCOVERY] Screen ${node.id}: "${node.name}" (${node.path}) mapped with ${node.actionableElements.length} actionable elements (type: ${node.pageType || "standard"}).`
     )
     return { id, isNew: true }
   }
@@ -2504,6 +2586,97 @@ export async function discoverAndMapApp(
         } catch {}
       }
     } catch {}
+  }
+
+  // In-Page Modals, Drawers & Dialog Discovery
+  if (screens.length < maxLimit && job.status === "running") {
+    try {
+      const modalTriggers = await page.evaluate(() => {
+        const triggers: Array<{ name: string; selector: string }> = []
+        document.querySelectorAll('button, [role="button"], a').forEach((el: any) => {
+          const style = window.getComputedStyle(el)
+          if (style.display === "none" || style.visibility === "hidden" || el.offsetWidth <= 4) return
+          const txt = (el.textContent || el.getAttribute("aria-label") || "").trim()
+          const isModalTrigger = Boolean(
+            el.getAttribute("aria-haspopup") === "dialog" ||
+            el.getAttribute("data-modal-target") ||
+            el.getAttribute("data-target") ||
+            /\b(settings|preferences|filter|filter by|add new|create item|quick view|modal)\b/i.test(txt)
+          )
+          if (isModalTrigger && txt.length > 0 && txt.length < 35 && !/(logout|sign\s*out|delete)/i.test(txt)) {
+            triggers.push({ name: txt, selector: el.id ? `#${CSS.escape(el.id)}` : "" })
+          }
+        })
+        return triggers.slice(0, 4)
+      })
+
+      for (const trig of modalTriggers) {
+        if (screens.length >= maxLimit || job.status !== "running") break
+        try {
+          const clicked = await page.evaluate((sel, name) => {
+            const el = ((sel ? document.querySelector(sel) : null) ||
+              Array.from(document.querySelectorAll('button, [role="button"]')).find((b: any) =>
+                (b.textContent || "").trim().toLowerCase() === name.toLowerCase()
+              )) as HTMLElement | null
+            if (!el || typeof el.click !== "function") return false
+            el.click()
+            return true
+          }, trig.selector, trig.name)
+
+          if (clicked) {
+            await new Promise((r) => setTimeout(r, 450))
+            const modalFound = await page.evaluate(() => {
+              const dlg = document.querySelector('[role="dialog"], dialog[open], [class*="modal" i], [class*="drawer" i]')
+              return Boolean(dlg)
+            })
+
+            if (modalFound) {
+              const modalPath = `${normalizePath(page.url(), origin)}#modal-${encodeURIComponent(trig.name.toLowerCase().replace(/\s+/g, "-"))}`
+              if (!pathScreenMap.has(modalPath)) {
+                const modalId = `S${String(screenSeq++).padStart(3, "0")}`
+                const inv = await extractActionableInventory(page, layaUrl)
+                let shot = ""
+                try {
+                  const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
+                  shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+                } catch {}
+
+                const modalNode: AppScreenNode = {
+                  id: modalId,
+                  name: `${trig.name} (Modal)`,
+                  url: page.url(),
+                  path: modalPath,
+                  screenshotUrl: shot || undefined,
+                  actionableElements: inv.actionableElements,
+                  forms: inv.forms,
+                  discoveredAt: new Date().toISOString(),
+                  modalTriggerText: trig.name,
+                  pageType: "detail",
+                }
+                screens.push(modalNode)
+                pathScreenMap.set(modalPath, modalId)
+                addTransition(startId, modalId, `Open ${trig.name}`, "modal_open")
+                addTransition(modalId, startId, `Close ${trig.name}`, "modal_close")
+                mergeScreenActionsIntoLedger(job, modalNode)
+                appendLog(job, "success", `[DISCOVERY] In-Page Modal Screen ${modalId}: "${modalNode.name}" mapped with ${modalNode.actionableElements.length} elements.`)
+              }
+            }
+
+            // Close modal: press Escape and click close button if present to restore state
+            await page.keyboard.press("Escape").catch(() => {})
+            await page.evaluate(() => {
+              const closeBtn = document.querySelector('[aria-label*="close" i], button.close, [data-dismiss="modal"]') as HTMLElement | null
+              if (closeBtn) closeBtn.click()
+            }).catch(() => {})
+            await new Promise((r) => setTimeout(r, 300))
+          }
+        } catch (mErr: any) {
+          console.warn("[Modal Discovery]", mErr?.message)
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Modal Scan]", e?.message)
+    }
   }
 
   // Return to the start screen before test planning
@@ -4679,6 +4852,7 @@ export async function executeFullAppTestingJob(
         maxScreens: params.maxScreens || 10,
         credentials: sessionCreds,
         projectDir: params.projectDir,
+        layaUrl: (params as any).layaBaseUrl || (job as any).layaBaseUrl,
       })
 
       // Populate screens for UI compatibility

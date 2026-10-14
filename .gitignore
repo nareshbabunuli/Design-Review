@@ -31,3 +31,4 @@ pnpm-debug.log*
 .chrome-profile/
 .jobs/
 .codegraph/
+.opencode

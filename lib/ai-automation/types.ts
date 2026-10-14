@@ -401,6 +401,9 @@ export type AppScreenNode = {
   isNewDiscovery?: boolean
   isLoginWall?: boolean
   discoveredAt: string
+  pageType?: string
+  hasBlockingIssue?: boolean
+  isReady?: boolean
   /** One-line model-authored note on what the screen is for (autonomous runs). */
   intent?: string
   /**

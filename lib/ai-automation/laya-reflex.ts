@@ -35,7 +35,7 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
     .evaluate(() => {
       const els = Array.from(
         document.querySelectorAll(
-          'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"]',
+          'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"], [data-testid], [aria-label]',
         ),
       ).filter((el) => {
         const r = (el as HTMLElement).getBoundingClientRect()
@@ -45,11 +45,16 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
       return els.slice(0, 40).map((el) => {
         const htmlEl = el as HTMLElement
         const input = el as HTMLInputElement
+        const svg = htmlEl.querySelector("svg")
+        const svgAria = svg ? (svg.getAttribute("aria-label") || svg.querySelector("title")?.textContent || svg.getAttribute("data-icon") || svg.getAttribute("data-lucide")) : null
+        const testId = htmlEl.getAttribute("data-testid") || htmlEl.getAttribute("data-cy")
         const label = (
           htmlEl.getAttribute("aria-label") ||
+          svgAria ||
           htmlEl.innerText ||
           input.value ||
           input.placeholder ||
+          testId ||
           input.name ||
           htmlEl.getAttribute("title") ||
           el.tagName

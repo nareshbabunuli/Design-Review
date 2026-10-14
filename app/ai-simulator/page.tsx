@@ -322,8 +322,8 @@ export default function AISimulatorPage() {
   // Laya Fast System-1 Reflexes & Journey Role State
   const [journeyRole, setJourneyRole] = useState<"user" | "admin" | "client" | "editor" | "viewer" | "custom">("user")
   const [customJourneyRole, setCustomJourneyRole] = useState("")
-  const [enableLaya, setEnableLaya] = useState(false)
-  const [layaBaseUrl, setLayaBaseUrl] = useState("http://127.0.0.1:8001")
+  const [enableLaya, setEnableLaya] = useState(true)
+  const [layaBaseUrl, setLayaBaseUrl] = useState("http://127.0.0.1:8000")
   const [isLayaLive, setIsLayaLive] = useState(false)
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null)
 
@@ -1286,7 +1286,11 @@ export default function AISimulatorPage() {
     const savedEnableLaya = localStorage.getItem("enable_laya_reflexes")
     if (savedEnableLaya !== null) setEnableLaya(savedEnableLaya === "true")
     const savedLayaUrl = localStorage.getItem("laya_base_url")
-    if (savedLayaUrl) setLayaBaseUrl(savedLayaUrl)
+    if (savedLayaUrl && !savedLayaUrl.includes("8001") && !savedLayaUrl.includes("8085")) {
+      setLayaBaseUrl(savedLayaUrl)
+    } else {
+      setLayaBaseUrl("http://127.0.0.1:8000")
+    }
   }, [])
 
   const handleUpdateNebiusApiKey = (key: string) => {
@@ -1900,7 +1904,7 @@ export default function AISimulatorPage() {
           allowActions: effectiveAllowActions,
           recordVideo,
           role: journeyRole === "custom" ? customJourneyRole.trim() || "custom" : journeyRole,
-          layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
+          layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8000") : undefined,
           credentials: effectiveCreds,
           maxScreens: Math.max(maxScreens, 8),
           checkBackNavigation: checkBackNav,
@@ -2001,7 +2005,7 @@ export default function AISimulatorPage() {
           allowActions: effectiveAllowActions,
           recordVideo,
           role: effectiveRole,
-          layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8001") : undefined,
+          layaBaseUrl: enableLaya ? (layaBaseUrl.trim() || "http://127.0.0.1:8000") : undefined,
           credentials: (() => {
             if (username || password) {
               return { username: username.trim(), password: password.trim() }
@@ -2660,6 +2664,11 @@ export default function AISimulatorPage() {
                         onSaveSettingsCredentials={handleSaveSettingsCredentials}
                         onSkipSettingsCredentials={handleSkipSettingsCredentials}
                         onUnblockWorkflows={handleUnblockWorkflows}
+                        enableLaya={enableLaya}
+                        onToggleLaya={handleToggleLaya}
+                        layaBaseUrl={layaBaseUrl}
+                        onUpdateLayaUrl={handleUpdateLayaUrl}
+                        isLayaLive={isLayaLive}
                       />
                     ) : (
                       <FullAppTestingView
