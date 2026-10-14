@@ -2729,13 +2729,20 @@ export async function discoverAndMapApp(
 
   // Extend bounded state exploration to the other mapped routes and SPA tabs.
   // Route crawling discovers destinations; this pass probes reversible local states.
-  const routeStateCandidates = screens
-    .filter((screen) =>
-      screen.id !== rootScreen?.id &&
-      !screen.path.includes("#state-") &&
-      !/#(?:dialog|modal)-/i.test(screen.path)
-    )
-    .slice(0, Math.max(0, Math.min(7, maxLimit - 1)))
+  const allRouteStateCandidates = screens.filter((screen) =>
+    screen.id !== rootScreen?.id &&
+    !screen.path.includes("#state-") &&
+    !/#(?:dialog|modal)-/i.test(screen.path)
+  )
+  const routeStateCandidates = allRouteStateCandidates.slice(0, Math.max(0, Math.min(7, maxLimit - 1)))
+  if (routeStateCandidates.length < allRouteStateCandidates.length) {
+    job.domDiscoveryGraph = {
+      nodes: job.domDiscoveryGraph?.nodes || [],
+      edges: job.domDiscoveryGraph?.edges || [],
+      truncated: true,
+    }
+    appendLog(job, "warn", `[STATE DISCOVERY] Route-state exploration budget reached: explored ${routeStateCandidates.length} of ${allRouteStateCandidates.length} mapped routes/tabs; ${allRouteStateCandidates.length - routeStateCandidates.length} remain in the frontier.`)
+  }
 
   for (const routeScreen of routeStateCandidates) {
     try {
