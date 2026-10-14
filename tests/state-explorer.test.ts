@@ -12,7 +12,7 @@ test("ranked locator resolution rejects ambiguous selectors and chooses a unique
     const page = await browser.newPage();
     await page.setContent('<button>Save</button><button data-testid="save-action">Save</button>');
     const snapshot = await inspectPageDom(page);
-    const save = snapshot.elements.find((element) => element.label === "Save" && element.locators.length > 0);
+    const save = snapshot.elements.find((element) => element.label === "Save" && element.locators.some((locator) => locator.selector.includes("save-action")));
     assert.ok(save, "expected Save control to have ranked locator candidates");
     const resolved = await resolveRankedLocator(page, save.locators);
     assert.ok(resolved, "expected a unique live locator");
