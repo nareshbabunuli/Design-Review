@@ -25,6 +25,7 @@ import { discoverLocalProjectRoutes } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
 import { exploreUiStates } from "./state-explorer"
+import { inspectPageDom, resolveRankedLocator } from "./dom-first-discovery"
 import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 
 import {
@@ -1129,6 +1130,27 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
 }
 
 /**
+ * Attach semantic locator alternatives to the ordinary inventory without changing
+ * its existing labels or action identities. Ambiguous label matches are deliberately
+ * ignored; only exact selectors or a single semantic match are retained.
+ */
+async function attachRankedLocatorCandidates(
+  page: Page,
+  inventory: Awaited<ReturnType<typeof extractActionableInventory>>
+): Promise<Awaited<ReturnType<typeof extractActionableInventory>>> {
+  const snapshot = await inspectPageDom(page).catch(() => null)
+  if (!snapshot) return inventory
+  const normalize = (value: string) => value.trim().replace(/\\s+/g, " ").toLowerCase()
+  for (const action of inventory.actionableElements) {
+    const exact = snapshot.elements.find((element) => element.selector === action.selector)
+    const labelMatches = snapshot.elements.filter((element) => normalize(element.label) === normalize(action.name))
+    const match = exact || (labelMatches.length === 1 ? labelMatches[0] : undefined)
+    if (match?.locators?.length) action.locatorCandidates = match.locators
+  }
+  return inventory
+}
+
+/**
  * Systematically discovers all reachable screens in the application,
  * generating screen nodes with unique IDs (S001, S002, ...) and action transitions.
  */
@@ -2104,7 +2126,7 @@ export async function discoverAndMapApp(
       if (known) return { id: known, isNew: false }
     }
 
-    const inv = await extractActionableInventory(page)
+    const inv = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
 
     // Bounded progressive viewport discovery: include controls below the fold.
     try {
@@ -2118,7 +2140,7 @@ export async function discoverAndMapApp(
         for (let y = step; y < limit; y += step) {
           await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), y)
           await new Promise((resolve) => setTimeout(resolve, 120))
-          const belowFold = await extractActionableInventory(page)
+          const belowFold = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
           for (const element of belowFold.actionableElements) {
             if (!inv.actionableElements.some((existing) =>
               (existing.selector && existing.selector === element.selector) ||
@@ -2523,7 +2545,7 @@ export async function discoverAndMapApp(
     maxStates: 30,
     maxScrollSteps: 3,
     onState: async (state) => {
-      const inventory = await extractActionableInventory(page)
+      const inventory = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
       let screenshotUrl: string | undefined
       try {
         const buffer = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
@@ -2627,6 +2649,7 @@ export async function discoverAndMapApp(
         actionKey: undefined,
         interactionConfidence: element.risk === "safe" ? 0.9 : element.risk === "review" ? 0.55 : 0.25,
         discoveryReason: ["bounded-state-explorer", `state:${state.signature}`, `risk:${element.risk}`],
+        locatorCandidates: element.locators,
         isInteractive: true,
       })
       knownActionKeys.add(key)
@@ -2757,7 +2780,7 @@ export async function discoverAndMapApp(
         maxStates: 12,
         maxScrollSteps: 2,
         onState: async (state) => {
-          const inventory = await extractActionableInventory(page)
+          const inventory = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
           let screenshotUrl: string | undefined
           try {
             const buffer = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
@@ -2846,6 +2869,7 @@ export async function discoverAndMapApp(
             href: element.href,
             interactionConfidence: 0.9,
             discoveryReason: ["bounded-state-explorer", `state:${state.signature}`, `risk:${element.risk}`],
+            locatorCandidates: element.locators,
             isInteractive: true,
           })
         }
@@ -3606,6 +3630,23 @@ export async function executeStructuredTestPlan(
             } else {
               await new Promise((r) => setTimeout(r, 250))
             }
+          }
+        }
+
+        // Resolve the best currently-unique locator for the planned action.
+        // This avoids clicking a stale structural selector after the UI re-rendered.
+        const plannedAction = targetScreen.actionableElements.find((candidate) =>
+          (Boolean(step.actionKey) && candidate.actionKey === step.actionKey) ||
+          (candidate.name.trim().toLowerCase() === step.targetName.trim().toLowerCase() &&
+            (!step.targetSelector || candidate.selector === step.targetSelector))
+        )
+        if (plannedAction?.locatorCandidates?.length) {
+          const resolved = await resolveRankedLocator(page, plannedAction.locatorCandidates)
+          if (resolved) {
+            step.targetSelector = resolved.selector
+            plannedAction.selector = resolved.selector
+          } else {
+            appendLog(job, "warn", '[LOCATOR] Ranked locator candidates no longer resolve uniquely for "' + step.targetName + '"; retaining the original selector for the normal safety checks.')
           }
         }
       }
