@@ -160,6 +160,26 @@ function getSmartBezier(
   const dx = toPos.x - fromPos.x
   const dy = toPos.y - fromPos.y
 
+  // Self-loop (intra-screen action / click returning to same screen)
+  if (Math.abs(dx) < 2 && Math.abs(dy) < 2) {
+    x1 = fromPos.x + width * 0.75
+    y1 = fromPos.y
+    x2 = fromPos.x + width
+    y2 = fromPos.y + height * 0.25
+    const loopOffset = 50
+    cp1x = x1
+    cp1y = y1 - loopOffset
+    cp2x = x2 + loopOffset
+    cp2y = y2
+    const midX = fromPos.x + width + loopOffset * 0.45
+    const midY = fromPos.y - loopOffset * 0.45
+    return {
+      path: `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`,
+      midX,
+      midY,
+    }
+  }
+
   if (Math.abs(dx) >= Math.abs(dy)) {
     // Horizontal dominant
     if (dx >= 0) {
@@ -174,16 +194,17 @@ function getSmartBezier(
       cp2x = x2 - curveOffset
       cp2y = y2
     } else {
-      // Source is right of Target -> Left anchor to Right anchor
+      // Source is right of Target -> Backward return path curves gracefully underneath
       x1 = fromPos.x
-      y1 = fromPos.y + height / 2
+      y1 = fromPos.y + height * 0.75
       x2 = toPos.x + width
-      y2 = toPos.y + height / 2
+      y2 = toPos.y + height * 0.75
       const curveOffset = Math.max(60, Math.abs(dx) * 0.45)
+      const arcDroop = 45
       cp1x = x1 - curveOffset
-      cp1y = y1
+      cp1y = y1 + arcDroop
       cp2x = x2 + curveOffset
-      cp2y = y2
+      cp2y = y2 + arcDroop
     }
   } else {
     // Vertical dominant
@@ -492,6 +513,25 @@ export default function TestFlowGraph({
     )
   }, [steps, plan?.steps, inspectingNodeId, inspectingScreen, inspectingNode])
 
+  // Selected operation within the screen inspector
+  const [selectedOperationId, setSelectedOperationId] = useState<string | null>(null)
+
+  // Reset selected operation when changing screen
+  useEffect(() => {
+    setSelectedOperationId(null)
+  }, [inspectingNodeId])
+
+  const activeOperation = useMemo(() => {
+    if (!screenOperations || screenOperations.length === 0) return null
+    if (!selectedOperationId) return screenOperations[0]
+    return screenOperations.find((op) => op.id === selectedOperationId) || screenOperations[0]
+  }, [screenOperations, selectedOperationId])
+
+  const activeScreenshot =
+    activeOperation?.screenshotUrl ||
+    inspectingNode?.screenshotUrl ||
+    inspectingScreen?.screenshotUrl
+
   const filteredScreenOperations = useMemo(() => {
     if (operationFilter === "all") return screenOperations
     return screenOperations.filter((op) => op.status === operationFilter)
@@ -698,6 +738,16 @@ export default function TestFlowGraph({
               >
                 <path d="M0,2 L8,5 L0,8 z" fill="#6366f1" />
               </marker>
+              <marker
+                id="figma-arrowhead-return"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="5"
+                orient="auto"
+              >
+                <path d="M0,2 L8,5 L0,8 z" fill="#10b981" />
+              </marker>
               <filter id="glow-indigo" x="-20%" y="-20%" width="140%" height="140%">
                 <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#6366f1" floodOpacity="0.4" />
               </filter>
@@ -707,6 +757,8 @@ export default function TestFlowGraph({
               const fromPos = nodePositions[e.from]
               const toPos = nodePositions[e.to]
               if (!fromPos || !toPos || e.from === e.to) return null
+
+              const isReturn = /back|return|close/i.test(e.label) || fromPos.x > toPos.x
 
               const { path, midX, midY } = getSmartBezier(
                 fromPos,
@@ -723,42 +775,53 @@ export default function TestFlowGraph({
                   <path
                     d={path}
                     fill="none"
-                    stroke="#4338ca"
+                    stroke={isReturn ? "#064e3b" : "#4338ca"}
                     strokeOpacity="0.3"
                     strokeWidth="4"
                   />
 
-                  {/* Main Bezier Connecting Line */}
+                  {/* Main Bezier Connecting Line (Return edges dashed emerald) */}
                   <path
                     d={path}
                     fill="none"
-                    stroke="#6366f1"
-                    strokeOpacity="0.85"
+                    stroke={isReturn ? "#10b981" : "#6366f1"}
+                    strokeOpacity={isReturn ? 0.9 : 0.85}
                     strokeWidth="2"
-                    markerEnd="url(#figma-arrowhead)"
+                    strokeDasharray={isReturn ? "5 3" : undefined}
+                    markerEnd={isReturn ? "url(#figma-arrowhead-return)" : "url(#figma-arrowhead)"}
                   />
 
                   {/* Midpoint Pill Label with Backdrop so text is never hidden */}
-                  <g transform={`translate(${midX}, ${midY})`} className="pointer-events-auto">
+                  <g
+                    transform={`translate(${midX}, ${midY})`}
+                    className="pointer-events-auto cursor-pointer group/edge"
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      setInspectingNodeId(e.to)
+                      setInspectorSubTab("operations")
+                      if (onSelectScreen) onSelectScreen(e.to)
+                    }}
+                  >
                     <rect
                       x={-(labelText.length * 3.3) - 8}
                       y="-11"
                       width={labelText.length * 6.6 + 16}
                       height="20"
                       rx="6"
-                      fill="#0f172a"
-                      stroke="#4338ca"
+                      fill={isReturn ? "#064e3b" : "#0f172a"}
+                      stroke={isReturn ? "#059669" : "#4338ca"}
                       strokeWidth="1"
-                      className="shadow-md"
+                      className="shadow-md group-hover/edge:stroke-emerald-400 group-hover/edge:fill-emerald-950/80 transition-colors"
                     />
                     <text
                       x="0"
                       y="3"
                       textAnchor="middle"
-                      fill="#c7d2fe"
+                      fill={isReturn ? "#6ee7b7" : "#c7d2fe"}
                       fontSize="9.5"
                       fontFamily="ui-monospace, monospace"
                       fontWeight="600"
+                      className="group-hover/edge:fill-white transition-colors"
                     >
                       {labelText}
                     </text>
@@ -853,11 +916,21 @@ export default function TestFlowGraph({
                 </div>
 
                 {/* 3. Card Footer */}
-                <div className="px-2.5 py-1.5 bg-slate-950/90 border-t border-slate-800/80 flex items-center justify-between text-[10px] shrink-0">
-                  <span className="text-slate-400 font-mono truncate max-w-[130px]">
-                    {node.url ? new URL(node.url).pathname || "/" : "/"}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 font-semibold border border-indigo-800/40">
+                <div className="px-2.5 py-1.5 bg-slate-950/90 border-t border-slate-800/80 flex items-center justify-between text-[10px] shrink-0 gap-1">
+                  <div className="flex flex-col min-w-0 max-w-[135px]">
+                    <span className="text-slate-400 font-mono truncate text-[10px]">
+                      {node.url ? new URL(node.url).pathname || "/" : "/"}
+                    </span>
+                    {(node.componentLocation || matchedScreen?.componentLocation) && (
+                      <span
+                        className="text-[9px] font-mono text-purple-300 truncate"
+                        title={node.componentLocation || matchedScreen?.componentLocation}
+                      >
+                        📄 {(node.componentLocation || matchedScreen?.componentLocation)?.split("/").slice(-2).join("/")}
+                      </span>
+                    )}
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 font-semibold border border-indigo-800/40 shrink-0">
                     {elementsCount > 0 ? `${elementsCount} elements` : "View Screen"}
                   </span>
                 </div>
@@ -964,20 +1037,37 @@ export default function TestFlowGraph({
               <div className="lg:col-span-5 p-4 bg-slate-950/60 border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col justify-between overflow-y-auto custom-scrollbar space-y-3">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-300 uppercase tracking-wider text-[10px]">
-                      Big Screen Card
-                    </span>
-                    {inspectingNode.screenshotUrl && (
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold text-slate-300 uppercase tracking-wider text-[10px] truncate">
+                        {activeOperation
+                          ? `Screen: ${activeOperation.targetName}`
+                          : "Big Screen Card"}
+                      </span>
+                      {activeOperation && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded font-mono font-bold text-[9px] uppercase shrink-0 ${
+                            activeOperation.status === "passed"
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : activeOperation.status === "failed"
+                              ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                              : "bg-slate-800 text-slate-300 border border-slate-700"
+                          }`}
+                        >
+                          {activeOperation.status}
+                        </span>
+                      )}
+                    </div>
+                    {activeScreenshot && (
                       <button
                         type="button"
                         onClick={() => {
                           if (onViewScreenshot) {
-                            onViewScreenshot(inspectingNode.screenshotUrl!)
+                            onViewScreenshot(activeScreenshot!)
                           } else {
-                            setEvidencePreviewModal(inspectingNode.screenshotUrl!)
+                            setEvidencePreviewModal(activeScreenshot!)
                           }
                         }}
-                        className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition cursor-pointer"
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition cursor-pointer shrink-0"
                       >
                         <Eye className="h-3 w-3" />
                         <span>Enlarge Screenshot</span>
@@ -987,20 +1077,20 @@ export default function TestFlowGraph({
 
                   {/* Big Card Image Frame */}
                   <div className="rounded-xl overflow-hidden border border-slate-700/80 bg-slate-950 shadow-lg relative group aspect-[4/3] flex items-center justify-center">
-                    {inspectingNode.screenshotUrl ? (
+                    {activeScreenshot ? (
                       <>
                         <img
-                          src={inspectingNode.screenshotUrl}
-                          alt={inspectingNode.title}
+                          src={activeScreenshot}
+                          alt={activeOperation ? activeOperation.targetName : inspectingNode.title}
                           className="w-full h-full object-cover object-top"
                         />
                         <button
                           type="button"
                           onClick={() => {
                             if (onViewScreenshot) {
-                              onViewScreenshot(inspectingNode.screenshotUrl!)
+                              onViewScreenshot(activeScreenshot!)
                             } else {
-                              setEvidencePreviewModal(inspectingNode.screenshotUrl!)
+                              setEvidencePreviewModal(activeScreenshot!)
                             }
                           }}
                           className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold cursor-pointer"
@@ -1151,18 +1241,22 @@ export default function TestFlowGraph({
                           const isPassed = op.status === "passed"
                           const isFailed = op.status === "failed"
                           const isRunning = op.status === "running"
+                          const isSelected = activeOperation?.id === op.id
 
                           return (
                             <div
                               key={op.id}
-                              className={`p-3 rounded-xl border text-xs space-y-1.5 transition ${
-                                isPassed
-                                  ? "bg-emerald-950/20 border-emerald-800/40"
+                              onClick={() => setSelectedOperationId(op.id)}
+                              className={`p-3 rounded-xl border text-xs space-y-1.5 transition cursor-pointer ${
+                                isSelected
+                                  ? "bg-indigo-950/50 border-indigo-500 ring-2 ring-indigo-500/60 shadow-lg shadow-indigo-950"
+                                  : isPassed
+                                  ? "bg-emerald-950/20 border-emerald-800/40 hover:border-emerald-600/60"
                                   : isFailed
-                                  ? "bg-rose-950/20 border-rose-800/40"
+                                  ? "bg-rose-950/20 border-rose-800/40 hover:border-rose-600/60"
                                   : isRunning
                                   ? "bg-indigo-950/30 border-indigo-500 shadow-md animate-pulse"
-                                  : "bg-slate-950/60 border-slate-800"
+                                  : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
                               }`}
                             >
                               <div className="flex items-center justify-between gap-2">
@@ -1189,6 +1283,11 @@ export default function TestFlowGraph({
                                 </div>
 
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                  {isSelected && (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-600 text-white flex items-center gap-1 shadow-xs">
+                                      <Eye className="h-2.5 w-2.5" /> SCREEN
+                                    </span>
+                                  )}
                                   {isPassed && (
                                     <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                                       <CheckCircle2 className="h-3 w-3" /> PASS

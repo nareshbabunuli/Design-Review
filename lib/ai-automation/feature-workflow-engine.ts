@@ -25,6 +25,7 @@ import {
   extractActionableInventory,
   createDummyFileBuffer,
 } from "./full-app-engine"
+import { discoverLocalProjectRoutes } from "./discover-routes"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
 import { SessionVideoRecorder } from "./visual-recorder"
 
@@ -476,6 +477,8 @@ export function buildWorkflowTestPlan(
       id: `TEST-${String(stepIdx++).padStart(3, "0")}`,
       screenId: targetScreen.id,
       screenName: targetScreen.name,
+      url: targetScreen.url,
+      componentLocation: targetScreen.componentLocation || targetScreen.sourceFile,
       stepIndex: i + 1,
       actionType,
       targetName: act,
@@ -619,12 +622,28 @@ export async function executeFeatureWorkflowJob(
       job.currentScreenshotUrl = s1Shot
     } catch {}
 
+    // Discover local routes and map component locations
+    const fsRoutes = discoverLocalProjectRoutes(job.targetUrl, params.projectDir)
+    const getComponentLocationForPath = (p: string) => {
+      const norm = p === "/" ? "/" : p.replace(/\/+$/, "")
+      const found = fsRoutes.find((r) => {
+        const rPath = r.path === "/" ? "/" : r.path.replace(/\/+$/, "")
+        return rPath === norm || norm.startsWith(rPath)
+      })
+      return found?.file
+    }
+
+    const s1Path = normalizePath(page.url(), new URL(job.targetUrl).origin)
+    const s1CompLoc = getComponentLocationForPath(s1Path)
+
     const screenNodes: AppScreenNode[] = [
       {
         id: "S001",
-        name: deriveScreenName(normalizePath(page.url(), new URL(job.targetUrl).origin), initialInventory.heading, initialInventory.modalTitle) || "Dashboard",
+        name: deriveScreenName(s1Path, initialInventory.heading, initialInventory.modalTitle) || "Dashboard",
         url: page.url(),
-        path: normalizePath(page.url(), new URL(job.targetUrl).origin),
+        path: s1Path,
+        componentLocation: s1CompLoc,
+        sourceFile: s1CompLoc,
         screenshotUrl: s1Shot || undefined,
         actionableElements: initialInventory.actionableElements,
         forms: initialInventory.forms,
@@ -665,6 +684,20 @@ export async function executeFeatureWorkflowJob(
       saveJob(job)
 
       appendLog(job, "info", `▶ [${step.id}] Action: ${step.targetName}`)
+
+      // Ensure browser is on target step screen URL before executing action (prevent blocking)
+      const stepTargetUrl = step.url || screenNodes.find((s) => s.id === step.screenId)?.url
+      if (stepTargetUrl) {
+        try {
+          const dest = new URL(stepTargetUrl, job.targetUrl)
+          const current = new URL(page.url())
+          if (dest.origin === current.origin && dest.pathname !== current.pathname) {
+            appendLog(job, "info", `Restoring target screen before step execution: ${dest.pathname}`)
+            await page.goto(dest.href, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null)
+            await new Promise((r) => setTimeout(r, 600))
+          }
+        } catch {}
+      }
 
       try {
         let actionSuccess = false
@@ -745,6 +778,7 @@ export async function executeFeatureWorkflowJob(
         // 3. CLICK ACTION
         else if (step.actionType === "click") {
           actionSuccess = await page.evaluate((txt) => {
+            const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
             const clickables = Array.from(
               document.querySelectorAll('button, a, [role="button"], input[type="submit"]')
             ) as HTMLElement[]
@@ -752,14 +786,17 @@ export async function executeFeatureWorkflowJob(
             // Try to match specific text
             let target = clickables.find((c) => {
               const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+              if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
               return cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15)))
             })
 
             // Or find primary action button
-            if (!target) {
-              target = clickables.find((c) =>
-                /create|add|new|save|submit|register|sign up|continue/i.test(c.textContent || "")
-              )
+            if (!target && !isExplicitLogout) {
+              target = clickables.find((c) => {
+                const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
+                return /create|add|new|save|submit|register|sign up|continue/i.test(cText)
+              })
             }
 
             if (target && target.offsetParent !== null) {
@@ -817,17 +854,21 @@ export async function executeFeatureWorkflowJob(
           document.getElementById("__antigravity_overlay_root__")?.remove()
         }).catch(() => {})
 
-        // STEP 8: Handle newly discovered paths
+        // STEP 8: Handle newly discovered paths or completion loops
         const currentPath = normalizePath(page.url(), origin)
+        const isLogoutAction = /log\s*out|sign\s*out|log\s*off/i.test(step.targetName)
         const existingNode = screenNodes.find((n) => n.path === currentPath)
         if (!existingNode) {
           const inv = await extractActionableInventory(page)
           const newScreenId = `S${String(screenSeq++).padStart(3, "0")}`
+          const compLoc = getComponentLocationForPath(currentPath)
           const newNode: AppScreenNode = {
             id: newScreenId,
             name: deriveScreenName(currentPath, inv.heading, inv.modalTitle),
             url: page.url(),
             path: currentPath,
+            componentLocation: compLoc,
+            sourceFile: compLoc,
             screenshotUrl: shot || undefined,
             actionableElements: inv.actionableElements,
             forms: inv.forms,
@@ -837,7 +878,7 @@ export async function executeFeatureWorkflowJob(
           screenNodes.push(newNode)
           workflowPlan.screens = [...screenNodes]
 
-          // Add transition to workflow map
+          // Add forward transition
           workflowPlan.transitions.push({
             id: `TRANS-NEW-${screenNodes.length}`,
             fromScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
@@ -845,8 +886,30 @@ export async function executeFeatureWorkflowJob(
             action: step.targetName,
             actionType: "click",
           })
+          // Add return journey transition
+          workflowPlan.transitions.push({
+            id: `TRANS-RET-${screenNodes.length}`,
+            fromScreenId: newScreenId,
+            toScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
+            action: "Return / Back ↩️",
+            actionType: "click",
+          })
           job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
           appendLog(job, "info", `✨ [DISCOVERY] Workflow navigated to relevant new screen: "${newNode.name}" (${newNode.id})`)
+        } else if (isLogoutAction || /login|sign[-_ ]?in/i.test(existingNode.path) || /login|sign[-_ ]?in/i.test(existingNode.name)) {
+          // If action was logout or landed back on Login screen, map workflow loop to complete cycle!
+          const fromId = step.screenId || screenNodes[screenNodes.length - 1]?.id || "S001"
+          if (fromId !== existingNode.id && !workflowPlan.transitions.some((t) => t.fromScreenId === fromId && t.toScreenId === existingNode.id && /log\s*out|sign\s*out/i.test(t.action))) {
+            workflowPlan.transitions.push({
+              id: `TRANS-LOOP-${Date.now()}`,
+              fromScreenId: fromId,
+              toScreenId: existingNode.id,
+              action: step.targetName || "Log out (Return to Login)",
+              actionType: "navigation",
+            })
+            job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
+            appendLog(job, "success", `🔄 [WORKFLOW COMPLETE] Mapped "${fromId}" back to "${existingNode.name}" (${existingNode.id}) via "${step.targetName || 'Log out'}". Workflow completed!`)
+          }
         }
 
         step.status = actionSuccess ? "passed" : "failed"

@@ -72,6 +72,8 @@ import { SettingsModal } from "@/components/design-review/settings-modal"
 import TestFlowGraph from "@/components/design-review/test-flow-graph"
 import FullAppTestingView from "@/components/design-review/full-app-testing-view"
 import FeatureWorkflowView from "@/components/design-review/feature-workflow-view"
+import AiConfigPanel from "@/components/design-review/ai-config-panel"
+import MovableAiConfigModal from "@/components/design-review/movable-ai-config-modal"
 import ActionLedger from "@/components/design-review/action-ledger"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import type {
@@ -200,14 +202,35 @@ export default function AISimulatorPage() {
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const [isSimulatorFullscreen, setIsSimulatorFullscreen] = useState(false)
 
-  // AI Automation Bot Side Dock visibility: open by default on desktop (lg+), closed on mobile (< 1024px)
-  const [isBotPanelOpen, setIsBotPanelOpen] = useState(false)
+  // Dedicated Movable AI Vision & Engine Config modal state
+  const [isAiConfigModalOpen, setIsAiConfigModalOpen] = useState(false)
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth >= 1024) {
-      setIsBotPanelOpen(true)
+  // Movable split pane width state between Phone Simulator and Stage
+  const [splitWidth, setSplitWidth] = useState(500)
+  const isDraggingSplitterRef = useRef(false)
+
+  const handleSplitterMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingSplitterRef.current = true
+    const startX = e.clientX
+    const startWidth = splitWidth
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingSplitterRef.current) return
+      const delta = moveEvent.clientX - startX
+      const newWidth = Math.max(340, Math.min(window.innerWidth - 380, startWidth + delta))
+      setSplitWidth(newWidth)
     }
-  }, [])
+
+    const onMouseUp = () => {
+      isDraggingSplitterRef.current = false
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+    }
+
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
+  }
 
   // Automation Bot Configuration State
   const [targetUrl, setTargetUrl] = useState("http://localhost:3001")
@@ -335,7 +358,6 @@ export default function AISimulatorPage() {
   const [isSubmittingSettings, setIsSubmittingSettings] = useState(false)
 
   // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
-  // Main stage layout mode: "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage" | "chat"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
 
@@ -455,6 +477,9 @@ export default function AISimulatorPage() {
         setWorkspaceLayoutMode("split")
       }
     }
+    if (tabId === "map" && !currentJob) {
+      setTestingMode("full_app")
+    }
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href)
       if (tabId === "simulator") {
@@ -466,7 +491,7 @@ export default function AISimulatorPage() {
       }
       window.history.replaceState(null, "", url.toString())
     }
-  }, [workspaceLayoutMode])
+  }, [workspaceLayoutMode, currentJob])
 
   const handleOpenMapPage = useCallback(() => {
     handleSelectWorkspaceTab("map")
@@ -491,20 +516,8 @@ export default function AISimulatorPage() {
 
     return [
       { id: "simulator", label: "Simulator", icon: Smartphone },
-      { id: "map", label: "Figma-Style App Map", icon: MapIcon, count: activePlan?.screens.length || 0 },
-      { id: "screens", label: "Discovered Screens", icon: Layers, count: activePlan?.screens.length || 0 },
-      { id: "plan", label: "Structured Test Plan", icon: ListChecks, count: activePlan?.steps.length || 0 },
-      { id: "execution", label: "Live Execution & Evidence", icon: Activity, isLive: currentJob?.status === "running" },
-      { id: "files", label: "Test Files Provisioning", icon: FileUp, count: activePlan?.requiredFileTypes.length || 0 },
-      {
-        id: "coverage",
-        label: "Coverage & Issues",
-        icon: ShieldAlert,
-        count:
-          currentJob?.issues && currentJob.issues.length > 0
-            ? `${currentJob.issues.length} bugs`
-            : `${coveragePct}%`,
-      },
+      { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: currentJob?.status === "running" },
+      { id: "map", label: "Full App Stage & Map", icon: MapIcon, count: activePlan?.screens.length || 0 },
     ]
   }, [activePlan, currentJob])
 
@@ -1186,6 +1199,32 @@ export default function AISimulatorPage() {
       console.error("Failed to skip settings credentials:", err)
     } finally {
       setIsSubmittingSettings(false)
+    }
+  }
+
+  const handleUnblockWorkflows = async (options: {
+    mode: "synthetic_data" | "credentials" | "retry" | "skip"
+    username?: string
+    password?: string
+    screenId?: string
+  }) => {
+    if (!currentJob?.id) return
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: currentJob.id,
+          action: "unblock_workflows",
+          ...options,
+        }),
+      })
+      const data = await res.json()
+      if (data.job) {
+        setCurrentJob(data.job)
+      }
+    } catch (err) {
+      console.error("Failed to unblock workflows:", err)
     }
   }
 
@@ -2210,7 +2249,9 @@ export default function AISimulatorPage() {
                 {/* Workspace Stage Switching Tabs */}
                 {workspaceTabs.map((tab) => {
                   const Icon = tab.icon
-                  const isActive = stageViewMode === tab.id
+                  const isActive =
+                    stageViewMode === tab.id ||
+                    (tab.id === "map" && ["map", "screens", "plan", "execution", "files", "coverage"].includes(stageViewMode))
                   return (
                     <button
                       key={tab.id}
@@ -2259,18 +2300,16 @@ export default function AISimulatorPage() {
                   <Terminal className="h-5 w-5" />
                 </button>
 
-                {/* Toggle AI Bot Cockpit */}
+                {/* Open Movable AI Vision & Engine Settings Modal */}
                 <button
                   type="button"
-                  onClick={() => setIsBotPanelOpen((prev) => !prev)}
+                  onClick={() => setIsAiConfigModalOpen((prev) => !prev)}
                   className={`p-2 rounded-lg transition cursor-pointer relative group ${
-                    isBotPanelOpen
-                      ? "text-indigo-400 bg-indigo-600/10"
-                      : currentJob?.status === "running"
-                      ? "text-amber-400 animate-pulse"
+                    isAiConfigModalOpen
+                      ? "text-purple-400 bg-purple-600/10"
                       : "text-slate-500 hover:text-slate-300"
                   }`}
-                  title={isBotPanelOpen ? "Close AI Testing Bot Dock" : "Open AI Testing Bot Dock"}
+                  title="Open AI Vision & Engine Settings (Movable Window)"
                 >
                   <Sparkles className="h-5 w-5" />
                 </button>
@@ -2403,22 +2442,6 @@ export default function AISimulatorPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setWorkspaceLayoutMode("device")
-                      setStageViewMode("simulator")
-                    }}
-                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
-                      workspaceLayoutMode === "device" && stageViewMode === "simulator"
-                        ? "bg-indigo-600 text-white shadow-xs font-semibold"
-                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
-                    }`}
-                    title="View Live Phone Simulator in full width"
-                  >
-                    <Smartphone className="h-3.5 w-3.5" />
-                    <span>Live Device</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
                       setWorkspaceLayoutMode("split")
                       if (stageViewMode === "simulator") setStageViewMode("map")
                     }}
@@ -2452,6 +2475,31 @@ export default function AISimulatorPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAiConfigModalOpen(true)}
+                    className="px-2.5 py-1 rounded-md bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    title="Configure AI Vision Model, Provider, and API keys (Movable Window)"
+                  >
+                    <Settings className="h-3.5 w-3.5 text-purple-400" />
+                    <span>AI Settings</span>
+                    <span className="text-[10px] text-purple-300 font-mono hidden sm:inline">
+                      ({aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()})
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsTab("account")
+                      setIsSettingsOpen(true)
+                    }}
+                    className="p-1.5 rounded-md hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+                    title="Open Project & Application Settings"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+
                   {currentJob?.id && (
                     <>
                       <button
@@ -2505,11 +2553,13 @@ export default function AISimulatorPage() {
               {/* Main Content Workspace Panes */}
               <div className="flex-1 w-full h-full flex overflow-hidden relative">
                 {/* 1. Live Device Pane: shown in "device" or "split" mode */}
+                {/* 1. Live Device Pane: shown in "device" or "split" mode */}
                 {(workspaceLayoutMode === "device" || workspaceLayoutMode === "split") && (
                   <div
+                    style={workspaceLayoutMode === "split" ? { width: `${splitWidth}px` } : undefined}
                     className={`${
                       workspaceLayoutMode === "split"
-                        ? "w-full lg:w-[480px] xl:w-[540px] 2xl:w-[600px] shrink-0 border-r border-slate-800 flex flex-col h-full overflow-hidden"
+                        ? "shrink-0 border-r border-slate-800 flex flex-col h-full overflow-hidden"
                         : "flex-1 h-full flex flex-col overflow-hidden"
                     }`}
                   >
@@ -2546,10 +2596,21 @@ export default function AISimulatorPage() {
                   </div>
                 )}
 
+                {/* Movable Splitter handle between Live Phone and Stage */}
+                {workspaceLayoutMode === "split" && (
+                  <div
+                    onMouseDown={handleSplitterMouseDown}
+                    className="w-1.5 hover:w-2.5 bg-slate-800 hover:bg-indigo-500 active:bg-indigo-600 transition-all cursor-col-resize shrink-0 z-30 flex items-center justify-center group select-none"
+                    title="Drag to resize Live Phone vs Stage view"
+                  >
+                    <div className="w-0.5 h-8 bg-slate-600 group-hover:bg-white rounded-full transition-colors" />
+                  </div>
+                )}
+
                 {/* 2. Stage View Pane (Map / Screens / Plan / Execution): shown in "stage" or "split" mode */}
                 {(workspaceLayoutMode === "stage" || workspaceLayoutMode === "split") && (
                   <div className="flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0">
-                    {testingMode === "feature_workflow" ? (
+                    {stageViewMode === "chat" || testingMode === "feature_workflow" ? (
                       <FeatureWorkflowView
                         job={currentJob}
                         isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
@@ -2566,6 +2627,39 @@ export default function AISimulatorPage() {
                         fullPageView={true}
                         isFullStage={workspaceLayoutMode === "stage"}
                         onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
+                        aiProvider={aiProvider}
+                        onUpdateAiProvider={handleUpdateAiProvider}
+                        nebiusApiKey={nebiusApiKey}
+                        onUpdateNebiusApiKey={handleUpdateNebiusApiKey}
+                        selectedAiModel={selectedAiModel}
+                        onUpdateAiModel={handleUpdateAiModel}
+                        omniRouterBaseUrl={omniRouterBaseUrl}
+                        onUpdateOmniRouterUrl={handleUpdateOmniRouterUrl}
+                        omniRouterKey={omniRouterKey}
+                        onUpdateOmniRouterKey={handleUpdateOmniRouterKey}
+                        omniRouterModel={omniRouterModel}
+                        onUpdateOmniRouterModel={handleUpdateOmniRouterModel}
+                        localAiBaseUrl={localAiBaseUrl}
+                        onUpdateLocalBaseUrl={handleUpdateLocalBaseUrl}
+                        isTestingAiConnection={isTestingAiConnection}
+                        onTestAiConnection={handleTestAiConnection}
+                        aiConnectionTestResult={aiConnectionTestResult}
+                        onOpenAiConfig={() => setIsAiConfigModalOpen(true)}
+                        onCaptureCurrentScreen={handleCaptureCurrentScreen}
+                        selectedProjectDir={selectedProjectDir}
+                        onSelectProjectDir={setSelectedProjectDir}
+                        availableProjects={availableProjects}
+                        discoveredRoutes={discoveredRoutes}
+                        onRescanRoutes={fetchLocalRoutes}
+                        isScanningRoutes={isScanningRoutes}
+                        onGenerateTestData={handleGenerateTestData}
+                        isGeneratingTestData={isGeneratingTestData}
+                        onNavigateUrl={handleSimulatorUrlChange}
+                        onConfirmVerification={handleConfirmVerification}
+                        onSkipVerification={handleSkipVerification}
+                        onSaveSettingsCredentials={handleSaveSettingsCredentials}
+                        onSkipSettingsCredentials={handleSkipSettingsCredentials}
+                        onUnblockWorkflows={handleUnblockWorkflows}
                       />
                     ) : (
                       <FullAppTestingView
@@ -2575,7 +2669,7 @@ export default function AISimulatorPage() {
                         onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onJobUpdate={(updated) => setCurrentJob(updated)}
-                        activeSubTab={stageViewMode === "simulator" || stageViewMode === "chat" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         fullPageView={true}
                         hideSubNav={false}
@@ -2593,1107 +2687,28 @@ export default function AISimulatorPage() {
               </div>
             </div>
 
-            {/* 2. DOCKED AI AUTOMATION TESTING COCKPIT (Slides out from right) */}
-            {isBotPanelOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-xs lg:hidden"
-                  onClick={() => setIsBotPanelOpen(false)}
-                />
-                <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-md lg:static lg:z-20 lg:w-[460px] lg:max-w-none shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col h-full shadow-2xl overflow-hidden animate-in slide-in-from-right-6 duration-200">
-                {/* Dock Header */}
-                <div className="h-11 px-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between shrink-0">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-indigo-400" />
-                    <span className="text-xs font-bold text-white tracking-tight">AI Testing Bot & Audit</span>
-                    {currentJob && (
-                      <span
-                        className={`px-1.5 py-0.2 rounded text-[10px] font-bold uppercase ${
-                          currentJob.status === "running"
-                            ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                            : currentJob.status === "completed"
-                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {currentJob.status}
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsBotPanelOpen(false)}
-                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                    title="Hide AI Bot panel" aria-label="Hide AI Bot panel"
-                  >
-                    <PanelRightClose className="h-4 w-4" />
-                  </button>
-                </div>
-
-                {/* Dock Tab Selector: Focused Chat & AI Config */}
-                <div className="grid grid-cols-2 p-1.5 bg-slate-900 border-b border-slate-800 text-[11px] font-semibold shrink-0 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setActiveDockTab("chat")}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      activeDockTab === "chat"
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    <span>Chat</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveDockTab("config")}
-                    className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition cursor-pointer ${
-                      activeDockTab === "config"
-                        ? "bg-purple-600 text-white shadow-sm"
-                        : "text-purple-400 hover:text-white hover:bg-purple-950/40"
-                    }`}
-                  >
-                    <Settings className="h-3.5 w-3.5 text-purple-400" />
-                    <span>AI Config</span>
-                  </button>
-                </div>
-
-                {/* TAB 1: CHAT COMMANDS */}
-                {activeDockTab === "chat" && (
-                  <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
-                    {/* Chat Tab Top Bar: Provider badge & Model info + Direct Config Button + Clear Chat */}
-                    <div className="px-3 py-1.5 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between text-[11px] shrink-0 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setActiveDockTab("config")}
-                        className="flex items-center gap-1.5 min-w-0 px-2 py-1 rounded-md bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/50 text-left transition cursor-pointer group"
-                        title="Configure Nebius Token Factory, OmniRouter, or local AI"
-                      >
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                        <span className="font-semibold text-white truncate text-[10px]">
-                          {aiProvider === "omnirouter"
-                            ? "OmniRouter"
-                            : aiProvider === "local"
-                            ? "Local Ollama"
-                            : "Nebius Token Factory"}
-                        </span>
-                        <span className="text-[10px] text-purple-300 font-mono truncate max-w-[120px]">
-                          ({aiProvider === "omnirouter" ? omniRouterModel : selectedAiModel.split("/").pop()})
-                        </span>
-                        <Settings className="h-3 w-3 text-purple-400 opacity-70 group-hover:opacity-100 transition-opacity ml-0.5 shrink-0" />
-                      </button>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setChatHistory([
-                              {
-                                id: `welcome-${Date.now()}`,
-                                sender: "agent",
-                                text: "Chat history cleared. Send a prompt or run a quick command to start testing.",
-                                timestamp: new Date().toISOString(),
-                                status: "completed",
-                              },
-                            ])
-                          }}
-                          className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
-                          title="Clear chat history"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-
-                      {/* Chat messages stream */}
-                      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scrollbar text-xs">
-                        {chatHistory.map((msg) => {
-                          const isUser = msg.sender === "user"
-                          return (
-                            <div
-                              key={msg.id}
-                              className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
-                            >
-                              <div className="flex items-center gap-1.5 mb-1 px-1">
-                                {isUser ? (
-                                  <>
-                                    <span className="text-[10px] text-slate-500 font-mono">
-                                      {msg.timestamp?.slice(11, 19) || ""}
-                                    </span>
-                                    <span className="text-[10px] font-semibold text-slate-300">You</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="w-4 h-4 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[10px] text-white">
-                                      <Bot className="h-2.5 w-2.5" />
-                                    </div>
-                                    <span className="text-[10px] font-semibold text-indigo-400">Testing Bot</span>
-                                    <span className="text-[10px] text-slate-500 font-mono">
-                                      {msg.timestamp?.slice(11, 19) || ""}
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-
-                              <div
-                                className={`rounded-xl px-3 py-2 max-w-[92%] leading-relaxed ${
-                                  isUser
-                                    ? "bg-indigo-600 text-white rounded-tr-none shadow-sm"
-                                    : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none space-y-2 shadow-sm"
-                                }`}
-                              >
-                                {msg.imageUrl && (
-                                  <div
-                                    className="relative group rounded-lg overflow-hidden border border-slate-700 max-w-[260px] cursor-pointer my-1.5"
-                                    onClick={() => setImagePreviewModal(msg.imageUrl!)}
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={msg.imageUrl}
-                                      alt="Screen attachment"
-                                      className="w-full h-auto object-cover max-h-36"
-                                    />
-                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1 text-[11px] text-white transition">
-                                      <ZoomIn className="h-3.5 w-3.5" />
-                                      <span>View Full Image</span>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {msg.status === "thinking" ? (
-                                  <div className="flex items-center gap-2 text-indigo-300 font-medium">
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" />
-                                    <span>{msg.text}</span>
-                                  </div>
-                                ) : (
-                                  <p className="whitespace-pre-wrap">{msg.text}</p>
-                                )}
-
-                                {/* Thinking Model Card */}
-                                {msg.thinkingModel && (
-                                  <div className="mt-2 p-2.5 rounded-lg bg-slate-950/80 border border-purple-500/30 text-xs space-y-2">
-                                    <div className="flex items-center justify-between text-[11px]">
-                                      <div className="flex items-center gap-1.5 text-purple-400 font-semibold">
-                                        <Brain className="h-3.5 w-3.5" />
-                                        <span>AI Thinking Model</span>
-                                      </div>
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 font-mono">
-                                        Cognitive Architecture
-                                      </span>
-                                    </div>
-                                    <div className="text-[11px] text-slate-300 leading-snug">
-                                      {msg.thinkingModel.screenUnderstanding}
-                                    </div>
-                                    {msg.thinkingModel.identifiedElements &&
-                                      msg.thinkingModel.identifiedElements.length > 0 && (
-                                        <div className="space-y-1">
-                                          <span className="text-[10px] text-slate-400 font-medium block">
-                                            Detected UI Elements:
-                                          </span>
-                                          <div className="flex flex-wrap gap-1">
-                                            {msg.thinkingModel.identifiedElements.map((el, elIdx) => (
-                                              <span
-                                                key={elIdx}
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-slate-900 border border-slate-800 text-slate-300"
-                                                title={el.purpose}
-                                              >
-                                                <span className="text-purple-400 font-bold uppercase">
-                                                  {el.type}
-                                                </span>
-                                                <span>{el.name}</span>
-                                              </span>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-                                    {msg.thinkingModel.riskAssessment &&
-                                      msg.thinkingModel.riskAssessment.length > 0 && (
-                                        <div className="space-y-1">
-                                          <span className="text-[10px] text-amber-400 font-medium flex items-center gap-1">
-                                            <ShieldAlert className="h-3 w-3" />
-                                            <span>QA Risk & Edge Cases:</span>
-                                          </span>
-                                          <ul className="list-disc list-inside text-[10px] text-slate-400 space-y-0.5">
-                                            {msg.thinkingModel.riskAssessment.slice(0, 3).map((r, rIdx) => (
-                                              <li key={rIdx}>{r}</li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-                                  </div>
-                                )}
-
-                                {/* Checklist Component */}
-                                {msg.checklist && msg.checklist.length > 0 && (
-                                  <div className="mt-2 p-2.5 rounded-lg bg-slate-950/90 border border-indigo-500/30 space-y-2">
-                                    <div className="flex items-center justify-between text-[11px]">
-                                      <div className="flex items-center gap-1.5 text-indigo-400 font-semibold">
-                                        <CheckSquare className="h-3.5 w-3.5" />
-                                        <span>UI Test Checklist</span>
-                                      </div>
-                                      <span className="text-[10px] text-slate-400 font-mono">
-                                        {msg.checklist.filter((t) => t.status === "passed").length}/
-                                        {msg.checklist.length} Passed
-                                      </span>
-                                    </div>
-
-                                    {/* Progress bar */}
-                                    <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300"
-                                        style={{
-                                          width: `${(msg.checklist.filter((t) => t.status === "passed").length / msg.checklist.length) * 100}%`,
-                                        }}
-                                      />
-                                    </div>
-
-                                    {/* Test Items */}
-                                    <div className="space-y-1.5 pt-1">
-                                      {msg.checklist.map((test, tIdx) => (
-                                        <div
-                                          key={test.id || tIdx}
-                                          className={`p-2 rounded border text-[11px] space-y-1 transition ${
-                                            test.status === "passed"
-                                              ? "bg-emerald-950/20 border-emerald-500/30 text-emerald-200"
-                                              : test.status === "failed"
-                                              ? "bg-rose-950/20 border-rose-500/30 text-rose-200"
-                                              : test.status === "running"
-                                              ? "bg-indigo-950/30 border-indigo-500/50 text-indigo-200 animate-pulse"
-                                              : "bg-slate-900 border-slate-800 text-slate-300"
-                                          }`}
-                                        >
-                                          <div className="flex items-center justify-between gap-1.5">
-                                            <div className="flex items-center gap-1.5 min-w-0">
-                                              {test.status === "passed" ? (
-                                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                                              ) : test.status === "failed" ? (
-                                                <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-                                              ) : test.status === "running" ? (
-                                                <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin shrink-0" />
-                                              ) : (
-                                                <Clock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                                              )}
-                                              <span className="font-semibold truncate">{test.title}</span>
-                                            </div>
-                                            <span
-                                              className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded ${
-                                                test.status === "passed"
-                                                  ? "bg-emerald-500/20 text-emerald-300"
-                                                  : test.status === "failed"
-                                                  ? "bg-rose-500/20 text-rose-300"
-                                                  : test.status === "running"
-                                                  ? "bg-indigo-500/20 text-indigo-300"
-                                                  : "bg-slate-800 text-slate-400"
-                                              }`}
-                                            >
-                                              {test.status}
-                                            </span>
-                                          </div>
-
-                                          <div className="text-[10px] text-slate-400 leading-tight">
-                                            {test.goal}
-                                          </div>
-
-                                          {test.screenshotUrl && (
-                                            <div
-                                              className="mt-1 inline-block cursor-pointer border border-slate-700 rounded overflow-hidden"
-                                              onClick={() => setImagePreviewModal(test.screenshotUrl!)}
-                                            >
-                                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                                              <img
-                                                src={test.screenshotUrl}
-                                                alt={test.title}
-                                                className="h-14 w-auto object-cover hover:opacity-80 transition"
-                                              />
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* If agent executed actions, show chips */}
-                                {msg.actionsExecuted && msg.actionsExecuted.length > 0 && (
-                                  <div className="pt-1.5 border-t border-slate-800/80 space-y-1">
-                                    <span className="text-[10px] text-slate-400 font-semibold block">
-                                      Executed Actions:
-                                    </span>
-                                    <div className="flex flex-wrap gap-1">
-                                      {msg.actionsExecuted.map((act, idx) => (
-                                        <span
-                                          key={idx}
-                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-slate-950 border border-slate-800 font-mono text-slate-300"
-                                        >
-                                          <span className="uppercase text-indigo-400 font-bold">{act.type}</span>
-                                          <span className="text-slate-400 truncate max-w-[130px]">
-                                            {act.selector || act.description}
-                                          </span>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
-                        {/* Interactive Verification Prompt Card in Chat */}
-                        {currentJob && currentJob.verificationState === "awaiting_verification" && (
-                          <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 space-y-2 text-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-amber-200 flex items-center gap-1.5">
-                                <Mail className="h-3.5 w-3.5 text-amber-400" />
-                                Action Required: Confirm Email / Verification
-                              </span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">Paused</span>
-                            </div>
-                            <p className="text-[11px] text-slate-300">
-                              {currentJob.verificationPrompt || "Please click the confirmation link or enter the verification URL/code below."}
-                            </p>
-                            <div className="space-y-1.5">
-                              <input
-                                type="url"
-                                value={verificationUrlInput}
-                                onChange={(e) => setVerificationUrlInput(e.target.value)}
-                                placeholder="Verification / Magic Link URL"
-                                className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                              />
-                              <input
-                                type="text"
-                                value={verificationCodeInput}
-                                onChange={(e) => setVerificationCodeInput(e.target.value)}
-                                placeholder="OTP / Code (if applicable)"
-                                className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                              />
-                            </div>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                disabled={isSubmittingVerification}
-                                onClick={() => handleConfirmVerification()}
-                                className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
-                              >
-                                {isSubmittingVerification ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                                <span>I&apos;ve Completed Verification</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isSubmittingVerification}
-                                onClick={handleSkipVerification}
-                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
-                              >
-                                Skip
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Interactive Settings Credentials Form in Chat */}
-                        {currentJob && currentJob.settingsState === "awaiting_credentials" && (
-                          <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/50 space-y-2 text-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-indigo-200 flex items-center gap-1.5">
-                                <Key className="h-3.5 w-3.5 text-indigo-400" />
-                                Action Required: Enter Application Settings Secrets
-                              </span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">Protected</span>
-                            </div>
-                            <p className="text-[11px] text-slate-300">
-                              {currentJob.settingsPrompt || "Enter credentials to configure application settings. Secrets are redacted and never logged."}
-                            </p>
-                            <div className="space-y-1.5">
-                              {(currentJob.requiredSettingsFields && currentJob.requiredSettingsFields.length > 0
-                                ? currentJob.requiredSettingsFields
-                                : [{ key: "apiKey", label: "API Key", isSecret: true, placeholder: "sk-..." }]
-                              ).map((field) => (
-                                <div key={field.key} className="space-y-0.5">
-                                  <label className="text-[10px] text-slate-300 block">{field.label}</label>
-                                  <input
-                                    type={field.isSecret && !showSettingsSecrets[field.key] ? "password" : "text"}
-                                    value={settingsFormValues[field.key] || ""}
-                                    onChange={(e) => setSettingsFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                                    placeholder={field.placeholder || `Enter ${field.label}`}
-                                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded px-2 py-1 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                disabled={isSubmittingSettings}
-                                onClick={handleSaveSettingsCredentials}
-                                className="flex-1 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
-                              >
-                                {isSubmittingSettings ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                                <span>Save &amp; Resume</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isSubmittingSettings}
-                                onClick={handleSkipSettingsCredentials}
-                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
-                              >
-                                Skip
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        <div ref={chatBottomRef} />
-                      </div>
-
-                      {/* Quick Prompt Presets - Sleek Collapsible Drawer */}
-                      <div className="px-3 py-1.5 border-t border-slate-800/80 bg-slate-950/90 text-xs">
-                        <div className="flex items-center justify-between gap-2 text-[10px]">
-                          <button
-                            type="button"
-                            onClick={() => setIsQuickActionsOpen((prev) => !prev)}
-                            className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer group"
-                            title="Toggle Quick Commands & Project Route Chips"
-                          >
-                            <Wand2 className="h-3 w-3 text-indigo-400 group-hover:rotate-12 transition-transform" />
-                            <span>Quick Actions ({6 + discoveredRoutes.length})</span>
-                            <ChevronDown className={`h-2.5 w-2.5 transition-transform ${isQuickActionsOpen ? "rotate-180" : ""}`} />
-                          </button>
-
-                          {/* 2 Primary Fast Action Chips when collapsed */}
-                          {!isQuickActionsOpen && (
-                            <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTestingMode("feature_workflow")
-                                  handleSelectWorkspaceTab("plan")
-                                }}
-                                disabled={isSendingChat || isSubmitting}
-                                className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-600/30 border border-purple-500 text-purple-200 hover:bg-purple-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
-                              >
-                                🎯 Feature Test
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleStartFullAppTesting()}
-                                disabled={isSendingChat || isSubmitting}
-                                className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-600/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
-                              >
-                                🚀 Full App Test
-                              </button>
-                            </div>
-                          )}
-
-                          {chatHistory.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setChatHistory([
-                                  {
-                                    id: `welcome-${Date.now()}`,
-                                    sender: "agent",
-                                    text: "Chat cleared. Give a command or select a preset to start browser testing.",
-                                    timestamp: new Date().toISOString(),
-                                    status: "completed",
-                                  },
-                                ])
-                              }
-                              className="text-[9px] text-slate-500 hover:text-rose-400 flex items-center gap-1 transition cursor-pointer shrink-0 ml-auto"
-                              title="Clear chat history"
-                            >
-                              <RotateCcw className="h-2.5 w-2.5" />
-                              <span>Clear</span>
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Expanded Drawer: All Chips + Target Project Routes */}
-                        {isQuickActionsOpen && (
-                          <div className="pt-2 space-y-2 animate-in fade-in-50 duration-150">
-                            <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
-                              {[
-                                "🎯 Test creating a new task",
-                                "👤 Test the registration flow",
-                                "🚀 Full App Testing (Map & Plan First)",
-                                "🖼️ Test uploading profile picture",
-                                "🔄 Test All Clickable Options",
-                                "🧠 Analyze Screen & Build UI Checklist",
-                                "Audit viewports (390px, 768px, 1440px)",
-                              ].map((chip, idx) => (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  onClick={() => {
-                                    if (chip.includes("Full App Testing")) {
-                                      handleStartFullAppTesting()
-                                    } else if (chip.includes("Test creating a new task") || chip.includes("Test the registration flow") || chip.includes("Test uploading profile picture")) {
-                                      const prompt = chip.replace(/^[^\s]+\s+/, "")
-                                      setWorkflowPromptInput(prompt)
-                                      setTestingMode("feature_workflow")
-                                      handleStartWorkflowTesting(prompt)
-                                    } else {
-                                      handleSendChatCommand(chip)
-                                    }
-                                  }}
-                                  disabled={isSendingChat || isSubmitting}
-                                  className={`shrink-0 px-2 py-1 rounded-md border text-[10px] transition cursor-pointer disabled:opacity-50 ${
-                                    chip.startsWith("🎯") || chip.startsWith("👤") || chip.startsWith("🖼️")
-                                      ? "bg-purple-950/50 border-purple-500/60 text-purple-200 font-bold hover:bg-purple-600 hover:text-white"
-                                      : chip.includes("Full App")
-                                      ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold hover:bg-indigo-600 hover:text-white"
-                                      : "bg-slate-900 border-slate-800 hover:border-indigo-500 hover:bg-indigo-950/30 text-slate-300 hover:text-white"
-                                  }`}
-                                >
-                                  {chip}
-                                </button>
-                              ))}
-                            </div>
-
-                            {/* Project Routes Presets with Target Project Switcher & Test Data Provisioning */}
-                            <div className="pt-1.5 border-t border-slate-800/60 space-y-1.5">
-                              <div className="flex items-center justify-between text-[10px] text-slate-400 gap-1 flex-wrap">
-                                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
-                                    <span className="font-semibold text-slate-300 shrink-0">Target Project:</span>
-                                    <select
-                                      value={selectedProjectDir}
-                                      onChange={(e) => handleSelectTestingProject(e.target.value)}
-                                      className="bg-slate-950 border border-slate-700 hover:border-indigo-500 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 font-mono outline-none cursor-pointer max-w-[145px] truncate"
-                                      title="Switch local testing project to load its routes & test data"
-                                    >
-                                      {availableProjects.map((p) => (
-                                        <option key={p.name} value={p.name}>
-                                          {p.name} {p.defaultPort ? `(:${p.defaultPort})` : ""}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-
-                                  {/* Test Data Status / Generate Test Data beside Target Project */}
-                                  {testDataStatus?.exists && testDataStatus.filesCount > 0 ? (
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <button
-                                        type="button"
-                                        onClick={() => setIsTestDataModalOpen(true)}
-                                        className="px-1.5 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 flex items-center gap-1 text-[10px] font-mono transition cursor-pointer"
-                                        title={`Verified ${testDataStatus.filesCount} files in test-files/. Click to view.`}
-                                      >
-                                        <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400 shrink-0" />
-                                        <span className="font-semibold">{testDataStatus.filesCount} Test Data</span>
-                                        <span className="text-[9px] text-emerald-400/80">✓</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => fetchTestDataStatus()}
-                                        disabled={isCheckingTestData}
-                                        className="text-[9px] text-slate-500 hover:text-slate-300 p-0.5 transition cursor-pointer"
-                                        title="Re-verify test data folder"
-                                      >
-                                        <RotateCcw className={`h-2.5 w-2.5 ${isCheckingTestData ? "animate-spin" : ""}`} />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleGenerateTestData()}
-                                      disabled={isGeneratingTestData || isCheckingTestData}
-                                      className="px-1.5 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center gap-1 text-[10px] font-semibold transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                                      title="Generate dummy files (PDFs, CSVs, images, notes) in target project test-files/"
-                                    >
-                                      {isGeneratingTestData ? (
-                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-400 shrink-0" />
-                                      ) : (
-                                        <Sparkles className="h-2.5 w-2.5 text-amber-400 shrink-0" />
-                                      )}
-                                      <span>Generate Test Data</span>
-                                    </button>
-                                  )}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => fetchLocalRoutes()}
-                                  disabled={isScanningRoutes}
-                                  className="text-[9px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer shrink-0"
-                                  title="Rescan target project routes"
-                                >
-                                  <RotateCcw className={`h-2.5 w-2.5 ${isScanningRoutes ? "animate-spin" : ""}`} />
-                                  <span>Rescan</span>
-                                </button>
-                              </div>
-                              {discoveredRoutes.length > 0 && (
-                                <div className="flex gap-1 overflow-x-auto pb-0.5 custom-scrollbar">
-                                  {discoveredRoutes.map((r, idx) => (
-                                    <button
-                                      key={idx}
-                                      type="button"
-                                      onClick={() => {
-                                        handleSimulatorUrlChange(r.url)
-                                        handleSendChatCommand(`Test and inspect route ${r.path}`, undefined, false, r.url)
-                                      }}
-                                      disabled={isSendingChat}
-                                      className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition cursor-pointer disabled:opacity-50"
-                                      title={`Click to test: ${r.path} (${r.url})`}
-                                    >
-                                      {r.path}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Attached Image Preview */}
-                      {attachedImage && (
-                        <div className="px-3 pt-2 pb-1 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={attachedImage}
-                              alt="Attached"
-                              className="h-8 w-8 rounded object-cover border border-slate-700"
-                            />
-                            <span className="text-[11px] text-slate-300">
-                              Screen Image Attached
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setAttachedImage(null)}
-                            className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                            title="Remove attachment"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Chat Input Bar */}
-                      <div className="p-2.5 border-t border-slate-800 bg-slate-900/60">
-                        {commandQueue.length > 0 && (
-                          <div className="mb-2 space-y-1">
-                            <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                              <Clock className="h-3 w-3 text-amber-400" />
-                              <span>Queued ({commandQueue.length}) - runs after current test</span>
-                            </div>
-                            {commandQueue.map((q, i) => (
-                              <div
-                                key={q.id}
-                                className="flex items-center justify-between gap-2 px-2 py-1 rounded-md bg-slate-950 border border-amber-500/30 text-[11px] text-slate-300"
-                              >
-                                <span className="truncate">
-                                  {i + 1}. {q.text || "(image)"}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setCommandQueue((cq) => cq.filter((x) => x.id !== q.id))}
-                                  className="text-slate-500 hover:text-rose-400 cursor-pointer shrink-0"
-                                  title="Remove from queue"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          onChange={handleImageFileChange}
-                          accept="image/*"
-                          className="hidden"
-                        />
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault()
-                            handleSendChatCommand()
-                          }}
-                          className="flex items-center gap-1.5"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isSendingChat}
-                            className="p-2 rounded-lg bg-slate-950 border border-slate-700 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
-                            title="Upload Mockup / Screenshot Image"
-                          >
-                            <Paperclip className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleCaptureCurrentScreen}
-                            disabled={isSendingChat}
-                            className="p-2 rounded-lg bg-slate-950 border border-slate-700 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
-                            title="Capture current screen & test"
-                          >
-                            <ImageIcon className="h-3.5 w-3.5 text-indigo-400" />
-                          </button>
-
-                          <div className="relative flex-1">
-                            <input
-                              type="text"
-                              value={chatInput}
-                              onChange={(e) => setChatInput(e.target.value)}
-                              placeholder={
-                                attachedImage
-                                  ? "Add instructions for attached image or hit Send..."
-                                  : "Give command (e.g. 'Test signup page')..."
-                              }
-                              disabled={isSendingChat}
-                              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-3 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                            />
-                            {isSendingChat && (
-                              <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-indigo-400 animate-spin" />
-                            )}
-                          </div>
-                          <button
-                            type="submit"
-                            disabled={(!chatInput.trim() && !attachedImage) || isSendingChat}
-                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white p-2 rounded-lg transition shadow-md shadow-indigo-600/20 cursor-pointer disabled:cursor-not-allowed shrink-0"
-                            title={currentJob?.status === "running" || currentJob?.status === "queued" ? "Queue message (runs after current test)" : "Send command"}
-                          >
-                            {currentJob?.status === "running" || currentJob?.status === "queued" ? (
-                              <Clock className="h-3.5 w-3.5" />
-                            ) : (
-                              <Send className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                          {(currentJob?.status === "running" || currentJob?.status === "queued") && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCommandQueue([])
-                                handleStopAutomation()
-                              }}
-                              className="bg-rose-600 hover:bg-rose-500 text-white p-2 rounded-lg transition shadow-md shadow-rose-600/20 cursor-pointer shrink-0"
-                              title="Stop test (clears queued messages)"
-                            >
-                              <Square className="h-3.5 w-3.5 fill-current" />
-                            </button>
-                          )}
-                        </form>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TAB 2: DEDICATED AI CONFIGURATION PANEL */}
-                  {activeDockTab === "config" && (
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950 text-xs">
-                      {/* Header Banner */}
-                      <div className="p-3 rounded-xl bg-gradient-to-r from-purple-950/60 via-slate-900 to-indigo-950/50 border border-purple-500/30 shadow-md">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-lg bg-purple-500/20 text-purple-300 shrink-0">
-                            <Settings className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <h3 className="text-xs font-bold text-white">AI Vision & Automation Engine</h3>
-                            <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">
-                              Configure the AI model and provider driving simulator visual testing, screen reasoning, and crawler audits.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Provider Selection Cards */}
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                          <span>Select AI Provider</span>
-                          <span className="font-mono text-purple-400 lowercase font-normal">
-                            current: {aiProvider}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          {/* Nebius Token Factory */}
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateAiProvider("nebius")}
-                            className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
-                              aiProvider === "nebius"
-                                ? "bg-purple-950/50 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/40"
-                                : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between w-full">
-                              <span className="font-bold text-[11px] text-purple-300">Nebius Token Factory</span>
-                              <span className="text-[8px] font-mono uppercase px-1 py-0.2 rounded bg-purple-900/60 text-purple-200">
-                                Top Vision
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-1.5 leading-tight">
-                              NVIDIA Nemotron models via Nebius
-                            </div>
-                          </button>
-
-                          {/* OmniRouter / UnoRouter */}
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateAiProvider("omnirouter")}
-                            className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
-                              aiProvider === "omnirouter"
-                                ? "bg-indigo-950/50 border-indigo-500 text-white shadow-md shadow-indigo-950/40 ring-1 ring-indigo-400/40"
-                                : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between w-full">
-                              <span className="font-bold text-[11px] text-indigo-300">Gateway</span>
-                              <span className="text-[8px] font-mono uppercase px-1 py-0.2 rounded bg-indigo-900/60 text-indigo-200">
-                                Combo
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-1.5 leading-tight">
-                              OmniRouter / UnoRouter (Local :20128)
-                            </div>
-                          </button>
-
-                          {/* Local (Ollama) */}
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateAiProvider("local")}
-                            className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition cursor-pointer ${
-                              aiProvider === "local"
-                                ? "bg-emerald-950/50 border-emerald-500 text-white shadow-md shadow-emerald-950/40 ring-1 ring-emerald-400/40"
-                                : "bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between w-full">
-                              <span className="font-bold text-[11px] text-emerald-300">Local AI</span>
-                              <span className="text-[8px] font-mono uppercase px-1 py-0.2 rounded bg-emerald-900/60 text-emerald-200">
-                                Offline
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-1.5 leading-tight">
-                              Ollama (Llama 3.2, Qwen-VL)
-                            </div>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Detailed Provider Form */}
-                      {aiProvider === "nebius" && (
-                        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-slate-200 text-xs">Nebius Token Factory Settings</span>
-                            <a href="https://tokenfactory.nebius.com/" target="_blank" rel="noreferrer" className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 underline underline-offset-2"><span>Get API Key</span><ExternalLink className="h-3 w-3" /></a>
-                          </div>
-                          <p className="text-[10px] text-slate-400 leading-snug">Uses Nebius Token Factory's OpenAI-compatible API with NVIDIA Nemotron models for planning, visual QA, and recovery reasoning.</p>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400 flex items-center justify-between"><span>Nebius API Key</span>{nebiusApiKey.trim() && <span className="text-emerald-400 text-[9px] flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Key saved locally</span>}</label>
-                            <input type="password" value={nebiusApiKey} onChange={(e) => handleUpdateNebiusApiKey(e.target.value)} placeholder="Paste your Nebius Token Factory API key" autoComplete="off" className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono placeholder-slate-600 focus:outline-none transition-colors" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">Model Preset</label>
-                            <select value={selectedAiModel} onChange={(e) => handleUpdateAiModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 focus:border-purple-500 rounded-lg px-2.5 py-2 text-[11px] text-white cursor-pointer focus:outline-none transition-colors">
-                              <option value="nvidia/Nemotron-3-Nano-Omni">NVIDIA Nemotron 3 Nano Omni (multimodal)</option>
-                              <option value="nvidia/nemotron-3-super-120b-a12b">NVIDIA Nemotron 3 Super 120B (reasoning)</option>
-                              <option value="nvidia/Nemotron-3-Nano-30B-A3B">NVIDIA Nemotron 3 Nano 30B</option>
-                            </select>
-                          </div>
-                          <div className="space-y-1"><label className="text-[10px] text-slate-400">Custom Model ID</label><input type="text" value={selectedAiModel} onChange={(e) => handleUpdateAiModel(e.target.value)} placeholder="Use an exact model ID from your Nebius catalog" className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-purple-500 transition-colors" /></div>
-                        </div>
-                      )}
-
-                      {aiProvider === "omnirouter" && (
-                        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-200 text-xs">OmniRouter Gateway Settings</span>
-                            <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-700/50">
-                              OpenAI Compatible
-                            </span>
-                          </div>
-
-                          {/* Presets */}
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleUpdateOmniRouterUrl("https://api.unorouter.com/v1")
-                                handleUpdateOmniRouterModel("deepseek-v4-flash:free")
-                              }}
-                              className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-semibold border transition cursor-pointer text-center ${
-                                omniRouterBaseUrl.includes("unorouter")
-                                  ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold"
-                                  : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"
-                              }`}
-                            >
-                              UnoRouter (Free Cloud)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleUpdateOmniRouterUrl("http://localhost:20128/v1")
-                                handleUpdateOmniRouterModel("fast")
-                              }}
-                              className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-semibold border transition cursor-pointer text-center ${
-                                omniRouterBaseUrl.includes("20128")
-                                  ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold"
-                                  : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"
-                              }`}
-                            >
-                              OmniRoute (Local :20128)
-                            </button>
-                          </div>
-
-                          {/* Gateway URL */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">
-                              Gateway Base URL
-                            </label>
-                            <input
-                              type="text"
-                              value={omniRouterBaseUrl}
-                              onChange={(e) => handleUpdateOmniRouterUrl(e.target.value)}
-                              placeholder="https://api.unorouter.com/v1"
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono focus:outline-none transition-colors"
-                            />
-                          </div>
-
-                          {/* Key */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400 flex items-center justify-between">
-                              <span>Gateway API Key</span>
-                              <span className="text-[9px] text-slate-500">Free key at unorouter.com/token</span>
-                            </label>
-                            <input
-                              type="password"
-                              value={omniRouterKey}
-                              onChange={(e) => handleUpdateOmniRouterKey(e.target.value)}
-                              placeholder="Bearer key or token..."
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono placeholder-slate-600 focus:outline-none transition-colors"
-                            />
-                          </div>
-
-                          {/* Model */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">
-                              Model Identifier
-                            </label>
-                            <input
-                              type="text"
-                              value={omniRouterModel}
-                              onChange={(e) => handleUpdateOmniRouterModel(e.target.value)}
-                              placeholder="fast, ddgw/gpt-5.4-mini, deepseek-v4-flash:free"
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono focus:outline-none transition-colors"
-                            />
-                            <div className="flex flex-wrap gap-1 pt-1">
-                              {["fast", "deepseek-v4-flash:free", "ddgw/gpt-5.4-mini", "ddgw/claude-haiku-4-5"].map((m) => (
-                                <button
-                                  key={m}
-                                  type="button"
-                                  onClick={() => handleUpdateOmniRouterModel(m)}
-                                  className={`px-2 py-0.5 rounded text-[9px] font-mono cursor-pointer transition ${
-                                    omniRouterModel === m
-                                      ? "bg-indigo-600 text-white font-bold"
-                                      : "bg-slate-950 border border-slate-800 text-slate-400 hover:text-white"
-                                  }`}
-                                >
-                                  {m}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {aiProvider === "local" && (
-                        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-200 text-xs">Ollama Local Settings</span>
-                            <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-700/50">
-                              Private & Offline
-                            </span>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">
-                              Ollama Server URL
-                            </label>
-                            <input
-                              type="text"
-                              value={localAiBaseUrl}
-                              onChange={(e) => handleUpdateLocalBaseUrl(e.target.value)}
-                              placeholder="http://localhost:11434/v1"
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-3 py-2 text-[11px] text-white font-mono focus:outline-none transition-colors"
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-semibold text-slate-400">
-                              Local Model
-                            </label>
-                            <select
-                              value={selectedAiModel}
-                              onChange={(e) => handleUpdateAiModel(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-2 text-[11px] text-white cursor-pointer focus:outline-none transition-colors"
-                            >
-                              <option value="llama3.2-vision">llama3.2-vision (Meta Vision)</option>
-                              <option value="qwen2-vl">qwen2-vl (Qwen Vision)</option>
-                              <option value="llava">llava (LLaVA)</option>
-                              <option value="mistral">mistral (Mistral 7B)</option>
-                            </select>
-                          </div>
-                          <p className="text-[10px] text-slate-500">
-                            Ensure Ollama is running locally: <code className="text-emerald-400 font-mono">ollama run llama3.2-vision</code>
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Test Connection Button & Result */}
-                      <div className="space-y-2 pt-1">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleTestAiConnection}
-                            disabled={isTestingAiConnection}
-                            className="flex-1 py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 border border-slate-700"
-                          >
-                            {isTestingAiConnection ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
-                                <span>Testing Connection...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Activity className="h-3.5 w-3.5 text-purple-400" />
-                                <span>Test AI Connection</span>
-                              </>
-                            )}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setActiveDockTab("chat")}
-                            className="py-2 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition shadow-sm cursor-pointer shrink-0"
-                          >
-                            Save & Open Chat →
-                          </button>
-                        </div>
-
-                        {aiConnectionTestResult && (
-                          <div
-                            className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 animate-in fade-in-50 duration-150 ${
-                              aiConnectionTestResult.success
-                                ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-200"
-                                : "bg-rose-950/40 border-rose-500/50 text-rose-200"
-                            }`}
-                          >
-                            {aiConnectionTestResult.success ? (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                            ) : (
-                              <XCircle className="h-4 w-4 text-rose-400 shrink-0" />
-                            )}
-                            <span className="leading-tight">{aiConnectionTestResult.message}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-
-                </aside>
-              </>
-            )}
+            {/* Movable Floating AI Configuration Window */}
+            <MovableAiConfigModal
+              isOpen={isAiConfigModalOpen}
+              onClose={() => setIsAiConfigModalOpen(false)}
+              aiProvider={aiProvider}
+              onUpdateAiProvider={handleUpdateAiProvider}
+              nebiusApiKey={nebiusApiKey}
+              onUpdateNebiusApiKey={handleUpdateNebiusApiKey}
+              selectedAiModel={selectedAiModel}
+              onUpdateAiModel={handleUpdateAiModel}
+              omniRouterBaseUrl={omniRouterBaseUrl}
+              onUpdateOmniRouterUrl={handleUpdateOmniRouterUrl}
+              omniRouterKey={omniRouterKey}
+              onUpdateOmniRouterKey={handleUpdateOmniRouterKey}
+              omniRouterModel={omniRouterModel}
+              onUpdateOmniRouterModel={handleUpdateOmniRouterModel}
+              localAiBaseUrl={localAiBaseUrl}
+              onUpdateLocalBaseUrl={handleUpdateLocalBaseUrl}
+              isTestingAiConnection={isTestingAiConnection}
+              onTestAiConnection={handleTestAiConnection}
+              aiConnectionTestResult={aiConnectionTestResult}
+            />
           </>
         )}
       </main>
@@ -4061,12 +3076,12 @@ export default function AISimulatorPage() {
           <div className="w-px h-3.5 bg-slate-800 hidden sm:block" />
           <button
             type="button"
-            onClick={() => setIsBotPanelOpen((prev) => !prev)}
+            onClick={() => setIsAiConfigModalOpen((prev) => !prev)}
             className="flex items-center gap-1 text-slate-300 hover:text-white transition cursor-pointer"
-            title="Toggle AI Testing Bot Dock"
+            title="Configure AI Vision & Engine"
           >
-            <Sparkles className="h-3 w-3 text-indigo-400" />
-            <span className="hidden sm:inline">AI Bot Dock</span>
+            <Sparkles className="h-3 w-3 text-purple-400" />
+            <span className="hidden sm:inline">AI Config</span>
           </button>
         </div>
       </footer>

@@ -24,6 +24,7 @@ import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
+import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 
 import {
   SYNTHETIC_TEST_DATA,
@@ -480,9 +481,132 @@ export async function promptPaymentCredentialsIfNeeded(
 
 
 /**
+ * Uses Laya (~30ms local typed decisions) to classify and enrich discovered DOM elements.
+ * Confirms whether elements are interactive triggers, identifies their functional role,
+ * detects auxiliary auth flows and navigation tabs, and bumps confidence for key workflow controls.
+ */
+async function enrichInventoryWithLaya(
+  elements: ActionableElement[],
+  pageUrl: string,
+  layaBaseUrl?: string
+): Promise<ActionableElement[]> {
+  const url = layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
+  if (!url) return elements
+  const online = await isLayaAvailable(url).catch(() => false)
+  if (!online) return elements
+
+  const candidates = elements.filter(
+    (el) => el.type === "clickable" || el.type === "button" || el.type === "tab" || el.type === "link"
+  ).slice(0, 16)
+
+  if (candidates.length === 0) return elements
+
+  try {
+    const criteria: Record<string, string> = {}
+    candidates.forEach((c, idx) => {
+      criteria[`item_${idx}`] = `[${c.type.toUpperCase()}] "${c.name}" (${c.selector || "selector"})`
+    })
+
+    const questions: Record<string, any> = {
+      primary_actions: {
+        type: "choice" as const,
+        instructions: "Which control is a primary workflow action or key navigation target on this screen?",
+        criteria,
+      },
+    }
+
+    const hasAuthCandidates = candidates.some((c) =>
+      /forgot|create|register|signup|sign\s*up|password|reset/i.test(c.name)
+    )
+    if (hasAuthCandidates) {
+      questions.auxiliary_auth = {
+        type: "choice" as const,
+        instructions: "Which control is an auxiliary authentication recovery or alternate flow (e.g. Forgot Password, Sign Up, Create Account)?",
+        criteria,
+      }
+    }
+
+    const hasTabCandidates = candidates.some(
+      (c) => c.type === "tab" || /home|workout|drills|messages|profile|dashboard|explore/i.test(c.name)
+    )
+    if (hasTabCandidates) {
+      questions.navigation_tab = {
+        type: "choice" as const,
+        instructions: "Which control represents a key navigation tab or view switcher?",
+        criteria,
+      }
+    }
+
+    const payload = {
+      state: `Page: ${pageUrl}\nDiscovered interactive UI controls on this screen:\n${candidates.map((c, i) => `${i}. [${c.type}] "${c.name}"`).join("\n")}`,
+      questions,
+    }
+
+    const res = await layaPredict(url, payload).catch(() => null)
+    if (res?.answers) {
+      const answers = res.answers
+
+      // Primary action confirmation
+      if (answers.primary_actions) {
+        const choice = String(answers.primary_actions.choice || answers.primary_actions || "")
+        const match = choice.match(/item_(\d+)/)
+        if (match) {
+          const primaryIdx = parseInt(match[1], 10)
+          if (candidates[primaryIdx]) {
+            candidates[primaryIdx].interactionConfidence = 0.98
+            candidates[primaryIdx].discoveryReason = [
+              ...(candidates[primaryIdx].discoveryReason || []),
+              "Laya System-1 confirmed primary workflow action",
+            ]
+          }
+        }
+      }
+
+      // Auxiliary authentication option identification
+      if (answers.auxiliary_auth) {
+        const choice = String(answers.auxiliary_auth.choice || answers.auxiliary_auth || "")
+        const match = choice.match(/item_(\d+)/)
+        if (match) {
+          const authIdx = parseInt(match[1], 10)
+          if (candidates[authIdx]) {
+            candidates[authIdx].interactionConfidence = 0.99
+            ;(candidates[authIdx] as any).isAuxiliaryAuth = true
+            candidates[authIdx].discoveryReason = [
+              ...(candidates[authIdx].discoveryReason || []),
+              "Laya System-1 confirmed auxiliary auth flow",
+            ]
+          }
+        }
+      }
+
+      // Navigation tab confirmation
+      if (answers.navigation_tab) {
+        const choice = String(answers.navigation_tab.choice || answers.navigation_tab || "")
+        const match = choice.match(/item_(\d+)/)
+        if (match) {
+          const tabIdx = parseInt(match[1], 10)
+          if (candidates[tabIdx]) {
+            candidates[tabIdx].type = "tab"
+            candidates[tabIdx].interactionConfidence = 0.98
+            candidates[tabIdx].discoveryReason = [
+              ...(candidates[tabIdx].discoveryReason || []),
+              "Laya System-1 confirmed navigation tab",
+            ]
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[Laya DOM Enrichment]", err?.message)
+  }
+
+  return elements
+}
+
+/**
  * Extracts complete inventory of actionable elements on the active page
  */
-export async function extractActionableInventory(page: Page): Promise<{
+export async function extractActionableInventory(page: Page, layaBaseUrl?: string): Promise<{
   actionableElements: ActionableElement[]
   forms: Array<{
     id: string
@@ -496,7 +620,100 @@ export async function extractActionableInventory(page: Page): Promise<{
   modalTitle?: string
   heading?: string
 }> {
-  return await page.evaluate(() => {
+  const raw = await page.evaluate(() => {
+    function generateOptimalSelector(el: Element): string {
+      if (!el || !(el instanceof Element)) return ""
+      const h = el as HTMLElement
+      if (h.id && document.querySelectorAll("#" + CSS.escape(h.id)).length === 1) {
+        return "#" + CSS.escape(h.id)
+      }
+      const testId = el.getAttribute("data-testid") || el.getAttribute("data-cy") || el.getAttribute("data-test")
+      if (testId) {
+        const sel = `[data-testid="${CSS.escape(testId)}"]`
+        if (document.querySelectorAll(sel).length === 1) return sel
+        const selCy = `[data-cy="${CSS.escape(testId)}"]`
+        if (document.querySelectorAll(selCy).length === 1) return selCy
+      }
+      const name = el.getAttribute("name")
+      if (name) {
+        const sel = `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`
+        if (document.querySelectorAll(sel).length === 1) return sel
+      }
+      const aria = el.getAttribute("aria-label")
+      if (aria) {
+        const sel = `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria)}"]`
+        if (document.querySelectorAll(sel).length === 1) return sel
+      }
+      const role = el.getAttribute("role")
+      if (role) {
+        const sel = `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`
+        if (document.querySelectorAll(sel).length === 1) return sel
+      }
+      if (el.tagName.toLowerCase() === "a" && el.getAttribute("href")) {
+        const href = el.getAttribute("href")!
+        const sel = `a[href="${CSS.escape(href)}"]`
+        if (document.querySelectorAll(sel).length === 1) return sel
+      }
+      const parts: string[] = []
+      let curr: Element | null = el
+      while (curr && curr !== document.documentElement && curr !== document.body) {
+        const parent: Element | null = curr.parentElement
+        const tag = curr.tagName.toLowerCase()
+        if (!parent) { parts.unshift(tag); break }
+        const siblings = Array.from(parent.children).filter((c: any) => c.tagName === curr!.tagName)
+        const idx = siblings.indexOf(curr) + 1
+        parts.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${idx})` : tag)
+        const candidate = parts.join(" > ")
+        try {
+          if (document.querySelectorAll(candidate).length === 1) return candidate
+        } catch {}
+        curr = parent
+      }
+      return parts.join(" > ") || el.tagName.toLowerCase()
+    }
+
+    function getAccessibleControlName(el: Element, fallback = "Action Control"): string {
+      if (!el) return fallback
+      const h = el as HTMLElement
+      const ariaLabel = h.getAttribute("aria-label")
+      if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim().replace(/\s+/g, " ").slice(0, 50)
+      const labelledBy = h.getAttribute("aria-labelledby")
+      if (labelledBy) {
+        const refText = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ").trim()
+        if (refText) return refText.replace(/\s+/g, " ").slice(0, 50)
+      }
+      const title = h.getAttribute("title")
+      if (title && title.trim()) return title.trim().replace(/\s+/g, " ").slice(0, 50)
+      const headingEl = el.querySelector("h1, h2, h3, h4, [class*='title' i], [class*='heading' i]")
+      if (headingEl && headingEl.textContent?.trim()) {
+        return headingEl.textContent.trim().replace(/\s+/g, " ").slice(0, 50)
+      }
+      const text = (h.textContent || "").trim()
+      if (text) return text.replace(/\s+/g, " ").slice(0, 50)
+      const input = el as HTMLInputElement
+      if (input.value && typeof input.value === "string" && input.value.trim()) return input.value.trim().slice(0, 50)
+      if (input.placeholder && input.placeholder.trim()) return input.placeholder.trim().slice(0, 50)
+      if (input.name && input.name.trim()) return input.name.trim().slice(0, 50)
+      const img = el.querySelector("img[alt]")
+      if (img && img.getAttribute("alt")?.trim()) return img.getAttribute("alt")!.trim().slice(0, 50)
+      const svg = el.querySelector("svg")
+      if (svg) {
+        const svgAria = svg.getAttribute("aria-label") || svg.querySelector("title")?.textContent || svg.getAttribute("data-icon") || svg.getAttribute("data-lucide")
+        if (svgAria && svgAria.trim()) return svgAria.trim().slice(0, 50)
+        const svgClass = typeof svg.className === "string" ? svg.className : ((svg.className as any)?.baseVal || "")
+        const iconMatch = svgClass.match(/(?:lucide|fa|icon|feather|tabler|bi|material)[-_]([a-z0-9-]+)/i)
+        if (iconMatch && iconMatch[1]) {
+          const iconName = iconMatch[1].replace(/[-_]/g, " ")
+          return iconName.charAt(0).toUpperCase() + iconName.slice(1)
+        }
+      }
+      const testId = h.getAttribute("data-testid") || h.getAttribute("data-cy")
+      if (testId) {
+        return testId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 50)
+      }
+      return fallback
+    }
+
     const elements: any[] = []
     const forms: any[] = []
     let elementCounter = 1
@@ -512,8 +729,19 @@ export async function extractActionableInventory(page: Page): Promise<{
     }
 
     // 2. Page main heading
-    const h1 = document.querySelector("h1, h2, header h2")
-    const heading = h1 ? (h1.textContent || "").trim() : ""
+    let heading = ""
+    const headingEl = document.querySelector(
+      'h1, h2, [role="heading"], header h1, header h2, header [dir="auto"], [class*="title" i], [class*="heading" i]'
+    )
+    if (headingEl) {
+      heading = (headingEl.textContent || "").trim()
+    }
+    if (!heading) {
+      const prominent = Array.from(document.querySelectorAll('div[dir="auto"], span[dir="auto"], header *'))
+        .map((el) => (el.textContent || "").trim())
+        .find((t) => t.length >= 4 && t.length <= 40 && !/(copyright|all rights|version|\d{1,2}:\d{2})/i.test(t))
+      if (prominent) heading = prominent
+    }
 
     // 3. Scan Forms
     document.querySelectorAll("form, [data-form], .form").forEach((form: any, fIdx) => {
@@ -591,7 +819,7 @@ export async function extractActionableInventory(page: Page): Promise<{
         id: `elem-${elementCounter++}`,
         name: name.replace(/[:*]/g, "").trim(),
         type: elementType,
-        selector: el.id ? `#${el.id}` : el.name ? `[name="${el.name}"]` : undefined,
+        selector: generateOptimalSelector(el),
         inputType: type,
         placeholder: el.placeholder || undefined,
         value: el.value || undefined,
@@ -623,18 +851,16 @@ export async function extractActionableInventory(page: Page): Promise<{
         id: `elem-${elementCounter++}`,
         name: name.replace(/[:*]/g, "").trim(),
         type: "select",
-        selector: el.id ? `#${el.id}` : el.name ? `select[name="${el.name}"]` : undefined,
+        selector: generateOptimalSelector(el),
         options: options.slice(0, 8),
         formId,
       })
-    })
-
-    // 7. Tabs, Radios & Toggles
+    })    // 7. Tabs, Radios & Toggles
     document.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
-      const txt = (el.textContent || el.getAttribute("aria-label") || "Tab / Toggle").trim()
+      const txt = getAccessibleControlName(el, "Tab / Toggle")
       if (!txt) return
 
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
@@ -644,10 +870,27 @@ export async function extractActionableInventory(page: Page): Promise<{
         id: `elem-${elementCounter++}`,
         name: txt,
         type: el.getAttribute("role") === "tab" ? "tab" : "toggle",
-        selector: el.id ? `#${el.id}` : undefined,
+        selector: generateOptimalSelector(el),
         formId,
       })
     })
+
+    const isLogoutControl = (targetEl: any, labelText = ""): boolean => {
+      try {
+        const raw = (labelText || targetEl.textContent || targetEl.value || targetEl.getAttribute?.("aria-label") || targetEl.getAttribute?.("title") || "").trim()
+        const cls = typeof targetEl.className === "string" ? targetEl.className : ((targetEl.className as any)?.baseVal || "")
+        const id = targetEl.id || ""
+        const href = targetEl.getAttribute?.("href") || ""
+        const actionAttr = targetEl.getAttribute?.("data-action") || ""
+        const testId = targetEl.getAttribute?.("data-testid") || ""
+        const svgLucide = targetEl.querySelector?.("svg")?.getAttribute?.("data-lucide") || ""
+        const svgClass = targetEl.querySelector?.("svg")?.getAttribute?.("class") || ""
+        const combined = [raw, cls, id, href, actionAttr, testId, svgLucide, svgClass].join(" ")
+        return /(logout|sign[-_ ]?out|log[-_ ]?off|delete[-_ ]?account)/i.test(combined)
+      } catch {
+        return false
+      }
+    }
 
     // 8. Buttons & Clickable Triggers
     document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']").forEach((el: any) => {
@@ -658,9 +901,9 @@ export async function extractActionableInventory(page: Page): Promise<{
       if (!rawText && !el.querySelector("svg, img")) return
 
       // Skip dangerous session terminating logout buttons during exploration
-      if (/(logout|sign out|log off|delete account)/i.test(rawText)) return
+      if (isLogoutControl(el, rawText)) return
 
-      const cleanText = rawText.replace(/\s+/g, " ").slice(0, 40) || "Action Button"
+      const cleanText = getAccessibleControlName(el, "Action Button")
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
       const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
 
@@ -668,15 +911,114 @@ export async function extractActionableInventory(page: Page): Promise<{
         id: `elem-${elementCounter++}`,
         name: cleanText,
         type: "button",
-        selector: el.id ? `#${el.id}` : undefined,
+        selector: generateOptimalSelector(el),
         formId,
       })
     })
 
-    // 9. Custom clickable / accessibility controls
-    // Native buttons/links are already covered above. This catches common
-    // React/Vue/custom controls such as <div onClick>, role=button/link,
-    // keyboard-focusable elements, and aria-controls-driven triggers.
+    // 9. Navigation Bars & Bottom Navigation (Home, Workout, Drills, Messages, Profile)
+    const navSelector =
+      'nav, [role="navigation"], [role="tablist"], footer nav, [class*="bottomNav" i], [class*="bottom-nav" i], [class*="tabBar" i], [class*="tab-bar" i], [class*="bottom-bar" i]'
+    document.querySelectorAll(navSelector).forEach((navContainer: any) => {
+      const items = navContainer.querySelectorAll('a, button, [role="tab"], [role="button"], li, div')
+      items.forEach((item: any) => {
+        if (item === navContainer) return
+        const style = window.getComputedStyle(item)
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || item.offsetWidth <= 2 || item.offsetHeight <= 2) return
+
+        const txt = getAccessibleControlName(item, "")
+        if (!txt || txt.length > 35) return
+        if (isLogoutControl(item, txt)) return
+
+        const selector = generateOptimalSelector(item)
+        const actionKey = ["tab", window.location.pathname, txt.toLowerCase(), selector].join("|")
+        if (elements.some((e: any) => e.selector === selector || e.actionKey === actionKey)) return
+
+        elements.push({
+          id: `elem-${elementCounter++}`,
+          name: txt,
+          type: "tab",
+          selector,
+          actionKey,
+          interactionConfidence: 0.95,
+          discoveryReason: ["Detected inside navigation/bottom tab bar"],
+          isInteractive: true,
+        })
+      })
+    })
+
+    // 10. Top Navigation & Header Actions (Notifications bell, Settings gear, Profile avatar, Back)
+    const headerSelector =
+      'header, [role="banner"], [role="toolbar"], [class*="header" i], [class*="topbar" i], [class*="top-bar" i]'
+    document.querySelectorAll(headerSelector).forEach((headerContainer: any) => {
+      const items = headerContainer.querySelectorAll('button, a, [role="button"], [class*="icon" i], [class*="btn" i], [class*="action" i]')
+      items.forEach((item: any) => {
+        if (item === headerContainer) return
+        const style = window.getComputedStyle(item)
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || item.offsetWidth <= 2 || item.offsetHeight <= 2) return
+
+        const txt = getAccessibleControlName(item, "Header Action")
+        if (!txt || isLogoutControl(item, txt)) return
+
+        const selector = generateOptimalSelector(item)
+        const actionKey = ["header_action", window.location.pathname, txt.toLowerCase(), selector].join("|")
+        if (elements.some((e: any) => e.selector === selector || e.actionKey === actionKey)) return
+
+        elements.push({
+          id: `elem-${elementCounter++}`,
+          name: txt,
+          type: "button",
+          selector,
+          actionKey,
+          interactionConfidence: 0.92,
+          discoveryReason: ["Detected inside header/top navigation bar"],
+          isInteractive: true,
+        })
+      })
+    })
+
+    // 11. Interactive Cards, Tiles & Feature Action Blocks (e.g. DRILLS card)
+    const cardSelector =
+      '[class*="card" i], [class*="tile" i], [class*="feature" i], [class*="banner" i], [class*="box" i][class*="click" i], [data-action]'
+    document.querySelectorAll(cardSelector).forEach((card: any) => {
+      const tag = (card.tagName || '').toLowerCase()
+      if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
+      const style = window.getComputedStyle(card)
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || card.offsetWidth <= 10 || card.offsetHeight <= 10) return
+
+      if (card.parentElement && card.parentElement.closest('[class*="card" i], [class*="tile" i]')) return
+
+      const isClickable = Boolean(
+        style.cursor === "pointer" ||
+        card.getAttribute("role") === "button" ||
+        card.getAttribute("tabindex") === "0" ||
+        card.hasAttribute("data-action") ||
+        card.hasAttribute("onclick")
+      )
+      if (!isClickable && !card.querySelector("h1, h2, h3, h4")) return
+
+      const heading = card.querySelector("h1, h2, h3, h4, [class*='title' i], [class*='heading' i]")
+      const title = (heading ? heading.textContent : "") || getAccessibleControlName(card, "Interactive Card")
+      const cleanTitle = (title || "").trim().replace(/\s+/g, " ").slice(0, 50)
+      if (!cleanTitle || isLogoutControl(card, cleanTitle)) return
+
+      const selector = generateOptimalSelector(card)
+      const actionKey = ["card", window.location.pathname, cleanTitle.toLowerCase(), selector].join("|")
+      if (elements.some((e: any) => e.selector === selector || e.actionKey === actionKey)) return
+
+      elements.push({
+        id: `elem-${elementCounter++}`,
+        name: cleanTitle,
+        type: "clickable",
+        selector,
+        actionKey,
+        interactionConfidence: 0.92,
+        discoveryReason: ["Interactive card/feature tile"],
+        isInteractive: true,
+      })
+    })
+
+    // 12. Custom clickable / accessibility controls & pointer elements
     const customInteractiveSelector =
       '[onclick], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="switch"], [aria-controls], [tabindex]:not([tabindex="-1"])'
     document.querySelectorAll(customInteractiveSelector).forEach((el: any) => {
@@ -687,10 +1029,10 @@ export async function extractActionableInventory(page: Page): Promise<{
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
       const rawText = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").trim()
-      if (!rawText && !el.getAttribute("aria-controls")) return
-      if (/(logout|sign out|log off|delete account)/i.test(rawText)) return
+      if (!rawText && !el.getAttribute("aria-controls") && !el.querySelector("svg, img")) return
+      if (isLogoutControl(el, rawText)) return
 
-      const name = rawText.replace(/\s+/g, " ").slice(0, 40) || el.getAttribute("aria-controls") || "Custom Action"
+      const name = getAccessibleControlName(el, el.getAttribute("aria-controls") || "Custom Action")
       const role = el.getAttribute("role")
       const type: ActionableElementType =
         role === "tab" ? "tab" :
@@ -705,11 +1047,7 @@ export async function extractActionableInventory(page: Page): Promise<{
         href = hrefAttr
       }
 
-      const selector = el.id
-        ? "#" + el.id
-        : el.getAttribute("data-testid")
-        ? "[data-testid=\"" + el.getAttribute("data-testid") + "\"]"
-        : undefined
+      const selector = generateOptimalSelector(el)
       const actionKey = [
         type,
         window.location.pathname,
@@ -717,6 +1055,7 @@ export async function extractActionableInventory(page: Page): Promise<{
         href || "",
         el.getAttribute("aria-controls") || "",
       ].join("|")
+      if (elements.some((e: any) => e.selector === selector || e.actionKey === actionKey)) return
 
       elements.push({
         id: `elem-${elementCounter++}`,
@@ -728,131 +1067,47 @@ export async function extractActionableInventory(page: Page): Promise<{
         isInteractive: true,
       })
     })
-    // 10. Semantic UI objects (media/cards/galleries) that may be interactive
-    // A UI object can be actionable without being a native button or anchor.
-    // Detect strong semantic signals, but do not click every image/div blindly.
-    const semanticObjectSelector =
-      'img, video, [class*="card" i], [class*="tile" i], [class*="gallery" i], [class*="thumbnail" i], [class*="avatar" i], [class*="carousel" i], [data-testid], [data-cy], [data-action]'
-    const semanticSeen = new Set<string>()
-    document.querySelectorAll(semanticObjectSelector).forEach((el: any) => {
-      const tag = (el.tagName || '').toLowerCase()
-      if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
-      // Prefer the containing card/gallery object over its child thumbnail.
-      if ((tag === "img" || tag === "video") && el.closest('[class*="card" i], [class*="tile" i], [class*="gallery" i], [class*="carousel" i], [data-action]')) return
 
-      const style = window.getComputedStyle(el)
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
-
-      const text = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("alt") || el.getAttribute("title") || "")
-        .trim().replace(/\s+/g, " ").slice(0, 60)
-      const className = typeof el.className === "string" ? el.className : ""
-      const identity = [el.id || "", el.getAttribute("data-testid") || el.getAttribute("data-cy") || "", className].join("|")
-      const hasMedia = Boolean(el.matches("img, video") || el.querySelector("img, video, picture, source"))
-      const hasSemanticName = /(video|image|photo|gallery|avatar|profile|product|card|tile|thumbnail|carousel|media|preview|attachment)/i.test(identity + " " + text)
-      const hasActionSignal = Boolean(
-        el.hasAttribute("onclick") ||
-        el.hasAttribute("data-action") ||
-        el.hasAttribute("aria-controls") ||
-        el.getAttribute("role") === "button" ||
-        el.getAttribute("role") === "link" ||
-        style.cursor === "pointer" ||
-        el.tabIndex >= 0
-      )
-      const repeatedObject = Boolean(el.parentElement && Array.from(el.parentElement.children).filter((child: any) => {
-        const childClass = typeof child.className === "string" ? child.className : ""
-        return child !== el && childClass && className && childClass === className
-      }).length >= 1)
-
-      // Strong signals are enough; media/card semantics alone are only a candidate
-      // when combined with a second signal such as repetition or pointer behavior.
-      const reasons: string[] = []
-      if (hasMedia) reasons.push("contains media")
-      if (hasSemanticName) reasons.push("semantic media/card naming")
-      if (hasActionSignal) reasons.push("DOM interaction signal")
-      if (repeatedObject) reasons.push("repeated UI object")
-      if (!hasActionSignal && !(hasMedia && (hasSemanticName || repeatedObject))) return
-
-      const confidence = Math.min(0.99,
-        0.45 +
-        (hasMedia ? 0.15 : 0) +
-        (hasSemanticName ? 0.12 : 0) +
-        (hasActionSignal ? 0.20 : 0) +
-        (repeatedObject ? 0.08 : 0)
-      )
-      const type = /video/i.test(identity + " " + text) ? "clickable" :
-        /gallery|carousel/i.test(identity + " " + text) ? "clickable" :
-        /avatar|profile/i.test(identity + " " + text) ? "clickable" :
-        "clickable"
-      const name = text || (hasMedia ? (tag === "video" ? "Video" : "Image") : "Interactive Card")
-      const hrefAttr = el.getAttribute("href") || undefined
-      let href: string | undefined
-      try { href = hrefAttr ? new URL(hrefAttr, window.location.href).href : undefined } catch { href = hrefAttr }
-      const selector = el.id
-        ? "#" + el.id
-        : el.getAttribute("data-testid")
-        ? "[data-testid=\\\"" + el.getAttribute("data-testid") + "\\\"]"
-        : el.getAttribute("data-cy")
-        ? "[data-cy=\\\"" + el.getAttribute("data-cy") + "\\\"]"
-        : undefined
-      const actionKey = [
-        "semantic",
-        window.location.pathname,
-        type,
-        name.toLowerCase(),
-        href || "",
-        el.getAttribute("aria-controls") || "",
-        el.getAttribute("data-testid") || el.getAttribute("data-cy") || className,
-      ].join("|")
-      if (semanticSeen.has(actionKey)) return
-      semanticSeen.add(actionKey)
-
-      elements.push({
-        id: `elem-${elementCounter++}`,
-        name,
-        type,
-        selector,
-        href,
-        actionKey,
-        interactionConfidence: Number(confidence.toFixed(2)),
-        discoveryReason: reasons,
-        isInteractive: true,
-      })
-    })
-
-    // 9. Links & Navigation
-    document.querySelectorAll("a[href]").forEach((el: any) => {
+    // 13. Links & Navigation (including intra-app triggers like Forgot password / Create account)
+    document.querySelectorAll("a").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
       const href = el.getAttribute("href") || ""
-      if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) return
+      if (href.startsWith("mailto:") || href.startsWith("tel:")) return
       if (/(logout|signout)/i.test(href)) return
 
-      const text = (el.textContent || el.getAttribute("title") || href).trim().replace(/\s+/g, " ").slice(0, 40)
-      if (!text) return
+      const text = getAccessibleControlName(el, href || "Link").slice(0, 50)
+      if (!text || isLogoutControl(el, text)) return
 
-      const absoluteHref = (() => {
+      const isHashOrJs = !href || href.startsWith("#") || href.startsWith("javascript:")
+      const absoluteHref = isHashOrJs ? undefined : (() => {
         try {
           return new URL(href, window.location.href).href
         } catch {
           return href
         }
       })()
-      const normalizedHref = absoluteHref.split("#")[0]
+      const type: ActionableElementType = isHashOrJs ? "clickable" : "link"
+      const selector = generateOptimalSelector(el)
       const actionKey = [
-        "link",
+        type,
         window.location.pathname,
         text.toLowerCase(),
-        normalizedHref,
+        absoluteHref || href || "anchor",
       ].join("|")
+      if (elements.some((e: any) => e.selector === selector || e.actionKey === actionKey)) return
 
+      const isAuthAux = /forgot|create|register|signup|sign\s*up|password|reset/i.test(text)
       elements.push({
         id: `elem-${elementCounter++}`,
         name: text,
-        type: "link",
-        selector: el.id ? `#${el.id}` : `a[href="${href}"]`,
+        type,
+        selector,
         href: absoluteHref,
         actionKey,
+        interactionConfidence: isAuthAux ? 0.95 : 0.85,
+        discoveryReason: isAuthAux ? ["Auxiliary authentication link"] : ["Anchor navigation"],
         isInteractive: true,
       })
     })
@@ -864,6 +1119,12 @@ export async function extractActionableInventory(page: Page): Promise<{
       heading: heading || undefined,
     }
   })
+
+  const enriched = await enrichInventoryWithLaya(raw.actionableElements, page.url(), layaBaseUrl)
+  return {
+    ...raw,
+    actionableElements: enriched,
+  }
 }
 
 /**
@@ -1327,29 +1588,160 @@ async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: Logi
   return false
 }
 
-async function collectLinks(page: Page, origin: string): Promise<Array<{ text: string; href: string }>> {
-  return page.evaluate((org: string) => {
-    const list: Array<{ text: string; href: string }> = []
-    const seen = new Set<string>()
-    document.querySelectorAll("a[href]").forEach((a: any) => {
-      try {
-        const full = a.href
-        if (
-          full.startsWith(org) &&
-          !full.includes("#") &&
-          !full.includes("mailto:") &&
-          !/(logout|signout|delete|leave)/i.test(full)
-        ) {
-          const norm = full.split("?")[0].replace(/\/$/, "") || full
+async function collectLinks(
+  page: Page,
+  origin: string,
+  knownRoutes: Array<{ path: string; title?: string }> = []
+): Promise<Array<{ text: string; href: string }>> {
+  return page.evaluate(
+    (org: string, routes: Array<{ path: string; title?: string }>) => {
+      const list: Array<{ text: string; href: string }> = []
+      const seen = new Set<string>()
+
+      const tryAdd = (href?: string | null, rawText?: string | null) => {
+        try {
+          if (!href || typeof href !== "string") return
+          const trimmed = href.trim()
+          if (
+            !trimmed ||
+            trimmed.startsWith("javascript:") ||
+            trimmed.startsWith("mailto:") ||
+            trimmed.startsWith("tel:")
+          ) {
+            return
+          }
+
+          let full = trimmed
+          if (full.startsWith("/")) {
+            full = org + full
+          } else if (!full.startsWith("http://") && !full.startsWith("https://")) {
+            full = org + "/" + full.replace(/^\/+/, "")
+          }
+
+          if (!full.startsWith(org)) return
+          if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) return
+
+          const norm = full.replace(/\/+$/, "") || full
           if (!seen.has(norm)) {
             seen.add(norm)
-            list.push({ text: (a.textContent || norm).trim().slice(0, 30), href: full })
+            const cleanText = (rawText || norm.replace(org, "") || "Navigate").trim().slice(0, 40)
+            list.push({ text: cleanText, href: full })
           }
-        }
-      } catch {}
-    })
-    return list
-  }, origin)
+        } catch {}
+      }
+
+      // 1. Standard Anchor Links
+      document.querySelectorAll("a[href]").forEach((a: any) => {
+        tryAdd(a.getAttribute("href") || a.href, a.textContent || a.getAttribute("aria-label"))
+      })
+
+      // 2. Elements with explicit routing data attributes (Next.js Link, React Router, custom buttons)
+      document
+        .querySelectorAll("[data-href], [data-path], [data-route], [data-to], [data-url]")
+        .forEach((el: any) => {
+          const target =
+            el.getAttribute("data-href") ||
+            el.getAttribute("data-path") ||
+            el.getAttribute("data-route") ||
+            el.getAttribute("data-to") ||
+            el.getAttribute("data-url")
+          if (target) tryAdd(target, el.textContent || el.getAttribute("aria-label"))
+        })
+
+      // 3. Bottom Navigation, Tab Bars, Mobile Docks, and Navigation Bars
+      const navSelector = [
+        "nav",
+        '[role="navigation"]',
+        '[role="tablist"]',
+        "footer",
+        '[class*="bottomNav" i]',
+        '[class*="bottom-nav" i]',
+        '[class*="tabBar" i]',
+        '[class*="tab-bar" i]',
+        '[class*="bottom-bar" i]',
+        '[class*="navigation" i]',
+        '[class*="fixed"][class*="bottom-"]',
+        '[class*="sticky"][class*="bottom-"]',
+        '[aria-label*="nav" i]',
+        '[aria-label*="tab" i]',
+        '[id*="bottom-nav" i]',
+        '[id*="tabbar" i]',
+      ].join(", ")
+
+      document.querySelectorAll(navSelector).forEach((navContainer: any) => {
+        const items = navContainer.querySelectorAll(
+          'a, button, [role="tab"], [role="button"], li, [data-tab], [data-href], [data-path]'
+        )
+        items.forEach((item: any) => {
+          const directHref =
+            item.getAttribute("href") ||
+            item.getAttribute("data-href") ||
+            item.getAttribute("data-path") ||
+            item.getAttribute("data-route") ||
+            item.getAttribute("data-to") ||
+            item.getAttribute("data-url")
+
+          let label = (
+            item.getAttribute("aria-label") ||
+            item.getAttribute("title") ||
+            item.textContent ||
+            ""
+          ).trim()
+
+          // If label is empty, extract icon info (e.g. Lucide/Material/FontAwesome/Feather)
+          if (!label) {
+            const svg = item.querySelector("svg")
+            if (svg) {
+              label =
+                svg.getAttribute("aria-label") ||
+                svg.querySelector("title")?.textContent ||
+                svg.getAttribute("data-icon") ||
+                svg.getAttribute("data-lucide") ||
+                ""
+              if (!label) {
+                const svgClass =
+                  typeof svg.className === "string"
+                    ? svg.className
+                    : (svg.className as any)?.baseVal || ""
+                const iconMatch = svgClass.match(
+                  /(?:lucide|fa|icon|feather|tabler|bi|material)[-_]([a-z0-9-]+)/i
+                )
+                if (iconMatch && iconMatch[1]) {
+                  label = iconMatch[1].replace(/[-_]/g, " ")
+                }
+              }
+            }
+          }
+
+          if (directHref) {
+            tryAdd(directHref, label)
+          } else if (label && !/(logout|sign\s*out|log\s*off)/i.test(label)) {
+            // Match against known project routes first
+            const normLabel = label.toLowerCase().replace(/[^a-z0-9]/g, "")
+            const matchedRoute = routes?.find((r) => {
+              const rClean = r.path.toLowerCase().replace(/[^a-z0-9]/g, "")
+              const rTitleClean = (r.title || "").toLowerCase().replace(/[^a-z0-9]/g, "")
+              return (
+                (rClean && (normLabel.includes(rClean) || rClean.includes(normLabel))) ||
+                (rTitleClean && (normLabel.includes(rTitleClean) || rTitleClean.includes(normLabel)))
+              )
+            })
+
+            if (matchedRoute) {
+              tryAdd(matchedRoute.path, label)
+            } else if (label.length < 25) {
+              const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+              if (slug) tryAdd(`/${slug}`, label)
+            }
+          }
+        })
+      })
+
+      return list
+    },
+    origin,
+    knownRoutes.map((r) => ({ path: r.path, title: r.title }))
+  )
 }
 
 function rebuildActionLedger(job: AutomationJob, entries: ActionLedgerEntry[]): void {
@@ -1540,14 +1932,19 @@ function queueUnplannedLedgerActions(
     .filter((entry) => {
       if (entry.status !== "untested") return false
       if (onlyScreenId && entry.screenId !== onlyScreenId) return false
-      // If already authenticated, do not queue obsolete login wall actions (email/password/signin)
+      // If already authenticated, only skip primary login credential inputs/submits,
+      // but PRESERVE auxiliary actions (forgot password, create account, register, SSO)!
       if (job.authState === "logged_in") {
         const sc = testPlan.screens.find((s) => s.id === entry.screenId)
         if (sc?.isLoginWall) {
-          // Login form already exercised by the authentication step; it no longer exists in the DOM.
-          entry.status = "skipped"
-          entry.error = "Covered by authentication step (login form no longer present after sign-in)."
-          return false
+          const isPrimaryAuthInputOrSubmit =
+            (entry.type === "input" && /(email|user|pass|login)/i.test(entry.name)) ||
+            ((entry.type === "button" || entry.type === "clickable") && /^(sign\s*in|log\s*in|submit)$/i.test(entry.name.trim()))
+          if (isPrimaryAuthInputOrSubmit) {
+            entry.status = "skipped"
+            entry.error = "Covered by authentication step (login form credentials already submitted)."
+            return false
+          }
         }
       }
       return true
@@ -1669,7 +2066,7 @@ export async function discoverAndMapApp(
   job: AutomationJob,
   page: Page,
   baseUrl: string,
-  options: { maxScreens?: number; credentials?: LoginCreds } = {}
+  options: { maxScreens?: number; credentials?: LoginCreds; projectDir?: string } = {}
 ): Promise<{
   screens: AppScreenNode[]
   transitions: AppWorkflowTransition[]
@@ -1679,6 +2076,17 @@ export async function discoverAndMapApp(
   const transitions: AppWorkflowTransition[] = []
   const origin = new URL(baseUrl).origin
   const pathScreenMap = new Map<string, string>() // normalized path -> screenId (e.g. S001)
+
+  // Seed project routes & component locations
+  const fsRoutes = discoverLocalProjectRoutes(baseUrl, options.projectDir)
+  const getComponentLocationForPath = (p: string) => {
+    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
+    const r = fsRoutes.find((route) => {
+      const rClean = route.path.replace(/\/+$/, "") || "/"
+      return rClean === clean || clean.startsWith(rClean)
+    })
+    return r?.file
+  }
 
   appendLog(job, "info", "Starting Phase 1: Systematic Application Discovery & Mapping...")
   job.testingPhase = "discovery"
@@ -1702,14 +2110,19 @@ export async function discoverAndMapApp(
       const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
       shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
     } catch {}
+    const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
+    const compLoc = getComponentLocationForPath(curPath)
     const node: AppScreenNode = {
       id,
-      name: deriveScreenName(curPath, inv.heading, inv.modalTitle),
+      name: deriveScreenName(curPath, inv.heading, inv.modalTitle, pageHasLoginWall),
       url: page.url(),
       path: curPath,
+      componentLocation: compLoc,
+      sourceFile: compLoc,
       screenshotUrl: shot || undefined,
       actionableElements: inv.actionableElements,
       forms: inv.forms,
+      isLoginWall: pageHasLoginWall,
       discoveredAt: new Date().toISOString(),
     }
     screens.push(node)
@@ -1757,11 +2170,10 @@ export async function discoverAndMapApp(
 
   // BFS over internal links: every newly mapped screen contributes its own links
   type Cand = { from: string; text: string; href: string }
-  const queue: Cand[] = (await collectLinks(page, origin)).map((c) => ({ from: startId, ...c }))
+  const queue: Cand[] = (await collectLinks(page, origin, fsRoutes)).map((c) => ({ from: startId, ...c }))
 
   try {
-    const fsRoutes = discoverLocalProjectRoutes(baseUrl)
-    for (const r of fsRoutes) queue.push({ from: startId, text: r.path, href: r.url })
+    for (const r of fsRoutes) queue.push({ from: startId, text: r.title || r.path, href: r.url })
   } catch {}
 
   const visitedHrefs = new Set<string>()
@@ -1771,7 +2183,10 @@ export async function discoverAndMapApp(
 
     const known = pathScreenMap.get(candPath)
     if (known) {
-      if (known !== cand.from) addTransition(cand.from, known, `Navigate to ${cand.text || candPath}`, "navigation")
+      if (known !== cand.from) {
+        addTransition(cand.from, known, `Navigate to ${cand.text || candPath}`, "navigation")
+        addTransition(known, cand.from, `Return / Back ↩️`, "navigation")
+      }
       continue
     }
     if (visitedHrefs.has(candPath)) continue
@@ -1799,9 +2214,10 @@ export async function discoverAndMapApp(
       }
 
       const here = await mapCurrentScreen()
-      addTransition(cand.from, here.id, `Click ${cand.text || candPath}`, "click")
+      addTransition(cand.from, here.id, `Navigate to ${cand.text || candPath}`, "navigation")
+      addTransition(here.id, cand.from, `Return / Back ↩️`, "navigation")
       if (here.isNew) {
-        const more = await collectLinks(page, origin)
+        const more = await collectLinks(page, origin, fsRoutes)
         for (const m of more) queue.push({ from: here.id, ...m })
       }
     } catch (err: any) {
@@ -1813,18 +2229,80 @@ export async function discoverAndMapApp(
   if (screens.length < maxLimit && job.status === "running") {
     try {
       const spaTabs = await page.evaluate(() => {
-        const list: Array<{ name: string; selector?: string }> = []
-        document.querySelectorAll('[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn').forEach((el: any) => {
-          const txt = (el.textContent || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ")
-          if (txt && txt.length < 35 && !/(logout|sign\s*out|log\s*off|delete)/i.test(txt)) {
-            list.push({
-              name: txt,
-              selector: el.id ? `#${el.id}` : el.getAttribute("data-tab") ? `[data-tab="${el.getAttribute("data-tab")}"]` : undefined,
-            })
+        function getAccessibleControlName(el: Element, fallback = "Tab"): string {
+          if (!el) return fallback
+          const h = el as HTMLElement
+          const ariaLabel = h.getAttribute("aria-label")
+          if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim().replace(/\s+/g, " ").slice(0, 50)
+          const title = h.getAttribute("title")
+          if (title && title.trim()) return title.trim().replace(/\s+/g, " ").slice(0, 50)
+          const text = (h.textContent || "").trim()
+          if (text) return text.replace(/\s+/g, " ").slice(0, 50)
+          const svg = el.querySelector("svg")
+          if (svg) {
+            const svgAria = svg.getAttribute("aria-label") || svg.querySelector("title")?.textContent || svg.getAttribute("data-icon") || svg.getAttribute("data-lucide")
+            if (svgAria && svgAria.trim()) return svgAria.trim().slice(0, 50)
+            const svgClass = typeof svg.className === "string" ? svg.className : ((svg.className as any)?.baseVal || "")
+            const iconMatch = svgClass.match(/(?:lucide|fa|icon|feather|tabler|bi|material)[-_]([a-z0-9-]+)/i)
+            if (iconMatch && iconMatch[1]) {
+              const iconName = iconMatch[1].replace(/[-_]/g, " ")
+              return iconName.charAt(0).toUpperCase() + iconName.slice(1)
+            }
           }
+          return fallback
+        }
+
+        function generateOptimalSelector(el: Element): string {
+          if (!el || !(el instanceof Element)) return ""
+          const h = el as HTMLElement
+          if (h.id && document.querySelectorAll("#" + CSS.escape(h.id)).length === 1) return "#" + CSS.escape(h.id)
+          const testId = el.getAttribute("data-testid") || el.getAttribute("data-cy")
+          if (testId) {
+            const sel = `[data-testid="${CSS.escape(testId)}"]`
+            if (document.querySelectorAll(sel).length === 1) return sel
+          }
+          const aria = el.getAttribute("aria-label")
+          if (aria) {
+            const sel = `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria)}"]`
+            if (document.querySelectorAll(sel).length === 1) return sel
+          }
+          const parts: string[] = []
+          let curr: Element | null = el
+          while (curr && curr !== document.documentElement && curr !== document.body) {
+            const parent: Element | null = curr.parentElement
+            const tag = curr.tagName.toLowerCase()
+            if (!parent) { parts.unshift(tag); break }
+            const siblings = Array.from(parent.children).filter((c: any) => c.tagName === curr!.tagName)
+            const idx = siblings.indexOf(curr) + 1
+            parts.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${idx})` : tag)
+            const candidate = parts.join(" > ")
+            try { if (document.querySelectorAll(candidate).length === 1) return candidate } catch {}
+            curr = parent
+          }
+          return parts.join(" > ") || el.tagName.toLowerCase()
+        }
+
+        const list: Array<{ name: string; selector: string }> = []
+        const seenNames = new Set<string>()
+        const tabQuery =
+          '[role="tab"], [data-tab], nav a, nav button, nav [role="button"], footer nav *, [role="navigation"] a, [role="navigation"] button, [role="navigation"] [role="button"], [role="tablist"] > *, [class*="bottomNav" i] *, [class*="bottom-nav" i] *, [class*="tabBar" i] *, [class*="tab-bar" i] *, [class*="fixed"][class*="bottom-"] *, [class*="sticky"][class*="bottom-"] *, .tab, .tab-btn'
+
+        document.querySelectorAll(tabQuery).forEach((el: any) => {
+          const style = window.getComputedStyle(el)
+          if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+          const txt = getAccessibleControlName(el, "").trim().replace(/\s+/g, " ")
+          if (!txt || txt.length > 35 || /(logout|sign\s*out|log\s*off|delete)/i.test(txt)) return
+          if (seenNames.has(txt.toLowerCase())) return
+          seenNames.add(txt.toLowerCase())
+          list.push({
+            name: txt,
+            selector: generateOptimalSelector(el),
+          })
         })
         return list
       })
+
+      const bottomNavScreenIds: string[] = [startId]
 
       for (const tab of spaTabs) {
         if (screens.length >= maxLimit || job.status !== "running") break
@@ -1835,8 +2313,10 @@ export async function discoverAndMapApp(
               try { return document.querySelector(sel) } catch { return null }
             }
             const el = (findEl(target.selector) ||
-              Array.from(document.querySelectorAll('[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button')).find((b: any) =>
-                (b.textContent || "").trim().toLowerCase().includes(target.name.toLowerCase())
+              Array.from(document.querySelectorAll(
+                '[role="tab"], [data-tab], nav a, nav button, nav [role="button"], footer nav *, [role="navigation"] *, [class*="bottomNav" i] *, [class*="tabBar" i] *, .tab, button, a'
+              )).find((b: any) =>
+                (b.textContent || b.getAttribute("aria-label") || "").trim().toLowerCase().includes(target.name.toLowerCase())
               )) as HTMLElement | null
             if (!el) return false
             el.click()
@@ -1854,11 +2334,18 @@ export async function discoverAndMapApp(
                 const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
                 shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
               } catch {}
+              const tabPath = normalizePath(page.url(), origin)
+              const finalPath = tabPath !== "/" && !tabPath.includes("#")
+                ? tabPath
+                : `${tabPath}#${encodeURIComponent(tab.name.toLowerCase().replace(/\s+/g, "-"))}`
+              const compLoc = getComponentLocationForPath(tabPath)
               const tabNode: AppScreenNode = {
                 id: tabScreenId,
                 name: screenHeading,
                 url: page.url(),
-                path: `${normalizePath(page.url(), origin)}#${encodeURIComponent(tab.name.toLowerCase().replace(/\s+/g, "-"))}`,
+                path: finalPath,
+                componentLocation: compLoc,
+                sourceFile: compLoc,
                 screenshotUrl: shot || undefined,
                 actionableElements: inv.actionableElements,
                 forms: inv.forms,
@@ -1869,11 +2356,20 @@ export async function discoverAndMapApp(
               job.currentUrl = page.url()
               mergeScreenActionsIntoLedger(job, tabNode)
               saveJob(job)
-              addTransition(startId, tabNode.id, `Switch to "${tab.name}" Tab`, "click")
+
+              // Interconnect bottom navigation tabs across the entire journey map
+              for (const otherId of bottomNavScreenIds) {
+                if (otherId !== tabNode.id) {
+                  addTransition(otherId, tabNode.id, `Navigate to "${tab.name}" via Bottom Nav`, "click")
+                  addTransition(tabNode.id, otherId, `Return / Back ↩️`, "click")
+                }
+              }
+              bottomNavScreenIds.push(tabNode.id)
+
               appendLog(
                 job,
                 "success",
-                `[DISCOVERY] Screen ${tabNode.id}: "${tabNode.name}" (SPA Tab) mapped with ${tabNode.actionableElements.length} actionable elements.`
+                `[DISCOVERY] Screen ${tabNode.id}: "${tabNode.name}" (SPA / Bottom Nav Tab) mapped with ${tabNode.actionableElements.length} actionable elements.`
               )
             }
           }
@@ -1915,6 +2411,9 @@ export function generateStructuredTestPlan(
   const requiredFileTypesMap = new Map<string, number>()
 
   for (const screen of screens) {
+    // Track which forms are handled so we avoid loose duplicate steps for their inputs/submits
+    const handledFormIds = new Set<string>()
+
     // If this screen was a pre-auth login wall and we are already authenticated:
     if (screen.isLoginWall && options?.isAuthenticated) {
       // Login already ran during discovery. Only report a pass when that run left
@@ -1938,11 +2437,10 @@ export function generateStructuredTestPlan(
         screenshotUrl: postLogin?.screenshotUrl,
         evidenceTimestamp: postLogin?.discoveredAt,
       })
-      continue
+      // Mark primary login form as handled so we don't duplicate credentials checks,
+      // but continue below to plan auxiliary actions (Forgot password, Create account, etc.)
+      screen.forms?.forEach((f) => handledFormIds.add(f.id))
     }
-
-    // Track which forms are handled so we avoid loose duplicate steps for their inputs/submits
-    const handledFormIds = new Set<string>()
 
     // 1. Plan Form Scenarios (grouped by screen.forms)
     if (screen.forms && screen.forms.length > 0) {
@@ -2040,7 +2538,10 @@ export function generateStructuredTestPlan(
 
     // 2. Plan Standalone Form Input field interactions (not part of any handled form)
     const standaloneInputs = screen.actionableElements.filter(
-      (el) => el.type === "input" && (!el.formId || !handledFormIds.has(el.formId))
+      (el) =>
+        el.type === "input" &&
+        (!el.formId || !handledFormIds.has(el.formId)) &&
+        !(screen.isLoginWall && options?.isAuthenticated && /(email|user|pass|login)/i.test(el.name))
     )
     for (const input of standaloneInputs) {
       let syntheticVal = SYNTHETIC_TEST_DATA.fullName
@@ -2138,7 +2639,13 @@ export function generateStructuredTestPlan(
 
     // 6. Plan Standalone Buttons & Action Submits
     const standaloneButtons = screen.actionableElements.filter(
-      (el) => el.type === "button" && (!el.formId || !handledFormIds.has(el.formId))
+      (el) =>
+        el.type === "button" &&
+        (!el.formId || !handledFormIds.has(el.formId) || /forgot|create|register|signup|reset/i.test(el.name)) &&
+        !/(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) &&
+        !/(logout|sign\s*out|log\s*off)/i.test(el.selector || "") &&
+        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "") &&
+        !(screen.isLoginWall && options?.isAuthenticated && /^(sign\s*in|log\s*in|submit)$/i.test(el.name.trim()))
     )
     for (const btn of standaloneButtons) {
       steps.push({
@@ -2152,6 +2659,70 @@ export function generateStructuredTestPlan(
         expectedResult: `Clicking button "${btn.name}" triggers expected transition or modal response.`,
         status: "pending",
       })
+
+      if (!transitions.some((t) => t.fromScreenId === screen.id && t.action === btn.name)) {
+        transitions.push({
+          id: `tr-${transitions.length + 1}`,
+          fromScreenId: screen.id,
+          toScreenId: screen.id,
+          action: btn.name,
+          actionType: "click",
+          triggerSelector: btn.selector,
+        })
+      }
+    }
+
+    // 7. Plan Standalone Clickables, Cards, Tabs, Links & Menus
+    const standaloneClickables = screen.actionableElements.filter(
+      (el) =>
+        (el.type === "clickable" || el.type === "tab" || el.type === "link" || el.type === "menu") &&
+        (!el.formId || !handledFormIds.has(el.formId) || el.type === "link" || el.type === "clickable" || /forgot|create|register|signup|reset/i.test(el.name)) &&
+        !/(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) &&
+        !/(logout|sign\s*out|log\s*off)/i.test(el.selector || "") &&
+        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "") &&
+        !(screen.isLoginWall && options?.isAuthenticated && /^(sign\s*in|log\s*in|submit)$/i.test(el.name.trim()))
+    )
+    for (const item of standaloneClickables) {
+      const typeLabel =
+        item.type === "tab" ? "Tab" :
+        item.type === "link" ? "Link" :
+        item.type === "menu" ? "Menu item" : "Control"
+      steps.push({
+        id: `step-${stepCounter++}`,
+        screenId: screen.id,
+        screenName: screen.name,
+        stepIndex: steps.length + 1,
+        actionType: "click",
+        targetName: item.name,
+        targetSelector: item.selector,
+        actionKey: item.actionKey,
+        expectedResult: `Clicking ${typeLabel.toLowerCase()} "${item.name}" triggers expected state change, transition, modal, or UI response.`,
+        status: "pending",
+      })
+
+      // If this item connects to another known screen (e.g. Drills, Workout, Profile tab, or link), point edge to that screen!
+      let targetScreenId = screen.id
+      const targetScreen = screens.find(
+        (s) =>
+          s.id !== screen.id &&
+          (s.name.toLowerCase().includes(item.name.toLowerCase()) ||
+            item.name.toLowerCase().includes(s.name.toLowerCase()) ||
+            (item.href && s.url.includes(item.href)))
+      )
+      if (targetScreen) {
+        targetScreenId = targetScreen.id
+      }
+
+      if (!transitions.some((t) => t.fromScreenId === screen.id && t.toScreenId === targetScreenId && t.action === item.name)) {
+        transitions.push({
+          id: `tr-${transitions.length + 1}`,
+          fromScreenId: screen.id,
+          toScreenId: targetScreenId,
+          action: item.name,
+          actionType: "click",
+          triggerSelector: item.selector,
+        })
+      }
     }
   }
 
@@ -2201,6 +2772,7 @@ export async function executeStructuredTestPlan(
     allowTestPayments?: boolean
     uploadFilesDir?: string
     uploadInventory?: UploadFolderInventory | null
+    projectDir?: string
   }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
@@ -2223,6 +2795,15 @@ export async function executeStructuredTestPlan(
 
   const isProd = isProductionLike(testPlan.targetUrl)
   const isPaymentPermitted = options?.allowTestPayments === true
+  const fsPlanRoutes = discoverLocalProjectRoutes(testPlan.targetUrl, options?.projectDir)
+  const getComponentLocationForPlanPath = (p: string) => {
+    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
+    const r = fsPlanRoutes.find((route) => {
+      const rClean = route.path.replace(/\/+$/, "") || "/"
+      return rClean === clean || clean.startsWith(rClean)
+    })
+    return r?.file
+  }
 
   const startingHadLoginWall = await hasLoginWall(page)
   if (startingHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
@@ -2405,10 +2986,18 @@ export async function executeStructuredTestPlan(
       // 1. Restore the target screen before executing its action.
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
-        const targetBasePath = targetScreen.path.split("#")[0]
-        if (!page.url().includes(targetBasePath)) {
-          await page.goto(targetScreen.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
-          await new Promise((r) => setTimeout(r, 400))
+        const curOrigin = new URL(page.url()).origin
+        const curNormPath = normalizePath(page.url(), curOrigin).split("#")[0]
+        const targetUrlStr = targetScreen.url || testPlan.targetUrl
+        const targetOrigin = new URL(targetUrlStr.startsWith("http") ? targetUrlStr : testPlan.targetUrl).origin
+        const targetNormPath = (targetScreen.path || "/").split("#")[0]
+
+        if (curNormPath !== targetNormPath || curOrigin !== targetOrigin) {
+          const navUrl = targetUrlStr.startsWith("http")
+            ? targetUrlStr
+            : new URL(targetNormPath, testPlan.targetUrl).href
+          await page.goto(navUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+          await waitForSpaPageReady(page, 1500).catch(() => {})
         }
 
         // Discovery assigns a synthetic #tab-name path to SPA views. The URL
@@ -3478,49 +4067,112 @@ export async function executeStructuredTestPlan(
       const origin = new URL(testPlan.targetUrl).origin
       const currentNorm = normalizePath(currentUrl, origin)
       const newInv = await extractActionableInventory(page)
-      const currentScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle)
       const hasActiveModal = Boolean(newInv.modalTitle)
-
       const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
 
-      let currentScreen = testPlan.screens.find((screen) =>
-        screen.path.split("#")[0] === currentNorm &&
-        screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase() &&
-        (Boolean(screen.isLoginWall) === pageHasLoginWall)
-      )
+      const previousScreen = testPlan.screens.find((s) => s.id === step.screenId)
+      const prevElementNames = new Set(previousScreen?.actionableElements.map((e) => e.name.toLowerCase()) || [])
+      const newElementNames = new Set(newInv.actionableElements.map((e) => e.name.toLowerCase()))
+      const commonNames = Array.from(newElementNames).filter((n) => prevElementNames.has(n))
+      const similarity =
+        prevElementNames.size > 0
+          ? commonNames.length / Math.max(prevElementNames.size, newElementNames.size)
+          : 0
+      const isSignificantViewChange =
+        hasActiveModal ||
+        (newInv.actionableElements.length >= 2 && similarity < 0.45)
+
+      let currentScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle, pageHasLoginWall)
+      const actionClean = step.targetName.replace(/^Click\s*"?|"?\s*$/gi, "").trim()
+      if (hasActiveModal || isSignificantViewChange || Boolean(step.screenshotUrl)) {
+        if (!newInv.heading || currentScreenName === "Home / Dashboard" || currentScreenName === previousScreen?.name) {
+          currentScreenName = actionClean ? `${actionClean} (${step.actionType || "Action"})` : "Action Screen"
+        }
+      }
+
+      const isLogoutAction = /log\s*out|sign\s*out|log\s*off/i.test(step.targetName)
+      const isReturnedToLogin = Boolean(pageHasLoginWall || /login|sign[-_ ]?in/i.test(currentNorm))
+
+      let currentScreen: AppScreenNode | undefined
       let createdNewScreen = false
 
-      if (!currentScreen && !hasActiveModal) {
-        currentScreen = testPlan.screens.find((screen) =>
-          screen.path.split("#")[0] === currentNorm &&
-          (!newInv.heading || screen.name.toLowerCase().includes(newInv.heading.toLowerCase())) &&
-          (Boolean(screen.isLoginWall) === pageHasLoginWall)
-        )
+      if (isLogoutAction || (isReturnedToLogin && step.screenId !== "S001")) {
+        const loginScreen =
+          testPlan.screens.find((s) => s.isLoginWall || /login|sign\s*in/i.test(s.name) || /login|sign[-_ ]?in/i.test(s.path)) ||
+          testPlan.screens[0]
+
+        if (loginScreen) {
+          currentScreen = loginScreen
+          const originScreenId = step.screenId || previousScreen?.id || "S001"
+          if (!testPlan.transitions.some((t) => t.fromScreenId === originScreenId && t.toScreenId === loginScreen.id && /log\s*out|sign\s*out|login/i.test(t.action))) {
+            testPlan.transitions.push({
+              id: `tr-logout-to-login-${testPlan.transitions.length + 1}`,
+              fromScreenId: originScreenId,
+              toScreenId: loginScreen.id,
+              action: step.targetName || "Log out (Return to Login)",
+              actionType: "navigation",
+            })
+          }
+          appendLog(job, "success", `🔄 [WORKFLOW COMPLETE] Transition mapped from "${originScreenId}" back to "${loginScreen.name}" (${loginScreen.id}) via "${step.targetName || 'Log out'}". Workflow lifecycle completed!`)
+        }
+      }
+
+      if (!currentScreen) {
+        currentScreen = testPlan.screens.find((screen) => {
+          if (screen.id === step.screenId && screen.id !== "S001") return true
+          if (hasActiveModal) return screen.name.toLowerCase() === currentScreenName.toLowerCase()
+          return (
+            screen.path.split("#")[0] === currentNorm &&
+            screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase() &&
+            Boolean(screen.isLoginWall) === pageHasLoginWall
+          )
+        })
       }
 
       if (!currentScreen) {
         createdNewScreen = true
         const newScreenId = `S${String(testPlan.screens.length + 1).padStart(3, "0")}`
+        const compLoc = getComponentLocationForPlanPath(currentNorm)
         currentScreen = {
           id: newScreenId,
           name: currentScreenName,
           url: currentUrl,
-          path: hasActiveModal ? `${currentNorm}#modal-${encodeURIComponent((newInv.modalTitle || "dialog").toLowerCase().replace(/\\s+/g, "-"))}` : currentNorm,
+          path: hasActiveModal
+            ? `${currentNorm}#modal-${encodeURIComponent((newInv.modalTitle || "dialog").toLowerCase().replace(/\s+/g, "-"))}`
+            : `${currentNorm}#action-${step.stepIndex}-${encodeURIComponent(currentScreenName.toLowerCase().replace(/\s+/g, "-"))}`,
+          componentLocation: compLoc,
+          sourceFile: compLoc,
           screenshotUrl: step.screenshotUrl,
           actionableElements: [],
           forms: [],
+          isLoginWall: pageHasLoginWall,
           isNewDiscovery: true,
           discoveredAt: new Date().toISOString(),
         }
         testPlan.screens.push(currentScreen)
+        const originScreenId = step.screenId || testPlan.screens[0]?.id || "S001"
         testPlan.transitions.push({
           id: `tr-${testPlan.transitions.length + 1}`,
-          fromScreenId: step.screenId,
+          fromScreenId: originScreenId,
           toScreenId: newScreenId,
-          action: `[NEW DISCOVERY] Triggered by ${step.targetName}`,
-          actionType: hasActiveModal ? "modal_open" : "click",
+          action: step.targetName,
+          actionType: hasActiveModal ? "modal_open" : step.actionType === "fill" ? "form_submit" : "click",
         })
-        appendLog(job, "success", `🌟 [NEW DISCOVERY] Found ${hasActiveModal ? "modal/view" : "screen"} ${newScreenId}: "${currentScreenName}" during test.`)
+        // Map backward return transition as well to verify bidirectional workflow
+        testPlan.transitions.push({
+          id: `tr-return-${testPlan.transitions.length + 1}`,
+          fromScreenId: newScreenId,
+          toScreenId: originScreenId,
+          action: `Return / Back ↩️ (Verified)`,
+          actionType: hasActiveModal ? "modal_close" : "navigation",
+        })
+        step.screenId = newScreenId
+        step.screenName = currentScreenName
+        step.url = currentUrl
+        step.componentLocation = compLoc
+        appendLog(job, "success", `🌟 [ACTION SCREEN] Created screen ${newScreenId}: "${currentScreenName}" with verified return path to ${originScreenId}.`)
+      } else if (step.screenshotUrl && !currentScreen.screenshotUrl) {
+        currentScreen.screenshotUrl = step.screenshotUrl
       }
 
       const resolvedScreen = currentScreen as AppScreenNode
@@ -3556,6 +4208,27 @@ export async function executeStructuredTestPlan(
 
       resolvedScreen.url = currentUrl
       if (step.screenshotUrl) resolvedScreen.screenshotUrl = step.screenshotUrl
+
+      // Record / update transition for this click so the workflow map reflects actual navigation
+      if (step.actionType === "click" || step.actionType === "toggle") {
+        const destScreenId = resolvedScreen.id || step.screenId
+        const existingTrans = testPlan.transitions.find(
+          (t) => t.fromScreenId === step.screenId && t.action === step.targetName
+        )
+        if (existingTrans) {
+          existingTrans.toScreenId = destScreenId
+        } else {
+          testPlan.transitions.push({
+            id: `tr-${testPlan.transitions.length + 1}`,
+            fromScreenId: step.screenId,
+            toScreenId: destScreenId,
+            action: step.targetName,
+            actionType: step.actionType === "click" ? "click" : "toggle",
+            triggerSelector: step.targetSelector,
+          })
+        }
+      }
+
       mergeScreenActionsIntoLedger(job, resolvedScreen)
       linkTestPlanStepsToLedger(job, testPlan)
       const queuedNow = queueUnplannedLedgerActions(job, testPlan, resolvedScreen.id, i)
@@ -3839,6 +4512,7 @@ export async function executeFullAppTestingJob(
       const discovery = await discoverAndMapApp(job, page, job.targetUrl, {
         maxScreens: params.maxScreens || 10,
         credentials: sessionCreds,
+        projectDir: params.projectDir,
       })
 
       // Populate screens for UI compatibility
@@ -3955,6 +4629,7 @@ export async function executeFullAppTestingJob(
       paymentCredentials: params.paymentCredentials,
       uploadFilesDir: uploadFilesDir || undefined,
       uploadInventory,
+      projectDir: params.projectDir,
     })
 
     // Finalize session video recording

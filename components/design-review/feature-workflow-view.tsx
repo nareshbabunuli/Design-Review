@@ -30,6 +30,17 @@ import {
   User,
   MessageSquare,
   Wand2,
+  Trash2,
+  Paperclip,
+  Camera,
+  ChevronDown,
+  Settings,
+  Key,
+  Mail,
+  X,
+  Square,
+  ShieldAlert,
+  FastForward,
 } from "lucide-react"
 import type {
   AutomationJob,
@@ -41,6 +52,7 @@ import type {
 } from "@/lib/ai-automation/types"
 import TestFlowGraph from "./test-flow-graph"
 import { buildFigmaWorkflowMap, isFullAppCommand } from "@/lib/ai-automation/full-app-utils"
+import AiConfigPanel from "./ai-config-panel"
 
 interface FeatureWorkflowViewProps {
   job: AutomationJob | null
@@ -49,7 +61,7 @@ interface FeatureWorkflowViewProps {
   activeSubTab?: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   onSubTabChange?: (tab: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
   projectId?: string
-  onStartWorkflowTest: (workflowPrompt: string, role?: string, workflowName?: string) => Promise<void>
+  onStartWorkflowTest: (workflowPrompt: string, role?: string, workflowName?: string, attachedImg?: string | null) => Promise<void>
   onStartFullAppTest?: () => Promise<void>
   onCancelJob?: () => void
   onOpenMapPage?: () => void
@@ -59,6 +71,52 @@ interface FeatureWorkflowViewProps {
   fullPageView?: boolean
   isFullStage?: boolean
   onToggleFullStage?: () => void
+
+  // AI Configuration & Provider display
+  aiProvider?: "nebius" | "omnirouter" | "local"
+  onUpdateAiProvider?: (provider: "nebius" | "omnirouter" | "local") => void
+  nebiusApiKey?: string
+  onUpdateNebiusApiKey?: (key: string) => void
+  selectedAiModel?: string
+  onUpdateAiModel?: (model: string) => void
+  omniRouterBaseUrl?: string
+  onUpdateOmniRouterUrl?: (url: string) => void
+  omniRouterKey?: string
+  onUpdateOmniRouterKey?: (key: string) => void
+  omniRouterModel?: string
+  onUpdateOmniRouterModel?: (model: string) => void
+  localAiBaseUrl?: string
+  onUpdateLocalBaseUrl?: (url: string) => void
+  isTestingAiConnection?: boolean
+  onTestAiConnection?: () => Promise<void> | void
+  aiConnectionTestResult?: { success: boolean; message: string } | null
+  onOpenAiConfig?: () => void
+
+  // Live Screen Capture & Attachments
+  onCaptureCurrentScreen?: () => void
+
+  // Target Project & Routes Presets
+  selectedProjectDir?: string
+  onSelectProjectDir?: (dir: string) => void
+  availableProjects?: Array<{ name: string; path: string; defaultPort?: number }>
+  discoveredRoutes?: Array<{ path: string; url: string; sourceFile?: string }>
+  onRescanRoutes?: () => void
+  isScanningRoutes?: boolean
+  onGenerateTestData?: () => void
+  isGeneratingTestData?: boolean
+  onNavigateUrl?: (url: string) => void
+
+  // Verification & Credentials forms
+  onConfirmVerification?: (code?: string, url?: string) => Promise<void>
+  onSkipVerification?: () => void
+  onSaveSettingsCredentials?: (creds: Record<string, string>) => Promise<void>
+  onSkipSettingsCredentials?: () => void
+  onUnblockWorkflows?: (options: {
+    mode: "synthetic_data" | "credentials" | "retry" | "skip"
+    username?: string
+    password?: string
+    screenId?: string
+  }) => Promise<void>
 }
 
 export interface BotWorkflowChatMessage {
@@ -71,6 +129,12 @@ export interface BotWorkflowChatMessage {
   spec?: FeatureWorkflowSpec
   plan?: FullAppTestPlan
   workflowPrompt?: string
+  imageUrl?: string
+  isBlockedDiagnostic?: boolean
+  blockedDetails?: {
+    screens: Array<{ name: string; path?: string; reason?: string }>
+    count: number
+  }
 }
 
 const CONVERSATIONAL_PROMPT_SUGGESTIONS = [
@@ -113,6 +177,39 @@ export default function FeatureWorkflowView({
   fullPageView = true,
   isFullStage,
   onToggleFullStage,
+  aiProvider = "nebius",
+  onUpdateAiProvider,
+  nebiusApiKey = "",
+  onUpdateNebiusApiKey,
+  selectedAiModel = "nvidia/Nemotron-3-Nano-Omni",
+  onUpdateAiModel,
+  omniRouterBaseUrl = "https://api.unorouter.com/v1",
+  onUpdateOmniRouterUrl,
+  omniRouterKey = "",
+  onUpdateOmniRouterKey,
+  omniRouterModel = "fast",
+  onUpdateOmniRouterModel,
+  localAiBaseUrl = "http://localhost:11434/v1",
+  onUpdateLocalBaseUrl,
+  isTestingAiConnection = false,
+  onTestAiConnection,
+  aiConnectionTestResult,
+  onOpenAiConfig,
+  onCaptureCurrentScreen,
+  selectedProjectDir = "landlord-accounting-portal",
+  onSelectProjectDir,
+  availableProjects = [],
+  discoveredRoutes = [],
+  onRescanRoutes,
+  isScanningRoutes = false,
+  onGenerateTestData,
+  isGeneratingTestData = false,
+  onNavigateUrl,
+  onConfirmVerification,
+  onSkipVerification,
+  onSaveSettingsCredentials,
+  onSkipSettingsCredentials,
+  onUnblockWorkflows,
 }: FeatureWorkflowViewProps) {
   const [chatMessages, setChatMessages] = useState<BotWorkflowChatMessage[]>([
     {
@@ -129,7 +226,31 @@ export default function FeatureWorkflowView({
   const [previewPlan, setPreviewPlan] = useState<FullAppTestPlan | null>(null)
   const [activeRole, setActiveRole] = useState<string | null>(null)
   const [selectedScreenshotModal, setSelectedScreenshotModal] = useState<string | null>(null)
+  const [attachedImage, setAttachedImage] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
+  const [verificationUrlInput, setVerificationUrlInput] = useState("")
+  const [verificationCodeInput, setVerificationCodeInput] = useState("")
+  const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
+  const [showSettingsSecrets, setShowSettingsSecrets] = useState<Record<string, boolean>>({})
+  const [isSubmittingSettings, setIsSubmittingSettings] = useState(false)
+  const [isSubmittingVerification, setIsSubmittingVerification] = useState(false)
+  const [blockedUsernameInput, setBlockedUsernameInput] = useState("")
+  const [blockedPasswordInput, setBlockedPasswordInput] = useState("")
+  const [isUnblockingWorkflows, setIsUnblockingWorkflows] = useState(false)
   const chatBottomRef = useRef<HTMLDivElement>(null)
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setAttachedImage(reader.result)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -155,6 +276,131 @@ export default function FeatureWorkflowView({
     return job?.featureWorkflowSpec || analyzedSpec
   }, [job?.featureWorkflowSpec, analyzedSpec])
 
+  // Identify blocked steps and screens across the current plan or job
+  const blockedSteps = useMemo(() => {
+    return activePlan?.steps?.filter((s) => s.status === "blocked") || []
+  }, [activePlan?.steps])
+
+  const blockedScreenNames = useMemo(() => {
+    const names = new Set<string>()
+    blockedSteps.forEach((s) => {
+      if (s.screenName) names.add(s.screenName)
+      else if (s.screenId) names.add(s.screenId)
+    })
+    if (job?.authState === "awaiting_credentials") {
+      names.add("Authentication / Login Wall")
+    }
+    if (activePlan?.screens) {
+      activePlan.screens.forEach((s) => {
+        if (s.isLoginWall || (s as any).testStatus === "blocked") names.add(s.name || s.path)
+      })
+    }
+    return Array.from(names)
+  }, [blockedSteps, job?.authState, activePlan?.screens])
+
+  // Execute unblock action (credentials, synthetic data, retry, or skip)
+  const handleExecuteUnblock = async (
+    mode: "synthetic_data" | "credentials" | "retry" | "skip",
+    customUser?: string,
+    customPass?: string
+  ) => {
+    setIsUnblockingWorkflows(true)
+    const username = (customUser ?? blockedUsernameInput).trim()
+    const password = (customPass ?? blockedPasswordInput).trim()
+    try {
+      if (onUnblockWorkflows) {
+        await onUnblockWorkflows({ mode, username, password })
+      } else if (job?.id) {
+        await fetch("/api/ai-automation/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: job.id,
+            action: "unblock_workflows",
+            mode,
+            username,
+            password,
+          }),
+        })
+      }
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `unblock-ack-${Date.now()}`,
+          sender: "agent",
+          text:
+            mode === "skip"
+              ? "⏭️ Skipped blocked steps. Continuing with remaining workflows."
+              : mode === "credentials"
+              ? `🔑 Credentials applied for "${username || "account"}". Unblocked workflows and resumed testing!`
+              : mode === "synthetic_data"
+              ? "⚡ Auto-filled valid synthetic test data across required inputs. Unblocked workflows and resumed testing!"
+              : "🔄 Cleared blockers and retrying workflows now!",
+          timestamp: new Date().toISOString(),
+          status: "completed",
+        },
+      ])
+      setBlockedUsernameInput("")
+      setBlockedPasswordInput("")
+    } catch (err: any) {
+      console.error("Failed to unblock workflows:", err)
+    } finally {
+      setIsUnblockingWorkflows(false)
+    }
+  }
+
+  // Proactively ask diagnostic questions in chat when screens or workflows are blocked
+  useEffect(() => {
+    if (blockedScreenNames.length === 0 && job?.authState !== "awaiting_credentials") return
+    const diagId = `diag-blocked-${job?.id || "run"}-${blockedScreenNames.join("-")}-${blockedSteps.length}`
+    setChatMessages((prev) => {
+      if (prev.some((m) => m.id === diagId)) return prev
+      return [
+        ...prev,
+        {
+          id: diagId,
+          sender: "agent",
+          text: `⚠️ **I found ${blockedScreenNames.length} blocked screen${blockedScreenNames.length > 1 ? "s" : ""} on your workflows:**\n${blockedScreenNames.map((s) => `• **${s}**`).join("\n")}\n\n**Let's get back on track! Quick questions to unblock:**\n1. 🔑 **Credentials:** Does this screen require test account login? (Type credentials or enter below)\n2. ⚡ **Synthetic Data:** Should I auto-generate valid synthetic accounts and form data?\n3. 🔄 **Retry:** Should I dismiss overlays/modals and retry these actions?\n4. ⏭️ **Skip:** Or skip these blocked steps to continue the rest of the test?`,
+          timestamp: new Date().toISOString(),
+          status: "completed",
+          isBlockedDiagnostic: true,
+          blockedDetails: {
+            screens: blockedScreenNames.map((n) => ({ name: n })),
+            count: blockedScreenNames.length,
+          },
+        },
+      ]
+    })
+  }, [blockedScreenNames, blockedSteps.length, job?.authState, job?.id])
+
+  // When a test completes, post a summary in chat and automatically switch from execution back to chat
+  useEffect(() => {
+    if (job?.status === "completed" && job?.id) {
+      const summaryId = `job-completed-summary-${job.id}`
+      setChatMessages((prev) => {
+        if (prev.some((m) => m.id === summaryId)) return prev
+        const pCount = activePlan?.steps?.filter((s) => s.status === "passed").length || 0
+        const fCount = activePlan?.steps?.filter((s) => s.status === "failed").length || 0
+        const bCount = activePlan?.steps?.filter((s) => s.status === "blocked").length || 0
+        return [
+          ...prev,
+          {
+            id: summaryId,
+            sender: "agent",
+            text: `🎉 **Workflow Test Execution Completed!**\n\n• **Steps Passed:** ${pCount}\n• **Steps Failed:** ${fCount}\n• **Steps Blocked:** ${bCount}\n• **Screens Discovered:** ${activePlan?.screens?.length || 0}\n\nYou can review step details in the **Plan** or **Map** tabs, ask me follow-up questions here in chat, or re-run testing.`,
+            timestamp: new Date().toISOString(),
+            status: "completed",
+          },
+        ]
+      })
+
+      // If user was watching execution, return to chat to see completed results and follow up
+      if (activeSubTab === "execution" && onSubTabChange) {
+        onSubTabChange("chat")
+      }
+    }
+  }, [job?.status, job?.id, activeSubTab, onSubTabChange, activePlan])
+
   // Natural language chat / workflow analyzer
   const handleSendChatMessage = async (customPrompt?: string) => {
     const text = (customPrompt || chatInput).trim()
@@ -178,6 +424,42 @@ export default function FeatureWorkflowView({
       text,
       timestamp: new Date().toISOString(),
       role: detectedRole,
+    }
+
+    // Check if user answered the unblock questionnaire in chat
+    if (blockedScreenNames.length > 0 || job?.authState === "awaiting_credentials") {
+      const isSkip = /^\s*(skip|bypass|ignore)\b/i.test(text)
+      const isRetry = /^\s*(retry|try again|retest|re-test|unblock)\b/i.test(text)
+      const isSynthetic = /^\s*(synthetic|auto-?fill|dummy|fake|generate)\b/i.test(text)
+      const emailMatch = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/)
+      const passMatch = text.match(/(?:pass(?:word)?[:=\s]+)(\S+)/i)
+
+      if (isSkip) {
+        setChatMessages((prev) => [...prev, userMsg])
+        setIsAnalyzing(false)
+        await handleExecuteUnblock("skip")
+        return
+      }
+      if (isSynthetic) {
+        setChatMessages((prev) => [...prev, userMsg])
+        setIsAnalyzing(false)
+        await handleExecuteUnblock("synthetic_data")
+        return
+      }
+      if (isRetry && !emailMatch) {
+        setChatMessages((prev) => [...prev, userMsg])
+        setIsAnalyzing(false)
+        await handleExecuteUnblock("retry")
+        return
+      }
+      if (emailMatch || passMatch) {
+        const u = emailMatch ? emailMatch[0] : (text.match(/(?:user(?:name)?|login|email)[:=\s]+(\S+)/i)?.[1] || "")
+        const p = passMatch ? passMatch[1] : ""
+        setChatMessages((prev) => [...prev, userMsg])
+        setIsAnalyzing(false)
+        await handleExecuteUnblock("credentials", u, p)
+        return
+      }
     }
 
     if (isFullAppCommand(text)) {
@@ -323,8 +605,9 @@ export default function FeatureWorkflowView({
           )}
         </div>
 
-        {/* Action Button: Run / Stop */}
+        {/* Action Buttons: Run / Stop */}
         <div className="flex items-center gap-2">
+
           {isRunning ? (
             <button
               type="button"
@@ -418,6 +701,54 @@ export default function FeatureWorkflowView({
         {/* SUBTAB 0: TESTING BOT CHAT CONVERSATION */}
         {(activeSubTab === "chat" || !activeSubTab) && (
           <div className="h-full flex flex-col max-w-4xl mx-auto space-y-3">
+            {/* 1. Chat Top Bar: Provider / Model badge + AI Config + Clear Chat */}
+            <div className="px-3.5 py-2 rounded-xl border border-slate-800 bg-slate-900/80 flex items-center justify-between text-xs shrink-0 gap-2 shadow-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={onOpenAiConfig}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/50 text-left transition cursor-pointer group"
+                  title="Configure Nebius Token Factory, OmniRouter, or local AI (Draggable Window)"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <span className="font-semibold text-white text-[11px] truncate">
+                    {aiProvider === "omnirouter"
+                      ? "OmniRouter"
+                      : aiProvider === "local"
+                      ? "Local Ollama"
+                      : "Nebius Token Factory"}
+                  </span>
+                  <span className="text-[10px] text-purple-300 font-mono truncate max-w-[160px]">
+                    ({aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()})
+                  </span>
+                  <Settings className="h-3 w-3 text-purple-400 opacity-70 group-hover:opacity-100 transition-opacity shrink-0 ml-0.5" />
+                </button>
+                <span className="text-[10px] text-slate-500 hidden sm:inline">Vision &amp; Automation Active</span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatMessages([
+                      {
+                        id: `welcome-${Date.now()}`,
+                        sender: "agent",
+                        text: "👋 I'm your AI Testing Bot. Describe any feature or workflow you want to test naturally.\n\nYou can tell me to act as any role (e.g. \"Act as a customer and test checkout\", \"Act as an admin to manage users\", or \"Test user signup with invalid email\"). I'll identify the path, generate a pre-flight plan, and test edge cases.",
+                        timestamp: new Date().toISOString(),
+                        status: "completed",
+                      },
+                    ])
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 text-[11px] flex items-center gap-1 transition cursor-pointer"
+                  title="Clear chat history"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span className="hidden sm:inline">Clear Chat</span>
+                </button>
+              </div>
+            </div>
+
             {/* Live running status banner */}
             {isRunning && (
               <div className="p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/50 text-xs flex items-center justify-between gap-3 shadow-md shrink-0">
@@ -475,6 +806,16 @@ export default function FeatureWorkflowView({
                           : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none space-y-2.5 shadow-md"
                       }`}
                     >
+                      {msg.imageUrl && (
+                        <div className="relative rounded-lg overflow-hidden border border-slate-700 max-w-[260px] my-1.5 shadow-sm">
+                          <img
+                            src={msg.imageUrl}
+                            alt="Attached Screen"
+                            className="w-full h-auto object-cover max-h-48"
+                          />
+                        </div>
+                      )}
+
                       {msg.status === "thinking" ? (
                         <div className="flex items-center gap-2 text-indigo-300 font-medium">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" />
@@ -568,6 +909,387 @@ export default function FeatureWorkflowView({
               <div ref={chatBottomRef} />
             </div>
 
+            {/* Interactive Verification Prompt Card in Chat */}
+            {job && job.verificationState === "awaiting_verification" && (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 space-y-2 text-xs shrink-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-200 flex items-center gap-1.5">
+                    <Mail className="h-3.5 w-3.5 text-amber-400" />
+                    Action Required: Confirm Email / Verification
+                  </span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">Paused</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  {job.verificationPrompt || "Please click confirmation link or enter verification URL/code below."}
+                </p>
+                <div className="space-y-1.5">
+                  <input
+                    type="url"
+                    value={verificationUrlInput}
+                    onChange={(e) => setVerificationUrlInput(e.target.value)}
+                    placeholder="Verification / Magic Link URL"
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={verificationCodeInput}
+                    onChange={(e) => setVerificationCodeInput(e.target.value)}
+                    placeholder="OTP / Code (if applicable)"
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isSubmittingVerification}
+                    onClick={async () => {
+                      if (!onConfirmVerification) return
+                      setIsSubmittingVerification(true)
+                      try {
+                        await onConfirmVerification(verificationCodeInput, verificationUrlInput)
+                      } finally {
+                        setIsSubmittingVerification(false)
+                      }
+                    }}
+                    className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingVerification ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                    <span>I&apos;ve Completed Verification</span>
+                  </button>
+                  {onSkipVerification && (
+                    <button
+                      type="button"
+                      disabled={isSubmittingVerification}
+                      onClick={onSkipVerification}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
+                    >
+                      Skip
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Interactive Settings Credentials Form in Chat */}
+            {job && job.settingsState === "awaiting_credentials" && (
+              <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/50 space-y-2 text-xs shrink-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-indigo-200 flex items-center gap-1.5">
+                    <Key className="h-3.5 w-3.5 text-indigo-400" />
+                    Action Required: Enter Application Settings Secrets
+                  </span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono">Protected</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  {job.settingsPrompt || "Enter credentials to configure application settings. Secrets are redacted and never logged."}
+                </p>
+                <div className="space-y-1.5">
+                  {(job.requiredSettingsFields && job.requiredSettingsFields.length > 0
+                    ? job.requiredSettingsFields
+                    : [{ key: "apiKey", label: "API Key", isSecret: true, placeholder: "sk-..." }]
+                  ).map((field) => (
+                    <div key={field.key} className="space-y-0.5">
+                      <label className="text-[10px] text-slate-300 block">{field.label}</label>
+                      <input
+                        type={field.isSecret && !showSettingsSecrets[field.key] ? "password" : "text"}
+                        value={settingsFormValues[field.key] || ""}
+                        onChange={(e) => setSettingsFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                        placeholder={field.placeholder || `Enter ${field.label}`}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isSubmittingSettings}
+                    onClick={async () => {
+                      if (!onSaveSettingsCredentials) return
+                      setIsSubmittingSettings(true)
+                      try {
+                        await onSaveSettingsCredentials(settingsFormValues)
+                      } finally {
+                        setIsSubmittingSettings(false)
+                      }
+                    }}
+                    className="flex-1 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingSettings ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                    <span>Save &amp; Resume</span>
+                  </button>
+                  {onSkipSettingsCredentials && (
+                    <button
+                      type="button"
+                      disabled={isSubmittingSettings}
+                      onClick={onSkipSettingsCredentials}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
+                    >
+                      Skip
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Interactive Blocked Screens Diagnostic & Resolution Card in Chat */}
+            {(blockedScreenNames.length > 0 || job?.authState === "awaiting_credentials") && (
+              <div className="p-3.5 rounded-xl bg-gradient-to-b from-amber-950/40 to-slate-900 border border-amber-500/50 space-y-3 text-xs shrink-0 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-200 flex items-center gap-1.5">
+                    <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
+                    <span>⚠️ Blocked Screens Detected ({blockedScreenNames.length})</span>
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono border border-amber-500/30">
+                    Resolution Needed
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-slate-300 space-y-1">
+                  <p className="font-medium text-slate-200">
+                    The bot hit blockers on the following screens. Answer the questions or click a quick action to unblock workflows:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {blockedScreenNames.map((name, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded-md bg-amber-950/70 border border-amber-500/40 text-amber-200 font-mono text-[10px]"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quick Diagnostic Inputs: Username / Email & Password */}
+                <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 space-y-2">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
+                    1. Test Credentials (if screen has login wall):
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={blockedUsernameInput}
+                      onChange={(e) => setBlockedUsernameInput(e.target.value)}
+                      placeholder="Username / Email"
+                      className="bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                    />
+                    <input
+                      type="password"
+                      value={blockedPasswordInput}
+                      onChange={(e) => setBlockedPasswordInput(e.target.value)}
+                      placeholder="Password (optional)"
+                      className="bg-slate-900 border border-slate-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 font-mono outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Unblock Action Chips */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
+                    2. Select Unblock Action:
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={isUnblockingWorkflows}
+                      onClick={() => handleExecuteUnblock("synthetic_data")}
+                      className="px-2 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex flex-col items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center shadow-sm"
+                      title="Auto-fill form inputs with generated synthetic test data and unblock"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-indigo-200" />
+                      <span>⚡ Auto-fill Synthetic</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUnblockingWorkflows || (!blockedUsernameInput.trim() && !blockedPasswordInput.trim())}
+                      onClick={() => handleExecuteUnblock("credentials")}
+                      className="px-2 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] flex flex-col items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center shadow-sm"
+                      title="Submit entered credentials to login and continue testing"
+                    >
+                      <Key className="h-3.5 w-3.5 text-emerald-200" />
+                      <span>🔑 Submit Credentials</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUnblockingWorkflows}
+                      onClick={() => handleExecuteUnblock("retry")}
+                      className="px-2 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px] flex flex-col items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center border border-slate-700"
+                      title="Clear overlays and reset blocked status to retry screen"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-slate-300" />
+                      <span>🔄 Retry Screens</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUnblockingWorkflows}
+                      onClick={() => handleExecuteUnblock("skip")}
+                      className="px-2 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[11px] flex flex-col items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center border border-slate-700"
+                      title="Skip blocked steps and resume testing subsequent workflows"
+                    >
+                      <FastForward className="h-3.5 w-3.5 text-slate-400" />
+                      <span>⏭️ Skip Steps</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Actions Drawer */}
+            <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs shrink-0 space-y-1.5 shadow-sm">
+              <div className="flex items-center justify-between gap-2 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickActionsOpen((prev) => !prev)}
+                  className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer group"
+                  title="Toggle Quick Commands, Target Project Routes & Test Data"
+                >
+                  <Wand2 className="h-3 w-3 text-indigo-400 group-hover:rotate-12 transition-transform" />
+                  <span>Quick Actions (7)</span>
+                  <ChevronDown className={`h-2.5 w-2.5 transition-transform ${isQuickActionsOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {/* Fast Action Chips when collapsed */}
+                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onSubTabChange) onSubTabChange("plan")
+                    }}
+                    disabled={isAnalyzing || isRunning}
+                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-600/30 border border-purple-500 text-purple-200 hover:bg-purple-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
+                  >
+                    🎯 Feature Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onStartFullAppTest && onStartFullAppTest()}
+                    disabled={isAnalyzing || isRunning}
+                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-600/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
+                  >
+                    🚀 Full App Test
+                  </button>
+                </div>
+              </div>
+
+              {/* Expanded Presets & Project Route Chips */}
+              {isQuickActionsOpen && (
+                <div className="pt-2 space-y-2 border-t border-slate-800 animate-in fade-in-50 duration-150">
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
+                    {[
+                      "🎯 Test creating a new task",
+                      "👤 Test the registration flow",
+                      "🚀 Full App Testing (Map & Plan First)",
+                      "🖼️ Test uploading profile picture",
+                      "🔄 Test All Clickable Options",
+                      "🧠 Analyze Screen & Build UI Checklist",
+                      "Audit viewports (390px, 768px, 1440px)",
+                    ].map((chip, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          if (chip.includes("Full App Testing")) {
+                            if (onStartFullAppTest) onStartFullAppTest()
+                          } else {
+                            const cleanPrompt = chip.replace(/^[^\s]+\s+/, "")
+                            setChatInput(cleanPrompt)
+                            handleSendChatMessage(cleanPrompt)
+                          }
+                        }}
+                        disabled={isAnalyzing || isRunning}
+                        className={`shrink-0 px-2.5 py-1 rounded-lg border text-[10px] transition cursor-pointer disabled:opacity-50 ${
+                          chip.startsWith("🎯") || chip.startsWith("👤") || chip.startsWith("🖼️")
+                            ? "bg-purple-950/50 border-purple-500/60 text-purple-200 font-bold hover:bg-purple-600 hover:text-white"
+                            : chip.includes("Full App")
+                            ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold hover:bg-indigo-600 hover:text-white"
+                            : "bg-slate-950 border-slate-800 hover:border-indigo-500 hover:bg-indigo-950/30 text-slate-300 hover:text-white"
+                        }`}
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Target Project Routes & Test Data provision */}
+                  <div className="pt-1.5 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-400 gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {availableProjects && availableProjects.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
+                          <span className="font-semibold text-slate-300">Project:</span>
+                          <select
+                            value={selectedProjectDir}
+                            onChange={(e) => onSelectProjectDir && onSelectProjectDir(e.target.value)}
+                            className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] text-white font-mono outline-none"
+                          >
+                            {availableProjects.map((p) => (
+                              <option key={p.path} value={p.path}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {onGenerateTestData && (
+                        <button
+                          type="button"
+                          onClick={onGenerateTestData}
+                          disabled={isGeneratingTestData}
+                          className="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center gap-1 text-[10px] font-semibold transition cursor-pointer disabled:opacity-50 shrink-0"
+                          title="Generate dummy files (PDFs, CSVs, images, notes) in target project"
+                        >
+                          {isGeneratingTestData ? (
+                            <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-400" />
+                          ) : (
+                            <Sparkles className="h-2.5 w-2.5 text-amber-400" />
+                          )}
+                          <span>Generate Test Data</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {onRescanRoutes && (
+                      <button
+                        type="button"
+                        onClick={onRescanRoutes}
+                        disabled={isScanningRoutes}
+                        className="text-[9px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition cursor-pointer shrink-0"
+                        title="Rescan target project routes"
+                      >
+                        <RotateCcw className={`h-2.5 w-2.5 ${isScanningRoutes ? "animate-spin" : ""}`} />
+                        <span>Rescan Routes</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {discoveredRoutes && discoveredRoutes.length > 0 && (
+                    <div className="flex gap-1 overflow-x-auto pb-0.5 custom-scrollbar">
+                      {discoveredRoutes.map((r, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            if (onNavigateUrl) onNavigateUrl(r.url)
+                            setChatInput(`Test and inspect route ${r.path}`)
+                            handleSendChatMessage(`Test and inspect route ${r.path}`)
+                          }}
+                          disabled={isAnalyzing || isRunning}
+                          className="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-950 hover:bg-indigo-950/40 text-slate-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition cursor-pointer disabled:opacity-50"
+                          title={`Click to test: ${r.path} (${r.url})`}
+                        >
+                          {r.path}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Prompt Suggestion Chips (Role starters, not fixed apps) */}
             <div className="space-y-1.5 pt-1 shrink-0">
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
@@ -591,21 +1313,82 @@ export default function FeatureWorkflowView({
               </div>
             </div>
 
+            {/* Attached Image Preview */}
+            {attachedImage && (
+              <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs shrink-0 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <img
+                    src={attachedImage}
+                    alt="Attached screen"
+                    className="h-10 w-10 rounded-lg object-cover border border-slate-700 shadow-sm"
+                  />
+                  <div>
+                    <span className="text-[11px] font-semibold text-white block">Image Attached</span>
+                    <span className="text-[10px] text-slate-400">Testing bot will inspect this screen during planning and visual audit</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachedImage(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                  title="Remove image"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Conversational Input Bar */}
-            <div className="flex gap-2 shrink-0 pt-1">
+            <div className="flex items-center gap-2 shrink-0 pt-1">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImageFileChange}
+                accept="image/*"
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isAnalyzing || isRunning}
+                className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
+                title="Upload Mockup / Screenshot Image"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (onCaptureCurrentScreen) {
+                    onCaptureCurrentScreen()
+                  } else if (job?.currentScreenshotUrl) {
+                    setAttachedImage(job.currentScreenshotUrl)
+                  }
+                }}
+                disabled={isAnalyzing || isRunning}
+                className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
+                title="Capture Live Simulator Screen & Test"
+              >
+                <Camera className="h-4 w-4" />
+              </button>
+
               <div className="relative flex-1">
                 <input
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && chatInput.trim()) {
+                    if (e.key === "Enter" && !e.shiftKey && (chatInput.trim() || attachedImage)) {
                       e.preventDefault()
                       handleSendChatMessage()
                     }
                   }}
                   disabled={isAnalyzing || isRunning}
-                  placeholder="Tell the testing bot what to test (e.g. 'Act as customer and test checkout', 'Test user profile update with invalid image')..."
+                  placeholder={
+                    attachedImage
+                      ? "Add instructions for attached image or press Send..."
+                      : "Tell the testing bot what to test (e.g. 'Act as customer and test checkout', 'Test user profile update')..."
+                  }
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-inner disabled:opacity-50"
                 />
                 {isAnalyzing && (
@@ -618,13 +1401,24 @@ export default function FeatureWorkflowView({
 
               <button
                 type="button"
-                disabled={!chatInput.trim() || isAnalyzing || isRunning}
+                disabled={(!chatInput.trim() && !attachedImage) || isAnalyzing || isRunning}
                 onClick={() => handleSendChatMessage()}
-                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-950 shrink-0"
+                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-950 shrink-0"
               >
                 <Send className="h-3.5 w-3.5" />
                 <span>Send</span>
               </button>
+
+              {isRunning && onCancelJob && (
+                <button
+                  type="button"
+                  onClick={onCancelJob}
+                  className="p-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition flex items-center justify-center cursor-pointer shadow-md shadow-rose-950 shrink-0"
+                  title="Stop Running Test"
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -650,12 +1444,37 @@ export default function FeatureWorkflowView({
               )}
             </div>
 
+            {/* Blocked Steps Resolution Alert Banner */}
+            {blockedSteps.length > 0 && (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-amber-200 block">
+                      ⚠️ {blockedSteps.length} Step{blockedSteps.length > 1 ? "s" : ""} Blocked
+                    </span>
+                    <span className="text-[11px] text-slate-300">
+                      Testing Bot asked diagnostic questions in chat to resolve and resume these workflows.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSubTabChange && onSubTabChange("chat")}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shrink-0 cursor-pointer shadow-md shadow-amber-950"
+                >
+                  Open Chat to Unblock →
+                </button>
+              </div>
+            )}
+
             {/* Steps List */}
             {activePlan?.steps && activePlan.steps.length > 0 ? (
               <div className="space-y-2">
                 {activePlan.steps.map((step) => {
                   const isPassed = step.status === "passed"
                   const isFailed = step.status === "failed"
+                  const isBlocked = step.status === "blocked"
                   const isRunningStep = step.status === "running"
 
                   return (
@@ -666,6 +1485,8 @@ export default function FeatureWorkflowView({
                           ? "bg-emerald-950/20 border-emerald-800/40 text-emerald-200"
                           : isFailed
                           ? "bg-rose-950/20 border-rose-800/40 text-rose-200"
+                          : isBlocked
+                          ? "bg-amber-950/30 border-amber-500/50 text-amber-200 ring-1 ring-amber-500/30"
                           : isRunningStep
                           ? "bg-indigo-950/40 border-indigo-500 shadow-md ring-1 ring-indigo-400 animate-pulse"
                           : "bg-slate-900/60 border-slate-800 text-slate-300"
@@ -692,6 +1513,8 @@ export default function FeatureWorkflowView({
                                 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                                 : isFailed
                                 ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                                : isBlocked
+                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                                 : isRunningStep
                                 ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
                                 : "bg-slate-800 text-slate-400"
@@ -864,15 +1687,48 @@ export default function FeatureWorkflowView({
         {/* SUBTAB 4: LIVE EXECUTION & EVIDENCE TRACE */}
         {activeSubTab === "execution" && (
           <div className="space-y-4 max-w-5xl mx-auto">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Activity className="h-4 w-4 text-indigo-400" />
-                Live Execution Trace (Action → Observe → Verify → Record)
-              </h3>
-              <p className="text-xs text-slate-400">
-                Real-time execution log of actions, observations, DOM changes, and screenshot captures.
-              </p>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-indigo-400" />
+                  Live Execution Trace (Action → Observe → Verify → Record)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Real-time execution log of actions, observations, DOM changes, and screenshot captures.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onSubTabChange && onSubTabChange("chat")}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shrink-0"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Testing Bot Chat</span>
+              </button>
             </div>
+
+            {/* Test Completed Banner */}
+            {job?.status === "completed" && (
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/60 to-slate-900 border border-emerald-500/40 text-xs flex items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-white block text-xs">Test Execution Completed</span>
+                    <span className="text-[11px] text-slate-300">
+                      {passedSteps} of {totalSteps} steps passed. Testing Bot has summarized results in Chat.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSubTabChange && onSubTabChange("chat")}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shrink-0 cursor-pointer shadow-md shadow-emerald-950"
+                >
+                  Return to Chat →
+                </button>
+              </div>
+            )}
 
             {/* Current Step Status Banner */}
             {isRunning && (
@@ -919,14 +1775,25 @@ export default function FeatureWorkflowView({
         {/* SUBTAB 5: REPORT & EDGE CASES */}
         {activeSubTab === "coverage" && (
           <div className="space-y-4 max-w-5xl mx-auto">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                Final Workflow Test Report & Edge Cases
-              </h3>
-              <p className="text-xs text-slate-400">
-                Detailed verification results for the workflow, tested edge cases, bugs found, and overall workflow coverage.
-              </p>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  Final Workflow Test Report & Edge Cases
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Detailed verification results for the workflow, tested edge cases, bugs found, and overall workflow coverage.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onSubTabChange && onSubTabChange("chat")}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shrink-0"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Testing Bot Chat</span>
+              </button>
             </div>
 
             {/* Summary Metrics Cards */}

@@ -139,11 +139,17 @@ export async function executeChainedWorkflows(
       `\n🔄 [WORKFLOW CHAIN ${workflowId}] Starting "${workflowName}" (Tracking ID: ${trackingId})`
     )
 
+    const resolvedEntryUrl =
+      entryScreen.url && entryScreen.url.startsWith("http")
+        ? entryScreen.url
+        : new URL(entryScreen.path || "/", targetUrl).href
+
     const run: WorkflowRun = {
       id: workflowId,
       name: workflowName,
       entryScreenId: entryScreen.id,
-      entryUrl: entryScreen.url || targetUrl,
+      entryUrl: resolvedEntryUrl,
+      entryComponentLocation: entryScreen.componentLocation || entryScreen.sourceFile,
       steps: [],
       verdict: "passed",
       entityTrackingId: trackingId,
@@ -374,7 +380,15 @@ export async function executeChainedWorkflows(
     while (hop < maxHops && (job.status as string) !== "stopped") {
       hop++
       const currentUrl = page.url()
-      const nextScreen = screens.find((s) => currentUrl.includes(s.path.split("#")[0])) || currentScreen
+      const curOrigin = new URL(currentUrl).origin
+      const curPathNorm = currentUrl.replace(curOrigin, "").split("#")[0].replace(/\/+$/, "") || "/"
+      const nextScreen =
+        screens.find((s) => ((s.path || "/").split("#")[0].replace(/\/+$/, "") || "/") === curPathNorm) ||
+        screens.find((s) => {
+          const sNorm = (s.path || "").split("#")[0].replace(/\/+$/, "")
+          return sNorm && sNorm !== "/" && curPathNorm.startsWith(sNorm)
+        }) ||
+        currentScreen
 
       // Assertion: State Persistence of trackingId
       await showActionBanner(page, `Workflow ${workflowId}: Verifying persistence of "${trackingId}"`)
@@ -410,7 +424,11 @@ export async function executeChainedWorkflows(
       // Priority: Buttons/cards not tested yet, especially video cards, next buttons, or action triggers
       const candidateElements = nextScreen.actionableElements.filter((el) => {
         const t = el.type
-        return t === "button" || t === "clickable" || t === "link"
+        const isLogout =
+          /(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) ||
+          /(logout|sign\s*out|log\s*off)/i.test(el.selector || "") ||
+          /(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "")
+        return (t === "button" || t === "clickable" || t === "link") && !isLogout
       })
 
       if (candidateElements.length === 0) {

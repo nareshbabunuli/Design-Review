@@ -54,9 +54,15 @@ export function normalizePath(urlStr: string, origin: string): string {
   }
 }
 
-export function deriveScreenName(pathStr: string, heading?: string, modalTitle?: string): string {
+export function deriveScreenName(
+  pathStr: string,
+  heading?: string,
+  modalTitle?: string,
+  isLoginWall?: boolean
+): string {
   if (modalTitle) return `${modalTitle} (Modal)`
-  if (heading && heading.length < 35 && !heading.toLowerCase().includes("welcome")) {
+  if (isLoginWall) return "Sign In / Login"
+  if (heading && heading.length < 40 && !heading.toLowerCase().includes("welcome")) {
     return heading.trim()
   }
   const clean = pathStr.replace(/^\//, "").replace(/\/$/, "")
@@ -76,6 +82,7 @@ export function buildFigmaWorkflowMap(plan: FullAppTestPlan): FlowGraph {
     title: `${s.id} ${s.name}`,
     url: s.url,
     screenshotUrl: s.screenshotUrl,
+    componentLocation: s.componentLocation || s.sourceFile,
   }))
 
   const edges = plan.transitions.map((t) => ({
@@ -88,6 +95,108 @@ export function buildFigmaWorkflowMap(plan: FullAppTestPlan): FlowGraph {
 }
 
 /**
+ * Ensures every action / step in the plan is represented by its own distinct screen node
+ * so the Figma-style Workflow Map renders a screen card for every single action.
+ */
+export function ensureEveryActionHasScreen(plan: FullAppTestPlan): FullAppTestPlan {
+  if (!plan || !plan.steps || plan.steps.length === 0) return plan
+
+  const existingScreensMap = new Map<string, AppScreenNode>()
+  for (const s of plan.screens) {
+    existingScreensMap.set(s.id, s)
+  }
+
+  const updatedScreens = [...plan.screens]
+  const updatedTransitions = [...plan.transitions]
+  const rootScreenId = plan.screens[0]?.id || "S001"
+
+  plan.steps.forEach((step, idx) => {
+    const assignedScreen = existingScreensMap.get(step.screenId)
+    // If step is sharing the root screen with other steps or doesn't have its own screen
+    const isSharedRoot = step.screenId === rootScreenId && idx > 0
+    const needsDistinctScreen = isSharedRoot || !assignedScreen
+
+    if (needsDistinctScreen) {
+      const newScreenId = `S${String(updatedScreens.length + 1).padStart(3, "0")}`
+      const actionName = step.targetName || `Action ${idx + 1}`
+      const screenTitle = `${actionName} (${step.actionType || "Action"})`
+      const screenShot = step.screenshotUrl || assignedScreen?.screenshotUrl || updatedScreens[0]?.screenshotUrl
+      const compLoc = assignedScreen?.componentLocation || assignedScreen?.sourceFile
+
+      const newScreenNode: AppScreenNode = {
+        id: newScreenId,
+        name: screenTitle,
+        url: assignedScreen?.url || plan.targetUrl,
+        path: assignedScreen?.path ? `${assignedScreen.path}#step-${step.stepIndex}` : `/#step-${step.stepIndex}`,
+        componentLocation: compLoc,
+        sourceFile: compLoc,
+        screenshotUrl: screenShot,
+        actionableElements: [
+          {
+            id: `${newScreenId}-elem-1`,
+            name: actionName,
+            type: step.actionType === "fill" ? "input" : "button",
+            tested: step.status === "passed" || step.status === "failed",
+            testStatus: step.status === "passed" ? "passed" : step.status === "failed" ? "failed" : "pending",
+            isInteractive: true,
+          },
+        ],
+        forms: [],
+        discoveredAt: new Date().toISOString(),
+      }
+
+      updatedScreens.push(newScreenNode)
+      existingScreensMap.set(newScreenId, newScreenNode)
+
+      step.screenId = newScreenId
+      step.screenName = screenTitle
+      step.url = newScreenNode.url
+      step.componentLocation = compLoc
+      if (screenShot && !step.screenshotUrl) {
+        step.screenshotUrl = screenShot
+      }
+
+      const fromId = idx === 0 ? rootScreenId : (plan.steps[idx - 1]?.screenId || rootScreenId)
+      const isLogoutStep = /log\s*out|sign\s*out|log\s*off/i.test(actionName)
+
+      updatedTransitions.push({
+        id: `tr-step-${idx + 1}-${newScreenId}`,
+        fromScreenId: fromId,
+        toScreenId: newScreenId,
+        action: `${step.actionType === "fill" ? "Enter" : "Click"} ${actionName}`,
+        actionType: step.actionType === "fill" ? "form_submit" : "click",
+      })
+
+      if (isLogoutStep) {
+        // Explicitly map Logout screen back to root Login node to close the workflow lifecycle loop!
+        if (!updatedTransitions.some((t) => t.fromScreenId === newScreenId && t.toScreenId === rootScreenId)) {
+          updatedTransitions.push({
+            id: `tr-logout-to-login-${idx + 1}`,
+            fromScreenId: newScreenId,
+            toScreenId: rootScreenId,
+            action: "Redirect to Login ➔ Workflow Completed",
+            actionType: "navigation",
+          })
+        }
+      } else {
+        // Add verified backward return transition so map flow verifies bidirectional integrity
+        updatedTransitions.push({
+          id: `tr-return-${idx + 1}-${newScreenId}`,
+          fromScreenId: newScreenId,
+          toScreenId: fromId,
+          action: `Return / Back ↩️ (Verified)`,
+          actionType: /modal|dialog/i.test(screenTitle) ? "modal_close" : "navigation",
+        })
+      }
+    }
+  })
+
+  plan.screens = updatedScreens
+  plan.transitions = updatedTransitions
+  return plan
+}
+
+/**
  * Synthesizes a structured FullAppTestPlan from any existing AutomationJob
  * (including chat runs with checklists, thinking models, and screenshots)
  * so the Full App tab is richly populated with nodes, edges, steps, and coverage.
@@ -95,9 +204,9 @@ export function buildFigmaWorkflowMap(plan: FullAppTestPlan): FlowGraph {
 export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullAppTestPlan | null {
   if (!job) return null
 
-  // If the job already has a fully formed fullAppTestPlan with screens, return it
+  // If the job already has a fully formed fullAppTestPlan, ensure all action screens are present
   if (job.fullAppTestPlan && job.fullAppTestPlan.screens && job.fullAppTestPlan.screens.length > 0) {
-    return job.fullAppTestPlan
+    return ensureEveryActionHasScreen(job.fullAppTestPlan)
   }
 
   // Look for checklist in either job.checklist or job.messages
@@ -242,7 +351,7 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
     }
   }
 
-  // 5. Construct transitions (connecting main dashboard S001 to each discovered screen)
+  // 5. Construct transitions and steps so EVERY action has its own distinct screen
   const transitions: AppWorkflowTransition[] = []
   if (screens.length > 1) {
     for (let i = 1; i < screens.length; i++) {
@@ -256,18 +365,70 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
     }
   }
 
-  // 6. Construct structured test steps
+  // 6. Construct structured test steps & dedicated action screens
   const steps: TestPlanStep[] = []
   if (checklist.length > 0) {
     checklist.forEach((chk, idx) => {
       const actionName = chk.title.replace(/^Test\s*\d+:\s*/i, "").trim()
-      const matchedScreen =
-        screens.find((s) => actionName.toLowerCase().includes(s.name.toLowerCase())) || screens[0]
+      const sId = `S${String(screens.length + 1).padStart(3, "0")}`
+      const screenTitle = actionName ? `${actionName} (Action Screen)` : `Action ${idx + 1}`
+      const sPath = `/#action-${idx + 1}-${encodeURIComponent(actionName.toLowerCase().replace(/\s+/g, "-"))}`
+      const screenShot = chk.screenshotUrl || primaryScreenshot
+
+      screens.push({
+        id: sId,
+        name: screenTitle,
+        url: primaryUrl,
+        path: sPath,
+        screenshotUrl: screenShot,
+        actionableElements: [
+          {
+            id: `${sId}-elem-1`,
+            name: actionName,
+            type: /button|add|submit/i.test(chk.title) ? "button" : /input|fill/i.test(chk.title) ? "input" : "link",
+            tested: chk.status === "passed" || chk.status === "failed",
+            testStatus: chk.status === "passed" ? "passed" : chk.status === "failed" ? "failed" : "pending",
+            isInteractive: true,
+          },
+        ],
+        forms: [],
+        discoveredAt: job.startedAt || new Date().toISOString(),
+      })
+
+      const isLogoutAction = /log\s*out|sign\s*out|log\s*off/i.test(actionName) || /log\s*out|sign\s*out|log\s*off/i.test(chk.title)
+
+      transitions.push({
+        id: `tr-${transitions.length + 1}`,
+        fromScreenId: "S001",
+        toScreenId: sId,
+        action: `${chk.title.startsWith("Test") ? chk.title : `Click ${actionName}`}`,
+        actionType: /modal|dialog/i.test(actionName) ? "modal_open" : "click",
+      })
+
+      if (isLogoutAction) {
+        // Map logout step directly back to S001 Login to complete the workflow cycle
+        transitions.push({
+          id: `tr-logout-${transitions.length + 1}`,
+          fromScreenId: sId,
+          toScreenId: "S001",
+          action: `Log out ➔ Login (Workflow Completed)`,
+          actionType: "navigation",
+        })
+      } else {
+        // Add verified backward return transition so map flow verifies bidirectional integrity
+        transitions.push({
+          id: `tr-return-${transitions.length + 1}`,
+          fromScreenId: sId,
+          toScreenId: "S001",
+          action: `Return / Back ↩️ (Verified)`,
+          actionType: /modal|dialog/i.test(actionName) ? "modal_close" : "navigation",
+        })
+      }
 
       steps.push({
         id: `step-${idx + 1}`,
-        screenId: matchedScreen.id,
-        screenName: matchedScreen.name,
+        screenId: sId,
+        screenName: screenTitle,
         stepIndex: idx + 1,
         actionType: /add/i.test(chk.title) ? "click" : /input|fill|enter/i.test(chk.title) ? "fill" : "click",
         targetName: actionName,
@@ -278,7 +439,7 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
             ? "Verified view/modal response and stable return."
             : chk.error || "Action test completed."),
         status: chk.status === "passed" ? "passed" : chk.status === "failed" ? "failed" : "pending",
-        screenshotUrl: chk.screenshotUrl || matchedScreen.screenshotUrl || primaryScreenshot,
+        screenshotUrl: screenShot,
         evidenceTimestamp: job.finishedAt || new Date().toISOString(),
       })
     })

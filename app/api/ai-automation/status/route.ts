@@ -541,6 +541,132 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    if (action === "unblock_workflows") {
+      const mode = body.mode || "retry" // "retry" | "synthetic_data" | "credentials" | "skip"
+      const username = body.username ? String(body.username).trim() : ""
+      const password = body.password ? String(body.password).trim() : ""
+      const screenId = body.screenId ? String(body.screenId).trim() : ""
+
+      // 1. If credentials provided, store securely in vault
+      if (username || password) {
+        setJobSecrets(jobId, {
+          credentials: { username, password },
+        })
+        ;(job as any).pendingCredentials = { username, password }
+        job.authState = "logged_in"
+        job.authPrompt = undefined
+      } else if (mode === "skip") {
+        setJobSecrets(jobId, { credentials: { username: "", password: "" } })
+        ;(job as any).pendingCredentials = { skip: true }
+        ;(job as any).authState = "skipped"
+        job.authPrompt = undefined
+      }
+
+      // 2. Unblock steps in test plan
+      let unblockedCount = 0
+      if (job.fullAppTestPlan?.steps) {
+        for (const s of job.fullAppTestPlan.steps) {
+          const matchScreen = !screenId || s.screenId === screenId
+          if (matchScreen && (s.status === "blocked" || (mode === "retry" && s.status === "failed"))) {
+            if (mode === "skip") {
+              s.status = "skipped_unsafe"
+              s.actualResult = "Skipped by user to unblock remaining workflow steps."
+            } else {
+              s.status = "pending"
+              s.error = undefined
+              s.actualResult = undefined
+              if (s.actionType === "fill") {
+                const isEmail = /e-?mail/i.test(s.targetName) || /e-?mail/i.test(s.targetSelector || "")
+                const isUser = /user|login/i.test(s.targetName) || /user|login/i.test(s.targetSelector || "")
+                const isPass = /pass/i.test(s.targetName) || /pass/i.test(s.targetSelector || "")
+                if ((isEmail || isUser) && username) s.syntheticValue = username
+                else if (isPass && password) s.syntheticValue = password
+                else if (mode === "synthetic_data" && !s.syntheticValue) {
+                  s.syntheticValue = isEmail
+                    ? `test.user+${Date.now()}@example.com`
+                    : isPass
+                    ? "TestPass#2026!"
+                    : "Synthetic Valid Data"
+                }
+              }
+            }
+            unblockedCount++
+          }
+        }
+      }
+
+      // 3. Reset blocked ledger items
+      if (job.actionLedger?.entries) {
+        for (const entry of job.actionLedger.entries) {
+          if (entry.status === "blocked") {
+            entry.status = mode === "skip" ? "skipped" : "untested"
+            entry.error = undefined
+          }
+        }
+        job.actionLedger.blocked = job.actionLedger.entries.filter((e) => e.status === "blocked").length
+      }
+
+      // 4. Reset screens testStatus if blocked
+      if (job.fullAppTestPlan?.screens) {
+        for (const sc of job.fullAppTestPlan.screens) {
+          if ((sc as any).testStatus === "blocked") {
+            (sc as any).testStatus = "pending"
+          }
+        }
+      }
+
+      // 5. Append message and log
+      const message =
+        mode === "skip"
+          ? `Skipped ${unblockedCount} blocked workflow step(s). Continuing test execution.`
+          : mode === "credentials"
+          ? `Applied credentials. Unblocked ${unblockedCount} step(s) and resumed workflow execution.`
+          : mode === "synthetic_data"
+          ? `Applied synthetic test data. Unblocked ${unblockedCount} step(s) and resumed workflow execution.`
+          : `Unblocked and reset ${unblockedCount} workflow step(s) for re-test.`
+
+      appendLog(job, "info", `[UNBLOCK] ${message}`)
+      if (!job.messages) job.messages = []
+      job.messages.push({
+        id: `msg-unblock-${Date.now()}`,
+        sender: "agent",
+        text: `✅ ${message}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      // 6. Resume execution if not actively running
+      if (job.status !== "running" && mode !== "skip" && unblockedCount > 0) {
+        job.status = "running"
+        job.currentStep = message
+        saveJob(job)
+        setImmediate(() => {
+          executeJob(job, {
+            url: job.targetUrl,
+            projectId: job.projectId,
+            mode: (job.mode as any) || "feature_workflow",
+            credentials: username ? { username, password } : undefined,
+          }).catch((err) => {
+            console.error(`[AI Bot] Fatal error resuming unblocked job ${job.id}:`, err)
+          })
+        })
+      } else {
+        job.currentStep = message
+        saveJob(job)
+      }
+
+      emitSessionEvent(job, "user_input", {
+        message,
+        payload: { action: "unblock_workflows", mode, unblockedCount },
+      })
+
+      return NextResponse.json({
+        success: true,
+        message,
+        unblockedCount,
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
     return NextResponse.json({
       success: true,
       job: sanitizeJobForClient(job as unknown as Record<string, unknown>),

@@ -124,6 +124,7 @@ export type FlowGraphNode = {
   title: string
   screenshotUrl?: string
   scenarioId?: string
+  componentLocation?: string
 }
 
 export type FlowGraphEdge = {
@@ -384,6 +385,8 @@ export type AppScreenNode = {
   name: string // Human readable: Login, Register, Dashboard, etc.
   url: string
   path: string
+  componentLocation?: string // e.g. "app/settings/page.tsx" or "src/components/Checkout.tsx"
+  sourceFile?: string // alias for componentLocation
   screenshotUrl?: string
   actionableElements: ActionableElement[]
   forms: Array<{
@@ -405,7 +408,7 @@ export type AppWorkflowTransition = {
   fromScreenId: string // e.g. "S001"
   toScreenId: string // e.g. "S002"
   action: string // e.g. "Click Register", "Submit Login Form"
-  actionType: "click" | "form_submit" | "navigation" | "modal_open"
+  actionType: "click" | "form_submit" | "navigation" | "modal_open" | "modal_close" | "toggle"
   triggerSelector?: string
 }
 
@@ -488,6 +491,7 @@ export type WorkflowRun = {
   name: string
   entryScreenId: string
   entryUrl: string
+  entryComponentLocation?: string
   steps: WorkflowStepEvidence[]
   failedAtStep?: number
   verdict: AutomationVerdict
@@ -501,6 +505,8 @@ export type TestPlanStep = {
   id: string
   screenId: string
   screenName: string
+  url?: string
+  componentLocation?: string
   stepIndex: number
   actionType:
     | "fill"

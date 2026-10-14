@@ -43,6 +43,7 @@ import {
   Loader2,
   Trash2,
   Archive,
+  MessageSquare,
   RotateCcw,
   Edit3,
   KeyRound,
@@ -58,8 +59,8 @@ interface FullAppTestingViewProps {
   ) => Promise<void>
   onCancelJob?: () => void
   onJobUpdate?: (updatedJob: AutomationJob) => void
-  activeSubTab?: "map" | "screens" | "plan" | "execution" | "files" | "coverage"
-  onSubTabChange?: (tab: "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
+  activeSubTab?: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+  onSubTabChange?: (tab: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage") => void
   fullPageView?: boolean
   hideSubNav?: boolean
   onOpenMapPage?: () => void
@@ -106,11 +107,11 @@ export default function FullAppTestingView({
   }, [job?.flowGraph, plan])
 
   const [internalSubTab, setInternalSubTab] = useState<
-    "map" | "screens" | "plan" | "execution" | "files" | "coverage"
+    "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   >("map")
   const activeSubTab = controlledSubTab || internalSubTab
 
-  const handleSubTabChange = (tab: "map" | "screens" | "plan" | "execution" | "files" | "coverage") => {
+  const handleSubTabChange = (tab: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage") => {
     setInternalSubTab(tab)
     if (onSubTabChange) onSubTabChange(tab)
   }
@@ -744,6 +745,7 @@ export default function FullAppTestingView({
         <div className="px-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
           <div className="flex gap-1 py-1.5">
             {[
+              { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: job?.status === "running" },
               { id: "map", label: "App Map", icon: MapIcon, count: plan?.screens.length },
               { id: "screens", label: "Discovered Screens", icon: Layers, count: plan?.screens.length },
               { id: "plan", label: "Structured Test Plan", icon: ListChecks, count: plan?.steps.length },
@@ -787,32 +789,30 @@ export default function FullAppTestingView({
             })}
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0 ml-auto my-1">
-            {job?.id && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleExportZip}
-                  disabled={isExportingZip}
-                  className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
-                  title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
-                >
-                  {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
-                  <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResetData}
-                  disabled={isResettingData}
-                  className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-[11px] font-medium flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
-                  title="Reset discovered map screens and test plan data"
-                >
-                  {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                  <span>Reset Data</span>
-                </button>
-              </>
-            )}
-          </div>
+          {!fullPageView && job?.id && (
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto my-1">
+              <button
+                type="button"
+                onClick={handleExportZip}
+                disabled={isExportingZip}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
+              >
+                {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
+                <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleResetData}
+                disabled={isResettingData}
+                className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-[11px] font-medium flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                title="Reset discovered map screens and test plan data"
+              >
+                {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                <span>Reset Data</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -930,7 +930,17 @@ export default function FullAppTestingView({
                               <span className="font-mono text-xs font-bold text-indigo-400">{s.id}</span>
                               <span className="text-xs font-semibold truncate">{s.name}</span>
                             </div>
-                            <div className="text-[10px] text-slate-500 font-mono truncate">{s.path}</div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] text-slate-500 font-mono truncate">{s.path}</span>
+                              {(s.componentLocation || s.sourceFile) && (
+                                <span
+                                  className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40 text-purple-300 truncate shrink-0"
+                                  title={`Component Location: ${s.componentLocation || s.sourceFile}`}
+                                >
+                                  📄 {(s.componentLocation || s.sourceFile)?.split("/").slice(-2).join("/")}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <button
@@ -968,7 +978,17 @@ export default function FullAppTestingView({
                             </span>
                             <h4 className="text-sm font-bold text-white">{selectedScreen.name}</h4>
                           </div>
-                          <p className="text-xs text-slate-400 font-mono mt-0.5">{selectedScreen.url}</p>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <p className="text-xs text-slate-400 font-mono">{selectedScreen.url}</p>
+                            {(selectedScreen.componentLocation || selectedScreen.sourceFile) && (
+                              <span
+                                className="px-2 py-0.5 rounded font-mono text-[10px] bg-purple-950/60 text-purple-300 border border-purple-800/40"
+                                title="Component source file location"
+                              >
+                                📄 {selectedScreen.componentLocation || selectedScreen.sourceFile}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           {selectedScreen.screenshotUrl && (
@@ -1158,8 +1178,8 @@ export default function FullAppTestingView({
               <div className="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h4 className="text-sm font-bold text-white">Review and chat with this plan</h4>
-                    <p className="text-xs text-slate-300 mt-1">The browser is paused after authenticated discovery. Ask for supported changes below, review the updated steps, then approve execution.</p>
+                    <h4 className="text-sm font-bold text-white">Review and refine plan steps</h4>
+                    <p className="text-xs text-slate-300 mt-1">The browser is paused after authenticated discovery. Request supported step changes below, review the updated steps, then approve execution.</p>
                   </div>
                   <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-300">Waiting for approval</span>
                 </div>
