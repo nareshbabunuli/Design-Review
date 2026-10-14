@@ -4,6 +4,23 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import puppeteer from "puppeteer";
 import { exploreUiStates } from "../lib/ai-automation/state-explorer";
+import { inspectPageDom, resolveRankedLocator } from "../lib/ai-automation/dom-first-discovery";
+
+test("ranked locator resolution rejects ambiguous selectors and chooses a unique fallback", async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button>Save</button><button data-testid="save-action">Save</button>');
+    const snapshot = await inspectPageDom(page);
+    const save = snapshot.elements.find((element) => element.label === "Save" && element.locators.length > 0);
+    assert.ok(save, "expected Save control to have ranked locator candidates");
+    const resolved = await resolveRankedLocator(page, save.locators);
+    assert.ok(resolved, "expected a unique live locator");
+    assert.equal(await page.$eval(resolved.selector, (element) => element.getAttribute("data-testid")), "save-action");
+  } finally {
+    await browser.close();
+  }
+});
 
 test("bounded state explorer discovers a reversible modal state", async () => {
   const html = await readFile(resolve("tests/fixtures/dom-discovery.html"), "utf8");
