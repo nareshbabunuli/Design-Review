@@ -54,6 +54,21 @@ export function normalizePath(urlStr: string, origin: string): string {
   }
 }
 
+/**
+ * Normalized key for step-target drift checks: origin + pathname + search.
+ * The hash is intentionally excluded — the engine's #modal-* / #tab-* markers
+ * are synthetic and never appear in the live browser URL, while query-param
+ * states (e.g. /leases?tab=expired) must trigger restoration.
+ */
+export function normalizeUrlForRestore(urlStr: string): string {
+  try {
+    const u = new URL(urlStr)
+    return `${u.origin}${u.pathname}${u.search}`
+  } catch {
+    return urlStr.split("#")[0]
+  }
+}
+
 export function deriveScreenName(
   pathStr: string,
   heading?: string,

@@ -21,7 +21,7 @@ import {
   AgentAction,
 } from "./types"
 import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
-import { discoverLocalProjectRoutes } from "./discover-routes"
+import { discoverLocalProjectRoutes, matchRouteForPath } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
 import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
@@ -29,6 +29,7 @@ import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/la
 import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
+  normalizeUrlForRestore,
   deriveScreenName,
   buildFigmaWorkflowMap,
   synthesizeFullAppPlanFromJob,
@@ -1651,9 +1652,13 @@ async function collectLinks(
       // 3. Bottom Navigation, Tab Bars, Mobile Docks, and Navigation Bars
       const navSelector = [
         "nav",
+        "header",
+        "aside",
         '[role="navigation"]',
         '[role="tablist"]',
         "footer",
+        '[class*="sidebar" i]',
+        '[class*="drawer" i]',
         '[class*="bottomNav" i]',
         '[class*="bottom-nav" i]',
         '[class*="tabBar" i]',
@@ -1742,6 +1747,136 @@ async function collectLinks(
     origin,
     knownRoutes.map((r) => ({ path: r.path, title: r.title }))
   )
+}
+
+/**
+ * Discovery expansion pass (2026-10-14 fix): wraps collectLinks with
+ * (a) hamburger/drawer opener auto-click, (b) menu/popover trigger expansion
+ * ([aria-haspopup], [aria-expanded="false"], [data-state="closed"]) with
+ * scraping of newly mounted [role="menu"]/[role="dialog"] items, and
+ * (c) a scroll-to-bottom-and-back pass so lazy/virtualized content renders
+ * before the crawl. The drawer is closed and the starting URL restored
+ * afterwards; menu items are returned as extra crawl candidates. Every
+ * sub-step is guarded so one stuck menu cannot hang the crawl.
+ */
+async function collectLinksWithExpansion(
+  page: Page,
+  origin: string,
+  knownRoutes: Array<{ path: string; title?: string }> = []
+): Promise<Array<{ text: string; href: string }>> {
+  const startUrl = page.url()
+  const extra: Array<{ text: string; href: string }> = []
+  let drawerOpened = false
+
+  try {
+    // (a) Hamburger / drawer opener: click once so drawer nav enters the DOM.
+    // Left open while collectLinks scrapes; closed again at the end.
+    try {
+      drawerOpened = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll("button, [role='button']")) as HTMLElement[]
+        const opener = btns.find(
+          (b) => /menu/i.test(b.getAttribute("aria-label") || "") && b.getClientRects().length > 0
+        )
+        if (opener) {
+          opener.click()
+          return true
+        }
+        return false
+      })
+      if (drawerOpened) await new Promise((r) => setTimeout(r, 350))
+    } catch {}
+
+    // (b) Menu / popover triggers: expand each, scrape mounted items, close.
+    try {
+      const menuItems = await page.evaluate(async () => {
+        const out: Array<{ text: string; href: string }> = []
+        const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+        const triggers = Array.from(
+          document.querySelectorAll('[aria-haspopup], [aria-expanded="false"], [data-state="closed"]')
+        ) as HTMLElement[]
+        for (const t of triggers.slice(0, 12)) {
+          try {
+            if (t.getClientRects().length === 0) continue
+            t.click()
+            await sleep(150)
+            const items = Array.from(
+              document.querySelectorAll(
+                '[role="menu"] a[href], [role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="dialog"] a[href]'
+              )
+            ) as HTMLElement[]
+            for (const it of items) {
+              const href =
+                it.getAttribute("href") || it.getAttribute("data-href") || it.getAttribute("data-path")
+              const text = (it.textContent || it.getAttribute("aria-label") || "").trim().slice(0, 40)
+              if (href && text) out.push({ text, href })
+            }
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+            await sleep(80)
+          } catch {}
+        }
+        return out
+      })
+      for (const m of menuItems || []) extra.push(m)
+    } catch {}
+
+    // (c) Scroll pass for lazy-loaded / virtualized content.
+    try {
+      await page.evaluate(async () => {
+        const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+        window.scrollTo(0, document.body.scrollHeight)
+        await sleep(400)
+        window.scrollTo(0, 0)
+        await sleep(200)
+      })
+    } catch {}
+  } catch {}
+
+  // Standard crawl now sees drawer nav plus menu-expanded and lazily rendered content.
+  let links: Array<{ text: string; href: string }> = []
+  try {
+    links = await collectLinks(page, origin, knownRoutes)
+  } catch {}
+
+  // Merge menu candidates (same normalization rules as collectLinks' tryAdd).
+  try {
+    const seen = new Set(links.map((l) => l.href.replace(/\/+$/, "")))
+    for (const m of extra) {
+      let full = (m.href || "").trim()
+      if (!full || /^(javascript:|mailto:|tel:)/i.test(full)) continue
+      if (full.startsWith("/")) full = origin + full
+      else if (!/^https?:\/\//i.test(full)) full = origin + "/" + full.replace(/^\/+/, "")
+      if (!full.startsWith(origin)) continue
+      if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) continue
+      const norm = full.replace(/\/+$/, "") || full
+      if (!seen.has(norm)) {
+        seen.add(norm)
+        links.push({ text: m.text.slice(0, 40) || "Navigate", href: full })
+      }
+    }
+  } catch {}
+
+  // Restore: toggle the drawer closed and return to the starting URL if a
+  // click navigated away mid-pass.
+  try {
+    if (drawerOpened) {
+      await page
+        .evaluate(() => {
+          const btns = Array.from(document.querySelectorAll("button, [role='button']")) as HTMLElement[]
+          const opener = btns.find(
+            (b) => /menu/i.test(b.getAttribute("aria-label") || "") && b.getClientRects().length > 0
+          )
+          if (opener) opener.click()
+          else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+        })
+        .catch(() => {})
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    if (page.url() !== startUrl) {
+      await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => null)
+    }
+  } catch {}
+
+  return links
 }
 
 function rebuildActionLedger(job: AutomationJob, entries: ActionLedgerEntry[]): void {
@@ -2079,14 +2214,7 @@ export async function discoverAndMapApp(
 
   // Seed project routes & component locations
   const fsRoutes = discoverLocalProjectRoutes(baseUrl, options.projectDir)
-  const getComponentLocationForPath = (p: string) => {
-    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
-    const r = fsRoutes.find((route) => {
-      const rClean = route.path.replace(/\/+$/, "") || "/"
-      return rClean === clean || clean.startsWith(rClean)
-    })
-    return r?.file
-  }
+  const getComponentLocationForPath = (p: string) => matchRouteForPath(fsRoutes, p)?.file
 
   appendLog(job, "info", "Starting Phase 1: Systematic Application Discovery & Mapping...")
   job.testingPhase = "discovery"
@@ -2170,7 +2298,7 @@ export async function discoverAndMapApp(
 
   // BFS over internal links: every newly mapped screen contributes its own links
   type Cand = { from: string; text: string; href: string }
-  const queue: Cand[] = (await collectLinks(page, origin, fsRoutes)).map((c) => ({ from: startId, ...c }))
+  const queue: Cand[] = (await collectLinksWithExpansion(page, origin, fsRoutes)).map((c) => ({ from: startId, ...c }))
 
   try {
     for (const r of fsRoutes) queue.push({ from: startId, text: r.title || r.path, href: r.url })
@@ -2217,7 +2345,7 @@ export async function discoverAndMapApp(
       addTransition(cand.from, here.id, `Navigate to ${cand.text || candPath}`, "navigation")
       addTransition(here.id, cand.from, `Return / Back ↩️`, "navigation")
       if (here.isNew) {
-        const more = await collectLinks(page, origin, fsRoutes)
+        const more = await collectLinksWithExpansion(page, origin, fsRoutes)
         for (const m of more) queue.push({ from: here.id, ...m })
       }
     } catch (err: any) {
@@ -2796,14 +2924,7 @@ export async function executeStructuredTestPlan(
   const isProd = isProductionLike(testPlan.targetUrl)
   const isPaymentPermitted = options?.allowTestPayments === true
   const fsPlanRoutes = discoverLocalProjectRoutes(testPlan.targetUrl, options?.projectDir)
-  const getComponentLocationForPlanPath = (p: string) => {
-    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
-    const r = fsPlanRoutes.find((route) => {
-      const rClean = route.path.replace(/\/+$/, "") || "/"
-      return rClean === clean || clean.startsWith(rClean)
-    })
-    return r?.file
-  }
+  const getComponentLocationForPlanPath = (p: string) => matchRouteForPath(fsPlanRoutes, p)?.file
 
   const startingHadLoginWall = await hasLoginWall(page)
   if (startingHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
@@ -2986,13 +3107,17 @@ export async function executeStructuredTestPlan(
       // 1. Restore the target screen before executing its action.
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
-        const curOrigin = new URL(page.url()).origin
-        const curNormPath = normalizePath(page.url(), curOrigin).split("#")[0]
         const targetUrlStr = targetScreen.url || testPlan.targetUrl
-        const targetOrigin = new URL(targetUrlStr.startsWith("http") ? targetUrlStr : testPlan.targetUrl).origin
-        const targetNormPath = (targetScreen.path || "/").split("#")[0]
+        // Full-URL drift check: compare origin + pathname + search so query-param
+        // states (e.g. /leases?tab=expired) trigger restoration. The hash is
+        // synthetic (#modal-* / #tab-*) and never appears in the live URL.
+        const curRestoreKey = normalizeUrlForRestore(page.url())
+        const targetRestoreKey = normalizeUrlForRestore(
+          new URL(targetUrlStr, testPlan.targetUrl).href
+        )
 
-        if (curNormPath !== targetNormPath || curOrigin !== targetOrigin) {
+        if (curRestoreKey !== targetRestoreKey) {
+          const targetNormPath = (targetScreen.path || "/").split("#")[0]
           const navUrl = targetUrlStr.startsWith("http")
             ? targetUrlStr
             : new URL(targetNormPath, testPlan.targetUrl).href
@@ -3000,11 +3125,49 @@ export async function executeStructuredTestPlan(
           await waitForSpaPageReady(page, 1500).catch(() => {})
         }
 
-        // Discovery assigns a synthetic #tab-name path to SPA views. The URL
-        // alone cannot restore those views, so reactivate the matching tab before
-        // testing its child controls. Modal states are kept open by queue priority.
+        // Discovery assigns synthetic #tab-name / #modal-* paths to SPA views.
+        // The URL alone cannot restore those views: reactivate the matching tab,
+        // or replay the recorded trigger click for modals — a plain goto()
+        // destroys the React state that keeps a modal open.
         const stateMarker = targetScreen.path.split("#")[1]
-        if (stateMarker && !stateMarker.startsWith("modal-")) {
+        if (stateMarker && stateMarker.startsWith("modal-")) {
+          const reopened = await page.evaluate(
+            ({ selector, text }: { selector: string | null; text: string | null }) => {
+              const norm = (v: string) => (v || "").trim().replace(/\s+/g, " ").toLowerCase()
+              let el: HTMLElement | null = null
+              if (selector) {
+                try {
+                  el = document.querySelector(selector) as HTMLElement | null
+                } catch {}
+              }
+              if (!el && text) {
+                const want = norm(text)
+                const cands = Array.from(
+                  document.querySelectorAll('button, a, [role="button"], [tabindex], input[type="submit"]')
+                ) as HTMLElement[]
+                el =
+                  cands.find((c) => {
+                    const t = norm(c.innerText || c.textContent || c.getAttribute("aria-label") || "")
+                    return !!t && (t === want || t.includes(want) || want.includes(t))
+                  }) || null
+              }
+              if (!el || el.getClientRects().length === 0) return false
+              // Already open (e.g. queue order kept it alive) — nothing to do.
+              if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return true
+              el.click()
+              return true
+            },
+            {
+              selector: targetScreen.modalTriggerSelector || null,
+              text: targetScreen.modalTriggerText || null,
+            }
+          ).catch(() => false)
+          if (reopened) {
+            await new Promise((r) => setTimeout(r, 400))
+          } else {
+            appendLog(job, "warn", `[COVERAGE] Could not reopen modal "${targetScreen.name}" via its recorded trigger.`)
+          }
+        } else if (stateMarker) {
           let tabLabel = stateMarker
           try { tabLabel = decodeURIComponent(stateMarker) } catch {}
           tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
@@ -4148,6 +4311,8 @@ export async function executeStructuredTestPlan(
           isLoginWall: pageHasLoginWall,
           isNewDiscovery: true,
           discoveredAt: new Date().toISOString(),
+          modalTriggerSelector: hasActiveModal ? step.targetSelector : undefined,
+          modalTriggerText: hasActiveModal ? step.targetName : undefined,
         }
         testPlan.screens.push(currentScreen)
         const originScreenId = step.screenId || testPlan.screens[0]?.id || "S001"
@@ -4157,6 +4322,7 @@ export async function executeStructuredTestPlan(
           toScreenId: newScreenId,
           action: step.targetName,
           actionType: hasActiveModal ? "modal_open" : step.actionType === "fill" ? "form_submit" : "click",
+          triggerSelector: hasActiveModal ? step.targetSelector : undefined,
         })
         // Map backward return transition as well to verify bidirectional workflow
         testPlan.transitions.push({

@@ -18,6 +18,7 @@ import { saveJob, appendLog } from "./job-store"
 import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
+  normalizeUrlForRestore,
   deriveScreenName,
   buildFigmaWorkflowMap,
 } from "./full-app-utils"
@@ -690,9 +691,10 @@ export async function executeFeatureWorkflowJob(
       if (stepTargetUrl) {
         try {
           const dest = new URL(stepTargetUrl, job.targetUrl)
-          const current = new URL(page.url())
-          if (dest.origin === current.origin && dest.pathname !== current.pathname) {
-            appendLog(job, "info", `Restoring target screen before step execution: ${dest.pathname}`)
+          // Full-URL drift check: query-param states (e.g. ?tab=expired) must
+          // trigger restoration, not just pathname changes.
+          if (normalizeUrlForRestore(dest.href) !== normalizeUrlForRestore(page.url())) {
+            appendLog(job, "info", `Restoring target screen before step execution: ${dest.pathname}${dest.search}`)
             await page.goto(dest.href, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null)
             await new Promise((r) => setTimeout(r, 600))
           }

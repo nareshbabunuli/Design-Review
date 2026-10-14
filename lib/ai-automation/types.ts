@@ -401,6 +401,15 @@ export type AppScreenNode = {
   isNewDiscovery?: boolean
   isLoginWall?: boolean
   discoveredAt: string
+  /** One-line model-authored note on what the screen is for (autonomous runs). */
+  intent?: string
+  /**
+   * For synthetic #modal-* screens: the control that opened the modal.
+   * Replayed (goto parent URL + click trigger) when restoring the screen,
+   * since a plain goto() destroys the React state that keeps a modal open.
+   */
+  modalTriggerSelector?: string
+  modalTriggerText?: string
 }
 
 export type AppWorkflowTransition = {
