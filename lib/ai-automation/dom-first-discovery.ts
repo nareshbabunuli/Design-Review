@@ -112,9 +112,22 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const labelledBy = h.getAttribute("aria-labelledby")
       const referenced = labelledBy ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ") : ""
       const icon = h.querySelector("svg[aria-label],svg[title],[data-lucide],svg title,[data-icon]") as HTMLElement | null
+      const iconName = (icon?.getAttribute("data-lucide") || icon?.getAttribute("data-icon") ||
+        Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
+        .replace(/^lucide-/, "").replace(/-icon$/, "")
+      const iconWords: Record<string, string> = {
+        x: "Close", close: "Close", menu: "Menu", "ellipsis": "More options", "ellipsis-vertical": "More options",
+        "more-horizontal": "More options", "more-vertical": "More options", search: "Search", plus: "Add",
+        "plus-circle": "Add", "arrow-left": "Back", "chevron-left": "Back", "arrow-right": "Next",
+        "chevron-right": "Next", settings: "Settings", "settings-2": "Settings", pencil: "Edit", edit: "Edit",
+        "trash-2": "Delete", trash: "Delete", filter: "Filter", eye: "Show", "eye-off": "Hide",
+        bell: "Notifications", home: "Home", user: "Profile", "log-out": "Log out", download: "Download",
+        upload: "Upload", "external-link": "Open link", "refresh-cw": "Refresh", "chevron-down": "Expand",
+        "chevron-up": "Collapse", calendar: "Calendar", help: "Help", "circle-help": "Help", copy: "Copy",
+      }
       const iconLabel = icon?.getAttribute("aria-label") || icon?.getAttribute("title") ||
-        icon?.querySelector("title")?.textContent || icon?.getAttribute("data-lucide") ||
-        icon?.getAttribute("data-icon") || ""
+        icon?.querySelector("title")?.textContent || icon?.textContent?.trim() ||
+        iconWords[iconName] || iconName
       const tooltip = h.getAttribute("data-tooltip") || h.getAttribute("data-tooltip-content") ||
         h.getAttribute("data-original-title") || h.getAttribute("data-action") || ""
       const text = h.innerText || input.value || ""
