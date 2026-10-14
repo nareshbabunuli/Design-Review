@@ -2381,7 +2381,7 @@ export async function discoverAndMapApp(
 
           if (clicked) {
             await new Promise((r) => setTimeout(r, 600))
-            const inv = await extractActionableInventory(page)
+            const inv = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
             const screenHeading = inv.heading || tab.name
             if (!screens.some((s) => s.name.toLowerCase() === screenHeading.toLowerCase())) {
               const tabScreenId = `S${String(screenSeq++).padStart(3, "0")}`
@@ -2489,7 +2489,7 @@ export async function discoverAndMapApp(
             const sourceId = screens[screens.length - 1]?.id || startId
             const modalPath = `${normalizePath(page.url(), origin)}#dialog-${encodeURIComponent(trigger.name.toLowerCase().replace(/\s+/g, "-"))}`
             if (!pathScreenMap.has(modalPath)) {
-              const inv = await extractActionableInventory(page)
+              const inv = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
               let screenshotUrl: string | undefined
               try {
                 const buffer = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
@@ -3391,7 +3391,7 @@ export async function executeStructuredTestPlan(
           const landedUrl = page.url() || requestedUrl
           const origin = new URL(landedUrl).origin
           const routePath = normalizePath(landedUrl, origin)
-          const inventory = await extractActionableInventory(page)
+          const inventory = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
           const screenName = deriveScreenName(routePath, inventory.heading, inventory.modalTitle)
           let activeScreen = testPlan.screens.find((screen) =>
             screen.path.split("#")[0] === routePath &&
@@ -4685,7 +4685,7 @@ export async function executeStructuredTestPlan(
       const currentUrl = page.url()
       const origin = new URL(testPlan.targetUrl).origin
       const currentNorm = normalizePath(currentUrl, origin)
-      const newInv = await extractActionableInventory(page)
+      const newInv = await attachRankedLocatorCandidates(page, await extractActionableInventory(page))
       const hasActiveModal = Boolean(newInv.modalTitle)
       const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
 
