@@ -22,7 +22,7 @@ test("ranked locator resolution rejects ambiguous selectors and chooses a unique
   }
 });
 
-test("bounded state explorer records modal states and restoration failures honestly", async () => {
+test("bounded state explorer discovers and restores a modal state", async () => {
   const html = await readFile(resolve("tests/fixtures/dom-discovery.html"), "utf8");
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   try {
@@ -31,8 +31,7 @@ test("bounded state explorer records modal states and restoration failures hones
     const report = await exploreUiStates(page, { maxDepth: 2, maxStates: 8, maxScrollSteps: 1 });
     assert.ok(report.states.length > 1, "expected at least one discovered UI state");
     assert.ok(report.edges.length > 0, "expected a recorded state transition");
-    assert.ok(report.edges.some((edge) => edge.selector), "expected a recorded probe selector");
-    if (!report.edges.some((edge) => edge.reversible)) assert.equal(report.stopReason, "restore_failed");
+    assert.ok(report.edges.some((edge) => edge.selector && edge.reversible), "expected a replayable modal transition");
     assert.ok(report.counts.attempted <= 100, "probe work must remain bounded");
   } finally {
     await browser.close();
