@@ -3542,35 +3542,70 @@ export async function executeStructuredTestPlan(
           await waitForSpaPageReady(page, 1500).catch(() => {})
         }
 
-        // Discovery assigns a synthetic #tab-name path to SPA views. The URL
-        // alone cannot restore those views, so reactivate the matching tab before
-        // testing its child controls. Modal states are kept open by queue priority.
-        const stateMarker = targetScreen.path.split("#")[1]
-        if (stateMarker && !stateMarker.startsWith("modal-")) {
-          let tabLabel = stateMarker
-          try { tabLabel = decodeURIComponent(stateMarker) } catch {}
-          tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
-          const activatedTab = await page.evaluate((name) => {
-            const candidates = Array.from(document.querySelectorAll(
-              '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
-            )) as HTMLElement[]
-            const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase()
-            const tab = candidates.find((candidate) => {
-              const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
-              return label === name || label.includes(name)
-            })
-            if (!tab) return false
-            const isAlreadyActive =
-              tab.getAttribute("aria-selected") === "true" ||
-              tab.getAttribute("data-state") === "active" ||
-              tab.classList.contains("active")
-            if (!isAlreadyActive) tab.click()
-            return true
-          }, tabLabel).catch(() => false)
-          if (!activatedTab) {
-            appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
-          } else {
-            await new Promise((r) => setTimeout(r, 250))
+        // Restore the replayable UI-state path before testing a control found inside it.
+        if (targetScreen.statePath?.length) {
+          for (const replayStep of targetScreen.statePath) {
+            if (replayStep.kind === "scroll") {
+              const restored = await page.evaluate((selector) => {
+                const element = document.querySelector(selector) as HTMLElement | null
+                if (!element) return false
+                const isWindow = element === document.documentElement || element === document.body
+                const delta = Math.max(100, Math.floor((isWindow ? window.innerHeight : element.clientHeight) * 0.75))
+                if (isWindow) window.scrollBy(0, delta)
+                else element.scrollTop = Math.min(element.scrollHeight, element.scrollTop + delta)
+                return true
+              }, replayStep.selector).catch(() => false)
+              if (!restored) appendLog(job, "warn", `[COVERAGE] Could not restore scroll state "${replayStep.action}" for step "${step.targetName}".`)
+              continue
+            }
+            const matches = await page.$$(replayStep.selector).catch(() => [])
+            let target: ElementHandle<Element> | null = null
+            for (const match of matches) {
+              if (await match.boundingBox().catch(() => null)) { target = match; break }
+            }
+            if (!target) {
+              for (const match of matches) await match.dispose().catch(() => {})
+              appendLog(job, "warn", `[COVERAGE] Could not restore UI state "${replayStep.action}" for step "${step.targetName}".`)
+              break
+            }
+            const alreadyOpen = await target.evaluate((element) => {
+              const el = element as HTMLElement
+              return el.getAttribute("aria-expanded") === "true" ||
+                (el.tagName.toLowerCase() === "summary" && Boolean(el.closest("details[open]")))
+            }).catch(() => false)
+            if (!alreadyOpen) await target.click({ delay: 20 }).catch(() => null)
+            for (const match of matches) await match.dispose().catch(() => {})
+            await new Promise((resolve) => setTimeout(resolve, 180))
+          }
+        } else {
+          // Discovery also maps SPA tabs whose state is not represented in the URL.
+          const stateMarker = targetScreen.path.split("#")[1]
+          if (stateMarker && !stateMarker.startsWith("modal-") && !stateMarker.startsWith("dialog-")) {
+            let tabLabel = stateMarker
+            try { tabLabel = decodeURIComponent(stateMarker) } catch {}
+            tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
+            const activatedTab = await page.evaluate((name) => {
+              const candidates = Array.from(document.querySelectorAll(
+                '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
+              )) as HTMLElement[]
+              const normalize = (value: string) => value.trim().replace(/\\s+/g, " ").toLowerCase()
+              const tab = candidates.find((candidate) => {
+                const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
+                return label === name || label.includes(name)
+              })
+              if (!tab) return false
+              const isAlreadyActive =
+                tab.getAttribute("aria-selected") === "true" ||
+                tab.getAttribute("data-state") === "active" ||
+                tab.classList.contains("active")
+              if (!isAlreadyActive) tab.click()
+              return true
+            }, tabLabel).catch(() => false)
+            if (!activatedTab) {
+              appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
+            } else {
+              await new Promise((r) => setTimeout(r, 250))
+            }
           }
         }
       }
