@@ -2798,7 +2798,13 @@ export async function discoverAndMapApp(
       })
       const routeRoot = routeReport.states[0]
       if (!routeRoot) {
-        appendLog(job, "warn", `[STATE DISCOVERY] No root state captured for ${routeScreen.name}.`)
+        job.domDiscoveryGraph = {
+          nodes: job.domDiscoveryGraph?.nodes || [],
+          edges: job.domDiscoveryGraph?.edges || [],
+          truncated: true,
+        }
+        appendLog(job, "warn", `[STATE DISCOVERY] No root state captured for ${routeScreen.name}; this route remains incomplete.`)
+        saveJob(job)
         continue
       }
       const routeRootKeys = new Set(routeRoot.elements.map((element) =>
@@ -2947,7 +2953,13 @@ export async function discoverAndMapApp(
         `[STATE DISCOVERY] ${routeScreen.name}: ${routeReport.counts.discovered} states, ${routeReport.counts.attempted} probes, ${routeReport.counts.blocked} blocked, ${routeReport.counts.truncated} truncated; stop reason: ${routeReport.stopReason}; frontier: ${routeReport.frontierRemaining}.`)
       saveJob(job)
     } catch (routeStateError: any) {
+      job.domDiscoveryGraph = {
+        nodes: job.domDiscoveryGraph?.nodes || [],
+        edges: job.domDiscoveryGraph?.edges || [],
+        truncated: true,
+      }
       appendLog(job, "warn", `[STATE DISCOVERY] Additional route "${routeScreen.name}" incomplete: ${routeStateError?.message || routeStateError}`)
+      saveJob(job)
     }
   }
 
