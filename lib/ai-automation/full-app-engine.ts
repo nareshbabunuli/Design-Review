@@ -2104,6 +2104,39 @@ export async function discoverAndMapApp(
     }
 
     const inv = await extractActionableInventory(page)
+
+    // Bounded progressive viewport discovery: include controls below the fold.
+    try {
+      const metrics = await page.evaluate(() => ({
+        height: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 0),
+        viewport: window.innerHeight || 800,
+      }))
+      if (metrics.height > metrics.viewport + 100) {
+        const step = Math.max(250, Math.floor(metrics.viewport * 0.75))
+        const limit = Math.min(metrics.height, metrics.viewport * 4)
+        for (let y = step; y < limit; y += step) {
+          await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), y)
+          await new Promise((resolve) => setTimeout(resolve, 120))
+          const belowFold = await extractActionableInventory(page)
+          for (const element of belowFold.actionableElements) {
+            if (!inv.actionableElements.some((existing) =>
+              (existing.selector && existing.selector === element.selector) ||
+              (existing.name === element.name && existing.type === element.type)
+            )) inv.actionableElements.push(element)
+          }
+          for (const form of belowFold.forms) {
+            if (!inv.forms.some((existing) =>
+              (existing.selector && existing.selector === form.selector) || existing.id === form.id
+            )) inv.forms.push(form)
+          }
+        }
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }))
+      }
+    } catch (scrollError: any) {
+      appendLog(job, "warn", `[DISCOVERY] Below-fold scan was incomplete: ${scrollError?.message || scrollError}`)
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })).catch(() => {})
+    }
+
     const id = `S${String(screenSeq++).padStart(3, "0")}`
     let shot = ""
     try {
@@ -2376,6 +2409,102 @@ export async function discoverAndMapApp(
         } catch {}
       }
     } catch {}
+  }
+
+  // Bounded modal/dialog discovery on the final inspected SPA view.
+  // Only probe explicit dialog triggers or clearly labelled controls, never destructive actions.
+  if (screens.length < maxLimit && job.status === "running") {
+    try {
+      const triggers = await page.evaluate(() => {
+        const candidates: Array<{ name: string; selector: string }> = []
+        const seen = new Set<string>()
+        document.querySelectorAll('button, [role="button"], a').forEach((node) => {
+          const el = node as HTMLElement
+          const style = window.getComputedStyle(el)
+          const rect = el.getBoundingClientRect()
+          if (style.display === "none" || style.visibility === "hidden" || rect.width < 4 || rect.height < 4) return
+          const name = (el.getAttribute("aria-label") || el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 60)
+          if (!name || name.length > 60 || /(logout|sign\s*out|delete|remove account|pay now|purchase|submit payment)/i.test(name)) return
+          const explicitDialog = el.getAttribute("aria-haspopup") === "dialog" || Boolean(el.getAttribute("data-modal-target")) || Boolean(el.getAttribute("data-dialog"))
+          const likelyDialog = /\b(settings|preferences|filters?|quick view|add new|create item|open dialog)\b/i.test(name)
+          if (!explicitDialog && !likelyDialog) return
+          const key = name.toLowerCase()
+          if (seen.has(key)) return
+          seen.add(key)
+          let selector = ""
+          if (el.id && document.querySelectorAll("#" + CSS.escape(el.id)).length === 1) selector = "#" + CSS.escape(el.id)
+          else {
+            const testId = el.getAttribute("data-testid")
+            if (testId && document.querySelectorAll('[data-testid="' + CSS.escape(testId) + '"]').length === 1) selector = '[data-testid="' + CSS.escape(testId) + '"]'
+          }
+          candidates.push({ name, selector })
+        })
+        return candidates.slice(0, 5)
+      })
+
+      for (const trigger of triggers) {
+        if (screens.length >= maxLimit || job.status !== "running") break
+        try {
+          const opened = await page.evaluate((target) => {
+            const bySelector = target.selector ? document.querySelector(target.selector) : null
+            const el = (bySelector || Array.from(document.querySelectorAll('button, [role="button"], a')).find((node) => {
+              const item = node as HTMLElement
+              return (item.getAttribute("aria-label") || item.innerText || item.textContent || "").trim().replace(/\s+/g, " ").toLowerCase() === target.name.toLowerCase()
+            })) as HTMLElement | null
+            if (!el || el.getAttribute("aria-disabled") === "true" || (el as HTMLButtonElement).disabled) return false
+            el.click()
+            return true
+          }, trigger)
+          if (!opened) continue
+          await new Promise((resolve) => setTimeout(resolve, 350))
+          const dialog = await page.evaluate(() => {
+            const el = document.querySelector('[role="dialog"], [aria-modal="true"], dialog[open]')
+            if (!el) return null
+            return { title: (el.querySelector("h1, h2, h3, [role=heading]")?.textContent || "").trim() }
+          })
+          if (dialog) {
+            const sourceId = screens[screens.length - 1]?.id || startId
+            const modalPath = `${normalizePath(page.url(), origin)}#dialog-${encodeURIComponent(trigger.name.toLowerCase().replace(/\s+/g, "-"))}`
+            if (!pathScreenMap.has(modalPath)) {
+              const inv = await extractActionableInventory(page)
+              let screenshotUrl: string | undefined
+              try {
+                const buffer = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
+                screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buffer).toString("base64")}`
+              } catch {}
+              const modalId = `S${String(screenSeq++).padStart(3, "0")}`
+              const node: AppScreenNode = {
+                id: modalId,
+                name: dialog.title || `${trigger.name} Dialog`,
+                url: page.url(),
+                path: modalPath,
+                screenshotUrl,
+                actionableElements: inv.actionableElements,
+                forms: inv.forms,
+                discoveredAt: new Date().toISOString(),
+              }
+              screens.push(node)
+              pathScreenMap.set(modalPath, modalId)
+              addTransition(sourceId, modalId, `Open ${trigger.name}`, "click")
+              addTransition(modalId, sourceId, `Close ${trigger.name}`, "click")
+              mergeScreenActionsIntoLedger(job, node)
+              saveJob(job)
+              appendLog(job, "success", `[DISCOVERY] Dialog ${modalId}: "${node.name}" mapped with ${node.actionableElements.length} actionable elements.`)
+            }
+          }
+          await page.keyboard.press("Escape").catch(() => {})
+          await page.evaluate(() => {
+            const close = document.querySelector('[aria-label*="close" i], [data-dismiss="modal"], button.close') as HTMLElement | null
+            if (close) close.click()
+          }).catch(() => {})
+          await new Promise((resolve) => setTimeout(resolve, 150))
+        } catch (probeError: any) {
+          appendLog(job, "warn", `[DISCOVERY] Dialog probe failed for "${trigger.name}": ${probeError?.message || probeError}`)
+        }
+      }
+    } catch (dialogError: any) {
+      appendLog(job, "warn", `[DISCOVERY] Dialog scan incomplete: ${dialogError?.message || dialogError}`)
+    }
   }
 
   // Return to the start screen before test planning
