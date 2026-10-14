@@ -111,9 +111,17 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const input = el as HTMLInputElement
       const labelledBy = h.getAttribute("aria-labelledby")
       const referenced = labelledBy ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ") : ""
+      const icon = h.querySelector("svg[aria-label],svg[title],[data-lucide],svg title,[data-icon]") as HTMLElement | null
+      const iconLabel = icon?.getAttribute("aria-label") || icon?.getAttribute("title") ||
+        icon?.querySelector("title")?.textContent || icon?.getAttribute("data-lucide") ||
+        icon?.getAttribute("data-icon") || ""
+      const tooltip = h.getAttribute("data-tooltip") || h.getAttribute("data-tooltip-content") ||
+        h.getAttribute("data-original-title") || h.getAttribute("data-action") || ""
+      const text = h.innerText || input.value || ""
       const label = h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
-        h.innerText || input.placeholder || input.name || input.title || el.tagName
-      return String(label).replace(/\s+/g, " ").trim().slice(0, 120)
+        text || input.placeholder || input.name || h.title || tooltip || iconLabel ||
+        h.getAttribute("data-testid") || h.getAttribute("data-cy") || ""
+      return String(label).replace(/\s+/g, " ").trim().slice(0, 120) || el.tagName.toLowerCase() + " (unlabelled control)"
     }
     const roleOf = (el: Element) => {
       const explicit = el.getAttribute("role")
@@ -198,9 +206,23 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       }
       return parts.join(" > ") || el.tagName.toLowerCase()
     }
-    const nodes = Array.from(document.querySelectorAll(
-      'a[href],area[href],button,input,select,textarea,summary,[aria-haspopup],[aria-expanded],[data-dropdown],[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[onclick],[tabindex]:not([tabindex="-1"])'
-    )).filter(visible).slice(0, 300)
+    const semanticNodes = Array.from(document.querySelectorAll(
+      'a[href],area[href],button,input,select,textarea,summary,[aria-haspopup],[aria-expanded],[aria-controls],[data-dropdown],[data-action],[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[onclick],[tabindex]:not([tabindex="-1"])'
+    ))
+    // Some production apps implement icon buttons as clickable div/span wrappers
+    // without role, tabindex, or an onclick attribute. Include visible pointer
+    // targets, but avoid re-adding descendants of semantic controls.
+    const customPointerNodes = Array.from(document.querySelectorAll("div,span,li"))
+      .filter((el) => {
+        if (!visible(el)) return false
+        const h = el as HTMLElement
+        if (getComputedStyle(h).cursor !== "pointer") return false
+        if (h.closest('button,a,[role="button"],[role="link"],[role="tab"],[role="menuitem"]')) return false
+        const parent = h.parentElement
+        if (parent && getComputedStyle(parent).cursor === "pointer" && labelOf(parent) === labelOf(h)) return false
+        return Boolean(labelOf(el)) && labelOf(el) !== el.tagName.toLowerCase() + " (unlabelled control)"
+      })
+    const nodes = Array.from(new Set([...semanticNodes, ...customPointerNodes])).filter(visible).slice(0, 800)
     const elements = nodes.map((el) => {
       const h = el as HTMLElement
       const input = el as HTMLInputElement
