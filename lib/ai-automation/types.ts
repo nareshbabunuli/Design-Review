@@ -359,6 +359,17 @@ export type ActionableElement = {
   name: string
   type: ActionableElementType
   selector?: string
+  /** Ranked fallback locators, revalidated against the live DOM immediately before execution. */
+  locatorCandidates?: Array<{
+    strategy: "role" | "attribute" | "label-text" | "structural"
+    selector: string
+    role?: string
+    name?: string
+    attribute?: string
+    confidence: number
+    uniqueAtDiscovery: boolean
+    context?: string
+  }>
   /** Resolved destination for navigation-capable DOM actions (primarily anchors). */
   href?: string
   /** Stable semantic identity used by the Action Ledger across rediscovery. */
