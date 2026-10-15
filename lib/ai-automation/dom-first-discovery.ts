@@ -327,8 +327,26 @@ export async function resolveRankedLocator(
           const input = el as HTMLInputElement
           const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
           const referenced = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
+          const icon = h.querySelector("svg[aria-label],svg[title],[data-lucide],svg title,[data-icon]") as HTMLElement | null
+          const iconName = (icon?.getAttribute("data-lucide") || icon?.getAttribute("data-icon") ||
+            Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
+            .replace(/^lucide-/, "").replace(/-icon$/, "")
+          const iconWords: Record<string, string> = {
+            x: "Close", menu: "Menu", search: "Search", plus: "Add", "plus-circle": "Add",
+            "ellipsis": "More options", "ellipsis-vertical": "More options", "more-horizontal": "More options",
+            "arrow-left": "Back", "chevron-left": "Back", "arrow-right": "Next", "chevron-right": "Next",
+            settings: "Settings", pencil: "Edit", edit: "Edit", trash: "Delete", "trash-2": "Delete",
+            filter: "Filter", eye: "Show", "eye-off": "Hide", calendar: "Calendar", copy: "Copy",
+            "log-out": "Log out", "external-link": "Open link", "refresh-cw": "Refresh",
+            "chevron-down": "Expand", "chevron-up": "Collapse", user: "Profile", home: "Home",
+          }
+          const iconLabel = icon?.getAttribute("aria-label") || icon?.getAttribute("title") ||
+            icon?.querySelector("title")?.textContent || iconWords[iconName] || iconName
+          const tooltip = h.getAttribute("data-tooltip") || h.getAttribute("data-tooltip-content") ||
+            h.getAttribute("data-original-title") || h.getAttribute("data-action") || ""
           return String(h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
-            h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") || el.tagName)
+            h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") ||
+            tooltip || iconLabel || el.tagName)
             .replace(/\s+/g, " ").trim().slice(0, 120)
         }
         const matching = Array.from(document.querySelectorAll(expected.selector)).filter((el) => {
