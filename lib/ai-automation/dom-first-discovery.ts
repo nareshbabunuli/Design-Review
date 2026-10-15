@@ -111,7 +111,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const input = el as HTMLInputElement
       const labelledBy = h.getAttribute("aria-labelledby")
       const referenced = labelledBy ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" ") : ""
-      const icon = h.querySelector("svg[aria-label],svg[title],[data-lucide],svg title,[data-icon]") as HTMLElement | null
+      const icon = h.querySelector('svg[aria-label],svg[title],svg[class*="lucide-"],[data-lucide],svg title,[data-icon]') as HTMLElement | null
       const iconName = (icon?.getAttribute("data-lucide") || icon?.getAttribute("data-icon") ||
         Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
         .replace(/^lucide-/, "").replace(/-icon$/, "")
@@ -327,7 +327,7 @@ export async function resolveRankedLocator(
           const input = el as HTMLInputElement
           const ids = (h.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
           const referenced = ids.map((id) => document.getElementById(id)?.textContent || "").join(" ")
-          const icon = h.querySelector("svg[aria-label],svg[title],[data-lucide],svg title,[data-icon]") as HTMLElement | null
+          const icon = h.querySelector('svg[aria-label],svg[title],svg[class*="lucide-"],[data-lucide],svg title,[data-icon]') as HTMLElement | null
           const iconName = (icon?.getAttribute("data-lucide") || icon?.getAttribute("data-icon") ||
             Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
             .replace(/^lucide-/, "").replace(/-icon$/, "")
