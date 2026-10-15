@@ -1,10 +1,16 @@
 import JSZip from "jszip"
 import type { AutomationJob } from "./types"
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
+import { generateHTMLReport } from "./html-report-generator"
 
 export async function buildTestBundleZip(job: AutomationJob): Promise<{ buffer: Buffer; fileName: string }> {
   const zip = new JSZip()
   const sanitized = sanitizeJobForClient(job as unknown as Record<string, unknown>)
+
+  // 0. Comprehensive HTML Report (Main Report - Open this first!)
+  const htmlReport = generateHTMLReport(job)
+  zip.file("README.txt", "Open 'test-report.html' in your browser to view the comprehensive test report.\nYou can also print it to PDF from your browser (Ctrl+P or Cmd+P).")
+  zip.file("test-report.html", htmlReport)
 
   // 1. Full Job Data (sanitized)
   zip.file("job.json", JSON.stringify(sanitized, null, 2))

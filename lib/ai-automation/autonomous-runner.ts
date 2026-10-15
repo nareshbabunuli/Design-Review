@@ -27,7 +27,11 @@ import type {
   TestCaseResult,
   TestCaseBug,
   FlowGraph,
+  AppScreenNode,
+  AppWorkflowTransition,
+  FullAppTestPlan,
 } from "./types"
+import { buildFigmaWorkflowMap } from "./full-app-utils"
 import { saveJob, getJob, appendLog, jobDir } from "./job-store"
 import { planScenarios } from "./scenario-planner"
 import { discoverLocalProjectRoutes } from "./discover-routes"
@@ -38,6 +42,7 @@ import { runHumanLikeDecisionLoop } from "./human-test-loop"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 import { clearJobSecrets } from "./job-secret-vault"
 import { SessionVideoRecorder } from "./visual-recorder"
+import { assertStagehandCanExecute, logActionExecution } from "./stagehand-config"
 
 export function isAutonomousCommand(cmd: string): boolean {
   return /(every page|all pages|full (test|audit|run)|autonomous|test every|explore( the app)?|end[\s-]?to[\s-]?end|\d+\s*scenarios?)/i.test(
@@ -242,6 +247,8 @@ type ScenarioRun = {
   agentSummary: string
   agentSuccess: boolean
   error?: string
+  /** Journey map built from the model's own observations and actions. */
+  journeyMap?: FlowGraph
 }
 
 function addEvidence(
@@ -285,6 +292,9 @@ async function runScenarioWithStagehand(
   params: StartAutomationRequest,
   scenario: { id: string; name: string; goal: string; instruction: string; expectedOutcome: string; needsAuth: boolean },
 ): Promise<ScenarioRun> {
+  // Phase 1 Safety Guard: Prevent Stagehand execution outside Autonomous mode
+  assertStagehandCanExecute(job.mode || 'unknown', 'runScenarioWithStagehand')
+  
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
   const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
@@ -346,6 +356,7 @@ async function runScenarioWithStagehand(
         // Track every URL the agent actually visits, with a masked screenshot each.
     // Screenshots come from the Stagehand page itself — the agent's real view.
     const seen = new Map<string, string>()
+    const seenAt = new Map<string, number>()
     let prevUrl = ""
     const tracker = (async () => {
       let n = 0
@@ -383,6 +394,7 @@ async function runScenarioWithStagehand(
             const title: string = await stagePage.title().catch(() => "")
             const shotUrl = await takeShot(`scn-${scenario.id.slice(-6)}-${n++}`)
             seen.set(u, shotUrl)
+            seenAt.set(u, Date.now())
             out.visited.push({ url: u, title: title.trim() || new URL(u).pathname || "Screen", screenshotUrl: shotUrl })
             if (prevUrl && prevUrl !== u) {
               out.transitions.push({ from: prevUrl, to: u, label: scenario.name })
@@ -433,6 +445,9 @@ async function runScenarioWithStagehand(
 
     const maxSteps = 30
     let result: any = null
+    // Run clock: aligns the tracker's screen observations with the agent's
+    // per-action timestamps so each journey node gets the model's reasoning.
+    const runStartMs = Date.now()
     try {
       result = await agent.execute({
         instruction: scenario.instruction,
@@ -515,9 +530,101 @@ async function runScenarioWithStagehand(
       const desc = String(a?.action || a?.type || "agent action")
       const t = typeof a?.timeMs === "number" ? `[${(a.timeMs / 1000).toFixed(0)}s] ` : ""
       out.steps.push(t + desc + (a?.reasoning ? ` — ${a.reasoning}` : ""))
+      
+      // Phase 1: Log action source for audit trail
+      logActionExecution(
+        job.mode || 'unknown',
+        desc,
+        'stagehand',
+        desc,
+        (level, message) => appendLog(job, level, message)
+      )
+      
       if (RISKY_ACTION.test(desc)) {
         out.riskyHit = desc
       }
+    }
+
+    // Brain-into-map wiring (2026-10-14): every autonomous run yields a real
+    // journey map. Nodes come from the screens the model actually observed,
+    // transitions from its URL moves, and each node carries the model's own
+    // step reasoning as its intent — rendered through the standard builder.
+    {
+      const journeyScreens: AppScreenNode[] = []
+      const journeyTransitions: AppWorkflowTransition[] = []
+      const screenIdByUrl = new Map<string, string>()
+      const actionMs = (a: any): number | null =>
+        typeof a?.timeMs === "number" ? runStartMs + (a.timeMs as number) : null
+      out.visited.forEach((v, idx) => {
+        const id = `S${String(idx + 1).padStart(3, "0")}`
+        screenIdByUrl.set(v.url, id)
+        let path = "/"
+        try {
+          path = new URL(v.url).pathname || "/"
+        } catch {}
+        const at = seenAt.get(v.url) ?? runStartMs
+        const nextAt =
+          idx + 1 < out.visited.length ? seenAt.get(out.visited[idx + 1].url) ?? Date.now() : Date.now()
+        const reasoning = actionList
+          .map((a) => {
+            const ms = actionMs(a)
+            return ms !== null && ms >= at && ms < nextAt ? String(a?.reasoning || "").trim() : ""
+          })
+          .find((r) => r)
+        journeyScreens.push({
+          id,
+          name: v.title || path,
+          url: v.url,
+          path,
+          screenshotUrl: v.screenshotUrl || undefined,
+          actionableElements: [],
+          forms: [],
+          discoveredAt: new Date(at).toISOString(),
+          intent: reasoning ? reasoning.slice(0, 140) : `Explored during "${scenario.name}"`,
+        })
+      })
+      out.transitions.forEach((t, i) => {
+        const fromId = screenIdByUrl.get(t.from)
+        const toId = screenIdByUrl.get(t.to)
+        if (!fromId || !toId || fromId === toId) return
+        const fromAt = seenAt.get(t.from) ?? runStartMs
+        const toAt = seenAt.get(t.to) ?? Date.now()
+        const mover = actionList.find((a) => {
+          const ms = actionMs(a)
+          return ms !== null && ms >= fromAt && ms < toAt
+        })
+        journeyTransitions.push({
+          id: `tr-${i + 1}`,
+          fromScreenId: fromId,
+          toScreenId: toId,
+          action: mover ? String(mover.action || mover.type || t.label) : t.label,
+          actionType: "navigation",
+        })
+      })
+      const journeyPlan: FullAppTestPlan = {
+        id: `journey-${scenario.id}`,
+        targetUrl: job.targetUrl,
+        screens: journeyScreens,
+        transitions: journeyTransitions,
+        steps: [],
+        requiredFileTypes: [],
+        status: "completed",
+        coverage: {
+          screensTested: journeyScreens.length,
+          totalScreens: journeyScreens.length,
+          actionsTested: out.actionsTaken,
+          totalActions: out.actionsTaken,
+          formsTested: 0,
+          totalForms: 0,
+          percentage: journeyScreens.length > 0 ? 100 : 0,
+        },
+      }
+      out.journeyMap = buildFigmaWorkflowMap(journeyPlan)
+      appendLog(
+        job,
+        "info",
+        `[${scenario.name}] Journey map built from model observations: ${journeyScreens.length} screens, ${journeyTransitions.length} transitions.`
+      )
     }
 
     // Post-hoc safety gate: a risky action in the log means the run cannot be trusted.

@@ -21,19 +21,23 @@ import {
   AgentAction,
 } from "./types"
 import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
-import { discoverLocalProjectRoutes } from "./discover-routes"
+import { discoverLocalProjectRoutes, matchRouteForPath } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { assertSafeTargetUrlWithDevBypass } from "../security/url-guard"
-import { isLayaAvailable, layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { isLayaAvailable, layaPredict, classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 
 import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
+  normalizeUrlForRestore,
   deriveScreenName,
   buildFigmaWorkflowMap,
   synthesizeFullAppPlanFromJob,
   isFullAppCommand,
 } from "./full-app-utils"
+import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
+import { applyAllScoringChecks } from "./ux-scoring-checks"
+import { calculateOverallUXScore } from "./ux-scoring-rubric"
 import { classifyAction, isProductionLike, installNetworkGuard } from "./safety-guard"
 import {
   expectFor,
@@ -500,12 +504,21 @@ async function enrichInventoryWithLaya(
   ).slice(0, 16)
 
   if (candidates.length === 0) return elements
+  if (candidates.length === 1) {
+    candidates[0].interactionConfidence = 0.95
+    candidates[0].discoveryReason = [
+      ...(candidates[0].discoveryReason || []),
+      "Single primary workflow action on screen",
+    ]
+    return elements
+  }
 
   try {
     const criteria: Record<string, string> = {}
     candidates.forEach((c, idx) => {
       criteria[`item_${idx}`] = `[${c.type.toUpperCase()}] "${c.name}" (${c.selector || "selector"})`
     })
+    criteria["none"] = "None of the above controls"
 
     const questions: Record<string, any> = {
       primary_actions: {
@@ -855,7 +868,8 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         options: options.slice(0, 8),
         formId,
       })
-    })    // 7. Tabs, Radios & Toggles
+    })
+    // 7. Tabs, Radios & Toggles
     document.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
@@ -1495,7 +1509,7 @@ async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): 
  * Handles a login wall: uses provided creds if any, otherwise pauses the job and
  * waits for the UI to supply them (or skip). Returns true when logged in.
  */
-async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: LoginCreds): Promise<boolean> {
+export async function authenticateIfNeeded(job: AutomationJob, page: Page, creds?: LoginCreds): Promise<boolean> {
   let active: LoginCreds | undefined = creds && (creds.username || creds.password) ? creds : undefined
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -1651,9 +1665,13 @@ async function collectLinks(
       // 3. Bottom Navigation, Tab Bars, Mobile Docks, and Navigation Bars
       const navSelector = [
         "nav",
+        "header",
+        "aside",
         '[role="navigation"]',
         '[role="tablist"]',
         "footer",
+        '[class*="sidebar" i]',
+        '[class*="drawer" i]',
         '[class*="bottomNav" i]',
         '[class*="bottom-nav" i]',
         '[class*="tabBar" i]',
@@ -1742,6 +1760,136 @@ async function collectLinks(
     origin,
     knownRoutes.map((r) => ({ path: r.path, title: r.title }))
   )
+}
+
+/**
+ * Discovery expansion pass (2026-10-14 fix): wraps collectLinks with
+ * (a) hamburger/drawer opener auto-click, (b) menu/popover trigger expansion
+ * ([aria-haspopup], [aria-expanded="false"], [data-state="closed"]) with
+ * scraping of newly mounted [role="menu"]/[role="dialog"] items, and
+ * (c) a scroll-to-bottom-and-back pass so lazy/virtualized content renders
+ * before the crawl. The drawer is closed and the starting URL restored
+ * afterwards; menu items are returned as extra crawl candidates. Every
+ * sub-step is guarded so one stuck menu cannot hang the crawl.
+ */
+async function collectLinksWithExpansion(
+  page: Page,
+  origin: string,
+  knownRoutes: Array<{ path: string; title?: string }> = []
+): Promise<Array<{ text: string; href: string }>> {
+  const startUrl = page.url()
+  const extra: Array<{ text: string; href: string }> = []
+  let drawerOpened = false
+
+  try {
+    // (a) Hamburger / drawer opener: click once so drawer nav enters the DOM.
+    // Left open while collectLinks scrapes; closed again at the end.
+    try {
+      drawerOpened = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll("button, [role='button']")) as HTMLElement[]
+        const opener = btns.find(
+          (b) => /menu/i.test(b.getAttribute("aria-label") || "") && b.getClientRects().length > 0
+        )
+        if (opener) {
+          opener.click()
+          return true
+        }
+        return false
+      })
+      if (drawerOpened) await new Promise((r) => setTimeout(r, 350))
+    } catch {}
+
+    // (b) Menu / popover triggers: expand each, scrape mounted items, close.
+    try {
+      const menuItems = await page.evaluate(async () => {
+        const out: Array<{ text: string; href: string }> = []
+        const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+        const triggers = Array.from(
+          document.querySelectorAll('[aria-haspopup], [aria-expanded="false"], [data-state="closed"]')
+        ) as HTMLElement[]
+        for (const t of triggers.slice(0, 12)) {
+          try {
+            if (t.getClientRects().length === 0) continue
+            t.click()
+            await sleep(150)
+            const items = Array.from(
+              document.querySelectorAll(
+                '[role="menu"] a[href], [role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="dialog"] a[href]'
+              )
+            ) as HTMLElement[]
+            for (const it of items) {
+              const href =
+                it.getAttribute("href") || it.getAttribute("data-href") || it.getAttribute("data-path")
+              const text = (it.textContent || it.getAttribute("aria-label") || "").trim().slice(0, 40)
+              if (href && text) out.push({ text, href })
+            }
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+            await sleep(80)
+          } catch {}
+        }
+        return out
+      })
+      for (const m of menuItems || []) extra.push(m)
+    } catch {}
+
+    // (c) Scroll pass for lazy-loaded / virtualized content.
+    try {
+      await page.evaluate(async () => {
+        const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+        window.scrollTo(0, document.body.scrollHeight)
+        await sleep(400)
+        window.scrollTo(0, 0)
+        await sleep(200)
+      })
+    } catch {}
+  } catch {}
+
+  // Standard crawl now sees drawer nav plus menu-expanded and lazily rendered content.
+  let links: Array<{ text: string; href: string }> = []
+  try {
+    links = await collectLinks(page, origin, knownRoutes)
+  } catch {}
+
+  // Merge menu candidates (same normalization rules as collectLinks' tryAdd).
+  try {
+    const seen = new Set(links.map((l) => l.href.replace(/\/+$/, "")))
+    for (const m of extra) {
+      let full = (m.href || "").trim()
+      if (!full || /^(javascript:|mailto:|tel:)/i.test(full)) continue
+      if (full.startsWith("/")) full = origin + full
+      else if (!/^https?:\/\//i.test(full)) full = origin + "/" + full.replace(/^\/+/, "")
+      if (!full.startsWith(origin)) continue
+      if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) continue
+      const norm = full.replace(/\/+$/, "") || full
+      if (!seen.has(norm)) {
+        seen.add(norm)
+        links.push({ text: m.text.slice(0, 40) || "Navigate", href: full })
+      }
+    }
+  } catch {}
+
+  // Restore: toggle the drawer closed and return to the starting URL if a
+  // click navigated away mid-pass.
+  try {
+    if (drawerOpened) {
+      await page
+        .evaluate(() => {
+          const btns = Array.from(document.querySelectorAll("button, [role='button']")) as HTMLElement[]
+          const opener = btns.find(
+            (b) => /menu/i.test(b.getAttribute("aria-label") || "") && b.getClientRects().length > 0
+          )
+          if (opener) opener.click()
+          else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+        })
+        .catch(() => {})
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    if (page.url() !== startUrl) {
+      await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => null)
+    }
+  } catch {}
+
+  return links
 }
 
 function rebuildActionLedger(job: AutomationJob, entries: ActionLedgerEntry[]): void {
@@ -2066,7 +2214,7 @@ export async function discoverAndMapApp(
   job: AutomationJob,
   page: Page,
   baseUrl: string,
-  options: { maxScreens?: number; credentials?: LoginCreds; projectDir?: string } = {}
+  options: { maxScreens?: number; credentials?: LoginCreds; projectDir?: string; layaUrl?: string } = {}
 ): Promise<{
   screens: AppScreenNode[]
   transitions: AppWorkflowTransition[]
@@ -2079,14 +2227,7 @@ export async function discoverAndMapApp(
 
   // Seed project routes & component locations
   const fsRoutes = discoverLocalProjectRoutes(baseUrl, options.projectDir)
-  const getComponentLocationForPath = (p: string) => {
-    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
-    const r = fsRoutes.find((route) => {
-      const rClean = route.path.replace(/\/+$/, "") || "/"
-      return rClean === clean || clean.startsWith(rClean)
-    })
-    return r?.file
-  }
+  const getComponentLocationForPath = (p: string) => matchRouteForPath(fsRoutes, p)?.file
 
   appendLog(job, "info", "Starting Phase 1: Systematic Application Discovery & Mapping...")
   job.testingPhase = "discovery"
@@ -2094,6 +2235,8 @@ export async function discoverAndMapApp(
   saveJob(job)
 
   let screenSeq = 1
+
+  const layaUrl = options.layaUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
 
   // Records the page's current state as a screen (reuses ID if path already known).
   const mapCurrentScreen = async (forceNew = false): Promise<{ id: string; isNew: boolean }> => {
@@ -2103,18 +2246,86 @@ export async function discoverAndMapApp(
       if (known) return { id: known, isNew: false }
     }
 
-    const inv = await extractActionableInventory(page)
+    // Pass A: Extract top-of-viewport actionable elements & forms
+    const inv = await extractActionableInventory(page, layaUrl)
+
+    // Pass B: Progressive Viewport Scrolling (Top-to-Bottom Exploration)
+    try {
+      const scrollMetrics = await page.evaluate(() => ({
+        scrollHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 0),
+        innerHeight: window.innerHeight || 800,
+      })).catch(() => ({ scrollHeight: 0, innerHeight: 800 }))
+
+      if (scrollMetrics.scrollHeight > scrollMetrics.innerHeight + 100) {
+        appendLog(job, "info", `[SCROLL DISCOVERY] Page is scrollable (${scrollMetrics.scrollHeight}px > ${scrollMetrics.innerHeight}px). Scanning below fold...`)
+        const stepSize = Math.max(250, Math.floor(scrollMetrics.innerHeight * 0.75))
+        const maxScroll = Math.min(scrollMetrics.scrollHeight, scrollMetrics.innerHeight * 4)
+        let currentScroll = 0
+        while (currentScroll + stepSize < maxScroll) {
+          currentScroll += stepSize
+          await page.evaluate((y) => window.scrollTo({ top: y, behavior: "instant" }), currentScroll).catch(() => {})
+          await new Promise((r) => setTimeout(r, 180))
+
+          const scrolledInv = await extractActionableInventory(page, layaUrl)
+          for (const el of scrolledInv.actionableElements) {
+            if (!inv.actionableElements.some((e) => e.selector === el.selector || (e.name === el.name && e.type === el.type))) {
+              inv.actionableElements.push(el)
+            }
+          }
+          for (const form of scrolledInv.forms) {
+            if (!inv.forms.some((f) => f.id === form.id || f.selector === form.selector)) {
+              inv.forms.push(form)
+            }
+          }
+        }
+        // Restore scroll to top
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" })).catch(() => {})
+        await new Promise((r) => setTimeout(r, 150))
+      }
+    } catch (scrollErr: any) {
+      console.warn("[Progressive Scroll Discovery]", scrollErr?.message)
+    }
+
     const id = `S${String(screenSeq++).padStart(3, "0")}`
     let shot = ""
     try {
       const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
       shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
     } catch {}
+
+    // Laya Vision: visual classification and blocking UI check
+    let layaInfo: { pageType?: string; hasBlockingIssue?: boolean; ready?: boolean } = {}
+    try {
+      const pageText = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => "")
+      const layaResult = await classifyPage(pageText, page.url(), layaUrl, shot)
+      if (layaResult) {
+        layaInfo = layaResult
+        if (layaResult.hasBlockingIssue) {
+          job.issues.push({
+            id: `issue-vis-${Date.now()}`,
+            screenUrl: page.url(),
+            screenTitle: `Screen ${id}`,
+            type: "layout_shift",
+            severity: "high",
+            description: `Laya Vision detected a potential visual layout or blocking UI issue on ${page.url()}`,
+            timestamp: new Date().toISOString(),
+          })
+        }
+      }
+    } catch (layaErr: any) {
+      console.warn("[Laya Vision Classification]", layaErr?.message)
+    }
+
     const pageHasLoginWall = await hasLoginWall(page).catch(() => false)
     const compLoc = getComponentLocationForPath(curPath)
+    const rawName = deriveScreenName(curPath, inv.heading, inv.modalTitle, pageHasLoginWall)
+    const displayName = layaInfo.pageType && layaInfo.pageType !== "other" && (!inv.heading || inv.heading.length < 3)
+      ? `${layaInfo.pageType.charAt(0).toUpperCase() + layaInfo.pageType.slice(1)} Screen (${curPath})`
+      : rawName
+
     const node: AppScreenNode = {
       id,
-      name: deriveScreenName(curPath, inv.heading, inv.modalTitle, pageHasLoginWall),
+      name: displayName,
       url: page.url(),
       path: curPath,
       componentLocation: compLoc,
@@ -2124,6 +2335,9 @@ export async function discoverAndMapApp(
       forms: inv.forms,
       isLoginWall: pageHasLoginWall,
       discoveredAt: new Date().toISOString(),
+      pageType: layaInfo.pageType,
+      hasBlockingIssue: layaInfo.hasBlockingIssue,
+      isReady: layaInfo.ready,
     }
     screens.push(node)
     pathScreenMap.set(curPath, id)
@@ -2135,7 +2349,7 @@ export async function discoverAndMapApp(
     appendLog(
       job,
       "success",
-      `[DISCOVERY] Screen ${node.id}: "${node.name}" (${node.path}) mapped with ${node.actionableElements.length} actionable elements.`
+      `[DISCOVERY] Screen ${node.id}: "${node.name}" (${node.path}) mapped with ${node.actionableElements.length} actionable elements (type: ${node.pageType || "standard"}).`
     )
     return { id, isNew: true }
   }
@@ -2170,7 +2384,7 @@ export async function discoverAndMapApp(
 
   // BFS over internal links: every newly mapped screen contributes its own links
   type Cand = { from: string; text: string; href: string }
-  const queue: Cand[] = (await collectLinks(page, origin, fsRoutes)).map((c) => ({ from: startId, ...c }))
+  const queue: Cand[] = (await collectLinksWithExpansion(page, origin, fsRoutes)).map((c) => ({ from: startId, ...c }))
 
   try {
     for (const r of fsRoutes) queue.push({ from: startId, text: r.title || r.path, href: r.url })
@@ -2217,7 +2431,7 @@ export async function discoverAndMapApp(
       addTransition(cand.from, here.id, `Navigate to ${cand.text || candPath}`, "navigation")
       addTransition(here.id, cand.from, `Return / Back ↩️`, "navigation")
       if (here.isNew) {
-        const more = await collectLinks(page, origin, fsRoutes)
+        const more = await collectLinksWithExpansion(page, origin, fsRoutes)
         for (const m of more) queue.push({ from: here.id, ...m })
       }
     } catch (err: any) {
@@ -2376,6 +2590,97 @@ export async function discoverAndMapApp(
         } catch {}
       }
     } catch {}
+  }
+
+  // In-Page Modals, Drawers & Dialog Discovery
+  if (screens.length < maxLimit && job.status === "running") {
+    try {
+      const modalTriggers = await page.evaluate(() => {
+        const triggers: Array<{ name: string; selector: string }> = []
+        document.querySelectorAll('button, [role="button"], a').forEach((el: any) => {
+          const style = window.getComputedStyle(el)
+          if (style.display === "none" || style.visibility === "hidden" || el.offsetWidth <= 4) return
+          const txt = (el.textContent || el.getAttribute("aria-label") || "").trim()
+          const isModalTrigger = Boolean(
+            el.getAttribute("aria-haspopup") === "dialog" ||
+            el.getAttribute("data-modal-target") ||
+            el.getAttribute("data-target") ||
+            /\b(settings|preferences|filter|filter by|add new|create item|quick view|modal)\b/i.test(txt)
+          )
+          if (isModalTrigger && txt.length > 0 && txt.length < 35 && !/(logout|sign\s*out|delete)/i.test(txt)) {
+            triggers.push({ name: txt, selector: el.id ? `#${CSS.escape(el.id)}` : "" })
+          }
+        })
+        return triggers.slice(0, 4)
+      })
+
+      for (const trig of modalTriggers) {
+        if (screens.length >= maxLimit || job.status !== "running") break
+        try {
+          const clicked = await page.evaluate((sel, name) => {
+            const el = ((sel ? document.querySelector(sel) : null) ||
+              Array.from(document.querySelectorAll('button, [role="button"]')).find((b: any) =>
+                (b.textContent || "").trim().toLowerCase() === name.toLowerCase()
+              )) as HTMLElement | null
+            if (!el || typeof el.click !== "function") return false
+            el.click()
+            return true
+          }, trig.selector, trig.name)
+
+          if (clicked) {
+            await new Promise((r) => setTimeout(r, 450))
+            const modalFound = await page.evaluate(() => {
+              const dlg = document.querySelector('[role="dialog"], dialog[open], [class*="modal" i], [class*="drawer" i]')
+              return Boolean(dlg)
+            })
+
+            if (modalFound) {
+              const modalPath = `${normalizePath(page.url(), origin)}#modal-${encodeURIComponent(trig.name.toLowerCase().replace(/\s+/g, "-"))}`
+              if (!pathScreenMap.has(modalPath)) {
+                const modalId = `S${String(screenSeq++).padStart(3, "0")}`
+                const inv = await extractActionableInventory(page, layaUrl)
+                let shot = ""
+                try {
+                  const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
+                  shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+                } catch {}
+
+                const modalNode: AppScreenNode = {
+                  id: modalId,
+                  name: `${trig.name} (Modal)`,
+                  url: page.url(),
+                  path: modalPath,
+                  screenshotUrl: shot || undefined,
+                  actionableElements: inv.actionableElements,
+                  forms: inv.forms,
+                  discoveredAt: new Date().toISOString(),
+                  modalTriggerText: trig.name,
+                  pageType: "detail",
+                }
+                screens.push(modalNode)
+                pathScreenMap.set(modalPath, modalId)
+                addTransition(startId, modalId, `Open ${trig.name}`, "modal_open")
+                addTransition(modalId, startId, `Close ${trig.name}`, "modal_close")
+                mergeScreenActionsIntoLedger(job, modalNode)
+                appendLog(job, "success", `[DISCOVERY] In-Page Modal Screen ${modalId}: "${modalNode.name}" mapped with ${modalNode.actionableElements.length} elements.`)
+              }
+            }
+
+            // Close modal: press Escape and click close button if present to restore state
+            await page.keyboard.press("Escape").catch(() => {})
+            await page.evaluate(() => {
+              const closeBtn = document.querySelector('[aria-label*="close" i], button.close, [data-dismiss="modal"]') as HTMLElement | null
+              if (closeBtn) closeBtn.click()
+            }).catch(() => {})
+            await new Promise((r) => setTimeout(r, 300))
+          }
+        } catch (mErr: any) {
+          console.warn("[Modal Discovery]", mErr?.message)
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Modal Scan]", e?.message)
+    }
   }
 
   // Return to the start screen before test planning
@@ -2796,14 +3101,7 @@ export async function executeStructuredTestPlan(
   const isProd = isProductionLike(testPlan.targetUrl)
   const isPaymentPermitted = options?.allowTestPayments === true
   const fsPlanRoutes = discoverLocalProjectRoutes(testPlan.targetUrl, options?.projectDir)
-  const getComponentLocationForPlanPath = (p: string) => {
-    const clean = p.split("#")[0].replace(/\/+$/, "") || "/"
-    const r = fsPlanRoutes.find((route) => {
-      const rClean = route.path.replace(/\/+$/, "") || "/"
-      return rClean === clean || clean.startsWith(rClean)
-    })
-    return r?.file
-  }
+  const getComponentLocationForPlanPath = (p: string) => matchRouteForPath(fsPlanRoutes, p)?.file
 
   const startingHadLoginWall = await hasLoginWall(page)
   if (startingHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
@@ -2986,13 +3284,17 @@ export async function executeStructuredTestPlan(
       // 1. Restore the target screen before executing its action.
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
-        const curOrigin = new URL(page.url()).origin
-        const curNormPath = normalizePath(page.url(), curOrigin).split("#")[0]
         const targetUrlStr = targetScreen.url || testPlan.targetUrl
-        const targetOrigin = new URL(targetUrlStr.startsWith("http") ? targetUrlStr : testPlan.targetUrl).origin
-        const targetNormPath = (targetScreen.path || "/").split("#")[0]
+        // Full-URL drift check: compare origin + pathname + search so query-param
+        // states (e.g. /leases?tab=expired) trigger restoration. The hash is
+        // synthetic (#modal-* / #tab-*) and never appears in the live URL.
+        const curRestoreKey = normalizeUrlForRestore(page.url())
+        const targetRestoreKey = normalizeUrlForRestore(
+          new URL(targetUrlStr, testPlan.targetUrl).href
+        )
 
-        if (curNormPath !== targetNormPath || curOrigin !== targetOrigin) {
+        if (curRestoreKey !== targetRestoreKey) {
+          const targetNormPath = (targetScreen.path || "/").split("#")[0]
           const navUrl = targetUrlStr.startsWith("http")
             ? targetUrlStr
             : new URL(targetNormPath, testPlan.targetUrl).href
@@ -3000,11 +3302,49 @@ export async function executeStructuredTestPlan(
           await waitForSpaPageReady(page, 1500).catch(() => {})
         }
 
-        // Discovery assigns a synthetic #tab-name path to SPA views. The URL
-        // alone cannot restore those views, so reactivate the matching tab before
-        // testing its child controls. Modal states are kept open by queue priority.
+        // Discovery assigns synthetic #tab-name / #modal-* paths to SPA views.
+        // The URL alone cannot restore those views: reactivate the matching tab,
+        // or replay the recorded trigger click for modals — a plain goto()
+        // destroys the React state that keeps a modal open.
         const stateMarker = targetScreen.path.split("#")[1]
-        if (stateMarker && !stateMarker.startsWith("modal-")) {
+        if (stateMarker && stateMarker.startsWith("modal-")) {
+          const reopened = await page.evaluate(
+            ({ selector, text }: { selector: string | null; text: string | null }) => {
+              const norm = (v: string) => (v || "").trim().replace(/\s+/g, " ").toLowerCase()
+              let el: HTMLElement | null = null
+              if (selector) {
+                try {
+                  el = document.querySelector(selector) as HTMLElement | null
+                } catch {}
+              }
+              if (!el && text) {
+                const want = norm(text)
+                const cands = Array.from(
+                  document.querySelectorAll('button, a, [role="button"], [tabindex], input[type="submit"]')
+                ) as HTMLElement[]
+                el =
+                  cands.find((c) => {
+                    const t = norm(c.innerText || c.textContent || c.getAttribute("aria-label") || "")
+                    return !!t && (t === want || t.includes(want) || want.includes(t))
+                  }) || null
+              }
+              if (!el || el.getClientRects().length === 0) return false
+              // Already open (e.g. queue order kept it alive) — nothing to do.
+              if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return true
+              el.click()
+              return true
+            },
+            {
+              selector: targetScreen.modalTriggerSelector || null,
+              text: targetScreen.modalTriggerText || null,
+            }
+          ).catch(() => false)
+          if (reopened) {
+            await new Promise((r) => setTimeout(r, 400))
+          } else {
+            appendLog(job, "warn", `[COVERAGE] Could not reopen modal "${targetScreen.name}" via its recorded trigger.`)
+          }
+        } else if (stateMarker) {
           let tabLabel = stateMarker
           try { tabLabel = decodeURIComponent(stateMarker) } catch {}
           tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
@@ -4148,6 +4488,8 @@ export async function executeStructuredTestPlan(
           isLoginWall: pageHasLoginWall,
           isNewDiscovery: true,
           discoveredAt: new Date().toISOString(),
+          modalTriggerSelector: hasActiveModal ? step.targetSelector : undefined,
+          modalTriggerText: hasActiveModal ? step.targetName : undefined,
         }
         testPlan.screens.push(currentScreen)
         const originScreenId = step.screenId || testPlan.screens[0]?.id || "S001"
@@ -4157,6 +4499,7 @@ export async function executeStructuredTestPlan(
           toScreenId: newScreenId,
           action: step.targetName,
           actionType: hasActiveModal ? "modal_open" : step.actionType === "fill" ? "form_submit" : "click",
+          triggerSelector: hasActiveModal ? step.targetSelector : undefined,
         })
         // Map backward return transition as well to verify bidirectional workflow
         testPlan.transitions.push({
@@ -4338,8 +4681,67 @@ export async function executeStructuredTestPlan(
     }
   }
 
-  // PHASE 5: Comprehensive Evidence Reporting & Markdown Artifact
-  appendLog(job, "info", `Generating Phase 5: Evidence-Based Failure Report & Markdown Artifact...`)
+  // PHASE 5: UX Intelligence Evidence Collection & Scoring
+  appendLog(job, "info", `Collecting UX Intelligence evidence across ${testPlan.steps.length} steps...`)
+  try {
+    const uxEvidenceBundles: ScreenEvidenceBundle[] = []
+    const processedScreens = new Set<string>()
+    
+    for (const step of testPlan.steps) {
+      const screen = testPlan.screens.find((s) => s.id === step.screenId)
+      
+      if (screen && step.screenshotUrl && !processedScreens.has(screen.id)) {
+        try {
+          const screenSteps = testPlan.steps.filter((s) => s.screenId === screen.id)
+          const workflowEvidence = collectWorkflowEvidence(
+            screen.id,
+            screen.name,
+            screenSteps,
+            screenSteps.every(s => s.status === "passed") // completedSuccessfully
+          )
+          
+          const evidenceBundle = await collectScreenEvidence(
+            page,
+            screen,
+            step.screenshotUrl,
+            [workflowEvidence]
+          )
+          
+          uxEvidenceBundles.push(evidenceBundle)
+          processedScreens.add(screen.id)
+        } catch (uxErr: any) {
+          appendLog(job, "warn", `UX evidence collection failed for screen ${screen.id}: ${uxErr?.message}`)
+        }
+      }
+    }
+
+    if (uxEvidenceBundles.length > 0) {
+      appendLog(job, "info", `Running UX scoring checks across ${uxEvidenceBundles.length} screens...`)
+      const allScoringChecks = uxEvidenceBundles.flatMap((bundle) => applyAllScoringChecks(bundle))
+      const uxScore = calculateOverallUXScore(allScoringChecks)
+      
+      // Store UX audit score with evidence bundles
+      job.uxAuditScore = {
+        overall: uxScore.overall,
+        grade: uxScore.grade,
+        confidence: uxScore.confidence,
+        dimensions: uxScore.dimensions,
+        totalChecksApplied: uxScore.totalChecksApplied,
+        evidenceBundles: uxEvidenceBundles as any[]
+      }
+      
+      const taskEffScore = uxScore.dimensions.find(d => d.dimension === 'taskEffectiveness')?.score || 0
+      const workflowEffScore = uxScore.dimensions.find(d => d.dimension === 'workflowEfficiency')?.score || 0
+      
+      appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overall.toFixed(1)}/100 (${uxScore.grade}) | Task Effectiveness: ${taskEffScore.toFixed(1)} | Workflow Efficiency: ${workflowEffScore.toFixed(1)}`)
+      saveJob(job)
+    }
+  } catch (uxErr: any) {
+    appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
+  }
+
+  // PHASE 6: Comprehensive Evidence Reporting & Markdown Artifact
+  appendLog(job, "info", `Generating Phase 6: Evidence-Based Failure Report & Markdown Artifact...`)
   try {
     buildAutomationReport(job, testPlan, testPlan.workflows || [], {
       postmanSummary: options?.postmanSummary || testPlan.postmanSummary,
@@ -4513,6 +4915,7 @@ export async function executeFullAppTestingJob(
         maxScreens: params.maxScreens || 10,
         credentials: sessionCreds,
         projectDir: params.projectDir,
+        layaUrl: (params as any).layaBaseUrl || (job as any).layaBaseUrl,
       })
 
       // Populate screens for UI compatibility

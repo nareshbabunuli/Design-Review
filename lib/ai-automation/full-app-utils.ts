@@ -54,6 +54,21 @@ export function normalizePath(urlStr: string, origin: string): string {
   }
 }
 
+/**
+ * Normalized key for step-target drift checks: origin + pathname + search.
+ * The hash is intentionally excluded — the engine's #modal-* / #tab-* markers
+ * are synthetic and never appear in the live browser URL, while query-param
+ * states (e.g. /leases?tab=expired) must trigger restoration.
+ */
+export function normalizeUrlForRestore(urlStr: string): string {
+  try {
+    const u = new URL(urlStr)
+    return `${u.origin}${u.pathname}${u.search}`
+  } catch {
+    return urlStr.split("#")[0]
+  }
+}
+
 export function deriveScreenName(
   pathStr: string,
   heading?: string,
@@ -197,9 +212,133 @@ export function ensureEveryActionHasScreen(plan: FullAppTestPlan): FullAppTestPl
 }
 
 /**
+ * Synthesize a FullAppTestPlan from the DOM Discovery Graph.
+ * Converts domDiscoveryGraph nodes/edges into proper screens and transitions.
+ * Used by Full App Testing mode (human-test-loop).
+ */
+export function synthesizeFullAppPlanFromDomGraph(job: AutomationJob): FullAppTestPlan | null {
+  if (!job.domDiscoveryGraph || !job.domDiscoveryGraph.nodes || job.domDiscoveryGraph.nodes.length === 0) {
+    return null
+  }
+
+  const graph = job.domDiscoveryGraph
+  
+  // Convert DOM graph nodes to AppScreenNodes
+  const screens: AppScreenNode[] = graph.nodes.map((node, index) => {
+    // Extract elements from action ledger for this screen
+    const screenElements = (job.actionLedger?.entries || [])
+      .filter(entry => entry.screenUrl === node.url)
+      .map((entry, idx) => ({
+        id: `${node.id}-elem-${idx + 1}`,
+        name: entry.name,
+        type: entry.type,
+        selector: entry.selector,
+        href: entry.href,
+        tested: entry.status !== 'untested',
+        testStatus: entry.status === 'passed' ? 'passed' as const : 
+                   entry.status === 'failed' ? 'failed' as const :
+                   entry.status === 'blocked' ? 'blocked' as const : 'pending' as const,
+        isInteractive: true,
+      }))
+
+    let path = '/'
+    try {
+      path = new URL(node.url).pathname || '/'
+    } catch {}
+
+    return {
+      id: `S${String(index + 1).padStart(3, '0')}`,
+      name: node.title || path,
+      url: node.url,
+      path,
+      screenshotUrl: undefined, // Screenshots come from ledger or elsewhere
+      actionableElements: screenElements,
+      forms: [],
+      discoveredAt: node.observedAt,
+      intent: `Discovered ${node.elementCount} interactive elements`,
+    }
+  })
+
+  // Convert DOM graph edges to AppWorkflowTransitions
+  const transitions: AppWorkflowTransition[] = graph.edges.map((edge, index) => {
+    // Find screen indices
+    const fromIndex = graph.nodes.findIndex(n => n.id === edge.from)
+    const toIndex = graph.nodes.findIndex(n => n.id === edge.to)
+    
+    if (fromIndex === -1 || toIndex === -1) {
+      return null
+    }
+
+    const fromScreenId = `S${String(fromIndex + 1).padStart(3, '0')}`
+    const toScreenId = `S${String(toIndex + 1).padStart(3, '0')}`
+
+    return {
+      id: `tr-${index + 1}`,
+      fromScreenId,
+      toScreenId,
+      action: edge.action,
+      actionType: edge.transition === 'navigation' ? 'navigation' as const : 'click' as const,
+    }
+  }).filter(Boolean) as AppWorkflowTransition[]
+
+  // Build test steps from action ledger
+  const steps: TestPlanStep[] = (job.actionLedger?.entries || [])
+    .filter(entry => entry.status !== 'untested')
+    .map((entry, index) => {
+      // Find which screen this action belongs to
+      const screenIndex = graph.nodes.findIndex(n => n.url === entry.screenUrl)
+      const screenId = screenIndex >= 0 ? `S${String(screenIndex + 1).padStart(3, '0')}` : 'S001'
+      const screen = screens.find(s => s.id === screenId)
+
+      return {
+        id: `step-${index + 1}`,
+        screenId,
+        screenName: screen?.name || entry.screenPath,
+        stepIndex: index + 1,
+        actionType: entry.type === 'input' ? 'fill' as const : 'click' as const,
+        targetName: entry.name,
+        selector: entry.selector,
+        expectedResult: `Test ${entry.name}`,
+        actualResult: entry.evidence?.observedOutcome,
+        status: entry.status === 'passed' ? 'passed' as const :
+               entry.status === 'failed' ? 'failed' as const :
+               entry.status === 'blocked' ? 'blocked' as const : 'pending' as const,
+        screenshotUrl: entry.evidence?.beforeScreenshotUrl || entry.evidence?.afterScreenshotUrl,
+        evidenceTimestamp: entry.lastTestedAt || entry.discoveredAt,
+      }
+    })
+
+  const testedCount = steps.filter(s => s.status === 'passed' || s.status === 'failed' || s.status === 'blocked').length
+
+  return {
+    id: `plan-dom-${job.id}`,
+    targetUrl: job.targetUrl,
+    screens,
+    transitions,
+    steps,
+    requiredFileTypes: [],
+    status: job.status === 'completed' ? 'completed' : job.status === 'running' ? 'testing' : 'planned',
+    coverage: {
+      screensTested: screens.length,
+      totalScreens: screens.length,
+      actionsTested: testedCount,
+      totalActions: steps.length,
+      formsTested: 0,
+      totalForms: 0,
+      percentage: steps.length > 0 ? Math.round((testedCount / steps.length) * 100) : 100,
+    },
+  }
+}
+
+/**
  * Synthesizes a structured FullAppTestPlan from any existing AutomationJob
  * (including chat runs with checklists, thinking models, and screenshots)
  * so the Full App tab is richly populated with nodes, edges, steps, and coverage.
+ * 
+ * Routes to appropriate synthesis based on available data:
+ * 1. Existing fullAppTestPlan (already complete)
+ * 2. DOM Discovery Graph (Full App Testing mode)
+ * 3. Checklist/screens (chat/crawl mode)
  */
 export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullAppTestPlan | null {
   if (!job) return null
@@ -208,6 +347,16 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
   if (job.fullAppTestPlan && job.fullAppTestPlan.screens && job.fullAppTestPlan.screens.length > 0) {
     return ensureEveryActionHasScreen(job.fullAppTestPlan)
   }
+
+  // Try DOM Discovery Graph first (Full App Testing mode)
+  if (job.domDiscoveryGraph && job.domDiscoveryGraph.nodes && job.domDiscoveryGraph.nodes.length > 0) {
+    const domPlan = synthesizeFullAppPlanFromDomGraph(job)
+    if (domPlan) {
+      return domPlan
+    }
+  }
+
+  // Fallback: synthesize from checklist/screens for chat/crawl modes
 
   // Look for checklist in either job.checklist or job.messages
   const checklist =

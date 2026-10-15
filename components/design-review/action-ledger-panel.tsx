@@ -8,26 +8,27 @@ type Props = {
   actionLedger?: ActionLedger
   onViewEvidence?: (url: string) => void
   autoExpand?: boolean
+  searchQuery?: string
 }
 
 type LedgerView = "live" | "queue" | "history"
 
-export default function ActionLedgerPanel({ actionLedger, onViewEvidence, autoExpand = false }: Props) {
+export default function ActionLedgerPanel({ actionLedger, onViewEvidence, autoExpand = false, searchQuery }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [activeView, setActiveView] = useState<LedgerView>("queue")
 
   useEffect(() => {
-    if (autoExpand) setExpanded(true)
-  }, [autoExpand])
+    if (autoExpand || Boolean(searchQuery?.trim())) setExpanded(true)
+  }, [autoExpand, searchQuery])
 
   const entries = useMemo(() => {
     if (!actionLedger) return []
 
-    if (activeView === "live") {
-      return actionLedger.entries.filter((entry) => entry.status === "running")
-    }
+    let list: ActionLedgerEntry[] = []
 
-    if (activeView === "queue") {
+    if (activeView === "live") {
+      list = actionLedger.entries.filter((entry) => entry.status === "running")
+    } else if (activeView === "queue") {
       const byKey = new Map(actionLedger.entries.map((entry) => [entry.actionKey, entry]))
       const ordered = actionLedger.untestedQueue
         .map((key) => byKey.get(key))
@@ -37,14 +38,29 @@ export default function ActionLedgerPanel({ actionLedger, onViewEvidence, autoEx
       for (const entry of actionLedger.entries) {
         if (entry.status === "untested" && !queuedKeys.has(entry.actionKey)) ordered.push(entry)
       }
-      return ordered
+      list = ordered
+    } else {
+      list = actionLedger.entries
+        .filter((entry) => ["passed", "failed", "blocked", "skipped"].includes(entry.status))
+        .slice()
+        .sort((a, b) => (b.lastTestedAt || "").localeCompare(a.lastTestedAt || ""))
     }
 
-    return actionLedger.entries
-      .filter((entry) => ["passed", "failed", "blocked", "skipped"].includes(entry.status))
-      .slice()
-      .sort((a, b) => (b.lastTestedAt || "").localeCompare(a.lastTestedAt || ""))
-  }, [actionLedger, activeView])
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase()
+      list = list.filter(
+        (entry) =>
+          ((entry as any).screenName || "").toLowerCase().includes(q) ||
+          (entry.name || "").toLowerCase().includes(q) ||
+          (entry.screenPath || "").toLowerCase().includes(q) ||
+          (entry.screenId || "").toLowerCase().includes(q) ||
+          ((entry as any).label || "").toLowerCase().includes(q) ||
+          (entry.actionKey || "").toLowerCase().includes(q)
+      )
+    }
+
+    return list
+  }, [actionLedger, activeView, searchQuery])
 
   const counts = useMemo(() => {
     const all = actionLedger?.entries || []
@@ -84,6 +100,11 @@ export default function ActionLedgerPanel({ actionLedger, onViewEvidence, autoEx
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {searchQuery && searchQuery.trim() && (
+            <span className="px-2 py-1 rounded-md bg-indigo-500/20 border border-indigo-500/40 text-[10px] font-bold text-indigo-300">
+              {entries.length} matching &quot;{searchQuery}&quot;
+            </span>
+          )}
           <span className="px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-[10px] font-bold text-amber-300">
             {actionLedger.untested} queued
           </span>

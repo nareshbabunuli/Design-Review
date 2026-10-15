@@ -10,6 +10,8 @@ import {
 } from "./types"
 import { formatCurlCommand } from "./workflow-chainer"
 import { secretRedactor } from "./secure-credentials-manager"
+import { generateReferencesSection, ISO_9241_11_REFERENCE, WCAG_REFERENCE } from "./ux-research-references"
+import { generateUXIntelligenceReport, formatUXReportMarkdown } from "./ux-report-generator"
 
 function buildPostmanCoverageReport(testPlan: FullAppTestPlan, postmanSummary?: PostmanCollectionSummary): PostmanCoverageReport | undefined {
   if (!postmanSummary) return undefined
@@ -172,6 +174,20 @@ export function buildAutomationReport(
     flowGraph: job.flowGraph,
     postmanSummary: options?.postmanSummary,
     endpointMappings: options?.endpointMappings,
+  }
+
+  // Generate UX Intelligence Report if scoring was completed
+  if (job.uxAuditScore) {
+    try {
+      const uxEvidenceBundles: any[] = job.uxAuditScore.evidenceBundles || []
+      const uxReport = generateUXIntelligenceReport(job, uxEvidenceBundles)
+      const uxMarkdown = formatUXReportMarkdown(uxReport)
+      
+      // Append UX Intelligence section to main report
+      report.markdownReport += `\n\n---\n\n# UX Intelligence Report\n\n${uxMarkdown}`
+    } catch (uxErr: any) {
+      console.warn("[UX Intelligence] Report generation failed:", uxErr)
+    }
   }
 
   job.report = report
@@ -365,6 +381,10 @@ function generateMarkdownReportText(params: {
     sections.push(`${idx + 1}. ${recommendations[idx]}`)
   }
   sections.push("")
+
+  // Research References - Add at end of report
+  sections.push(`---\n`)
+  sections.push(generateReferencesSection())
 
   return secretRedactor ? secretRedactor.redact(sections.join("\n")) : sections.join("\n")
 }

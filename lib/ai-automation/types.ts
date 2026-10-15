@@ -55,6 +55,21 @@ export type DiscoveredScreen = {
     uxScore: number
     summary: string
   }
+  /** Research-backed UX Intelligence Report (when ux_intelligence mode is used) */
+  uxAuditScore?: {
+    overall: number
+    grade: "A" | "B" | "C" | "D" | "F"
+    confidence: number
+    dimensions: Array<{
+      dimension: string
+      score: number
+      weight: number
+      checksApplied: number
+    }>
+    methodology: string
+    limitations: string[]
+    calculatedAt: string
+  }
 }
 
 export type AutomationJobStatus = "queued" | "running" | "completed" | "failed" | "stopped"
@@ -401,6 +416,18 @@ export type AppScreenNode = {
   isNewDiscovery?: boolean
   isLoginWall?: boolean
   discoveredAt: string
+  pageType?: string
+  hasBlockingIssue?: boolean
+  isReady?: boolean
+  /** One-line model-authored note on what the screen is for (autonomous runs). */
+  intent?: string
+  /**
+   * For synthetic #modal-* screens: the control that opened the modal.
+   * Replayed (goto parent URL + click trigger) when restoring the screen,
+   * since a plain goto() destroys the React state that keeps a modal open.
+   */
+  modalTriggerSelector?: string
+  modalTriggerText?: string
 }
 
 export type AppWorkflowTransition = {
@@ -644,6 +671,8 @@ export type AutomationJob = {
   flowGraph?: FlowGraph
   /** DOM-first route/state graph; distinct from the Stagehand scenario graph. */
   domDiscoveryGraph?: DomDiscoveryGraph
+  /** Routes that could not be fully explored due to restoration failures or navigation issues. */
+  unresolvedRoutes?: Array<{ url: string; reason: string; timestamp: number }>
   recordingUrl?: string
   recordingControl?: "recording" | "paused" | "stopped"
   recordingSegments?: string[]
@@ -695,6 +724,32 @@ export type AutomationJob = {
     placeholder?: string
   }>
   pendingSettingsCredentials?: Record<string, string> & { skip?: boolean }
+  /** UX Intelligence audit score with dimensional breakdown and evidence bundles */
+  uxAuditScore?: {
+    overall: number // 0-100
+    grade: "A" | "B" | "C" | "D" | "F"
+    confidence: number // 0-1
+    dimensions: Array<{
+      dimension: string
+      score: number
+      weight: number
+      checks: Array<{
+        id: string
+        rating: number
+        evidence: string
+        researchBasis?: string
+      }>
+    }>
+    totalChecksApplied: number
+    evidenceBundles: Array<{
+      screenId: string
+      screenUrl: string
+      visual: any
+      dom: any
+      accessibility: any
+      workflows: any[]
+    }>
+  }
 }
 
 export type TestPaymentCredentials = {

@@ -41,6 +41,8 @@ import {
   Square,
   ShieldAlert,
   FastForward,
+  Zap,
+  Search,
 } from "lucide-react"
 import type {
   AutomationJob,
@@ -117,6 +119,13 @@ interface FeatureWorkflowViewProps {
     password?: string
     screenId?: string
   }) => Promise<void>
+
+  // Laya System-1 Fast Reflex State
+  enableLaya?: boolean
+  onToggleLaya?: (enabled: boolean) => void
+  layaBaseUrl?: string
+  onUpdateLayaUrl?: (url: string) => void
+  isLayaLive?: boolean
 }
 
 export interface BotWorkflowChatMessage {
@@ -210,6 +219,11 @@ export default function FeatureWorkflowView({
   onSaveSettingsCredentials,
   onSkipSettingsCredentials,
   onUnblockWorkflows,
+  enableLaya = true,
+  onToggleLaya,
+  layaBaseUrl = "http://127.0.0.1:8000",
+  onUpdateLayaUrl,
+  isLayaLive = false,
 }: FeatureWorkflowViewProps) {
   const [chatMessages, setChatMessages] = useState<BotWorkflowChatMessage[]>([
     {
@@ -238,6 +252,9 @@ export default function FeatureWorkflowView({
   const [blockedUsernameInput, setBlockedUsernameInput] = useState("")
   const [blockedPasswordInput, setBlockedPasswordInput] = useState("")
   const [isUnblockingWorkflows, setIsUnblockingWorkflows] = useState(false)
+  const [screensSearchInput, setScreensSearchInput] = useState("")
+  const [screensSearchQuery, setScreensSearchQuery] = useState("")
+
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -263,6 +280,18 @@ export default function FeatureWorkflowView({
     }
     return previewPlan
   }, [job?.fullAppTestPlan, previewPlan])
+
+  const filteredScreens = useMemo(() => {
+    const list = activePlan?.screens || []
+    const q = screensSearchQuery.trim().toLowerCase()
+    if (!q) return list
+    return list.filter((s) => {
+      const name = (s.name || "").toLowerCase()
+      const path = (s.path || "").toLowerCase()
+      const id = (s.id || "").toLowerCase()
+      return name.includes(q) || path.includes(q) || id.includes(q)
+    })
+  }, [activePlan?.screens, screensSearchQuery])
 
   // Focused Figma workflow map
   const flowGraph: FlowGraph | null = useMemo(() => {
@@ -499,12 +528,20 @@ export default function FeatureWorkflowView({
     setChatMessages((prev) => [...prev, userMsg, thinkingMsg])
 
     try {
+      const resolvedApiKey = aiProvider === "omnirouter" ? omniRouterKey : nebiusApiKey
+      const resolvedBaseUrl = aiProvider === "omnirouter" ? omniRouterBaseUrl : (aiProvider === "local" ? localAiBaseUrl : undefined)
+      const resolvedModel = aiProvider === "omnirouter" ? omniRouterModel : selectedAiModel
+
       const res = await fetch("/api/ai-automation/workflow-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workflowPrompt: text,
           targetUrl,
+          openRouterApiKey: resolvedApiKey,
+          aiModel: resolvedModel,
+          aiBaseUrl: resolvedBaseUrl,
+          layaBaseUrl: enableLaya ? (layaBaseUrl || "http://127.0.0.1:8000") : undefined,
         }),
       })
       const data = await res.json()
@@ -589,6 +626,30 @@ export default function FeatureWorkflowView({
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs shadow-xs">
             <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
             <span className="font-bold text-white tracking-wide">Test</span>
+          </div>
+
+          {/* Laya Status Pill */}
+          <div
+            onClick={() => onToggleLaya && onToggleLaya(!enableLaya)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition select-none ${
+              enableLaya && isLayaLive
+                ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300"
+                : enableLaya
+                ? "bg-amber-950/60 border-amber-500/40 text-amber-300"
+                : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+            title={
+              enableLaya && isLayaLive
+                ? `Laya System-1 Reflex: Active (~30ms local decisions on ${layaBaseUrl})`
+                : enableLaya
+                ? `Laya System-1: Connecting to ${layaBaseUrl}...`
+                : "Click to enable Laya System-1 fast reflexes"
+            }
+          >
+            <Zap className={`h-3 w-3 ${enableLaya && isLayaLive ? "text-emerald-400 fill-current" : "text-slate-500"}`} />
+            <span className="font-semibold text-[10px]">
+              Laya {enableLaya && isLayaLive ? "30ms" : enableLaya ? "Offline" : "Disabled"}
+            </span>
           </div>
 
           {/* Workflow Badge if identified */}
@@ -1633,14 +1694,64 @@ export default function FeatureWorkflowView({
                   Only screens traversed for this feature (not the entire application).
                 </p>
               </div>
-              <span className="font-mono text-xs text-slate-400">
-                {activePlan?.screens?.length || 0} Screens
-              </span>
+              <div className="flex items-center gap-2">
+                {screensSearchQuery && (
+                  <span className="font-mono text-[10px] text-indigo-300 font-semibold px-2 py-0.5 rounded bg-indigo-950/60 border border-indigo-800">
+                    {filteredScreens.length} of {activePlan?.screens?.length || 0}
+                  </span>
+                )}
+                <span className="font-mono text-xs text-slate-400">
+                  {activePlan?.screens?.length || 0} Screens
+                </span>
+              </div>
             </div>
 
-            {activePlan?.screens && activePlan.screens.length > 0 ? (
+            {/* Screens Search Bar */}
+            {activePlan?.screens && activePlan.screens.length > 0 && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setScreensSearchQuery(screensSearchInput.trim())
+                }}
+                className="relative flex items-center gap-2"
+              >
+                <div className="relative flex-1">
+                  <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={screensSearchInput}
+                    onChange={(e) => setScreensSearchInput(e.target.value)}
+                    placeholder="Search tested screens by name or path..."
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 outline-none transition"
+                  />
+                  {(screensSearchInput || screensSearchQuery) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScreensSearchInput("")
+                        setScreensSearchQuery("")
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                      title="Clear screen search"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="submit"
+                  disabled={!screensSearchInput.trim() && !screensSearchQuery}
+                  className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs transition cursor-pointer shrink-0 shadow-xs"
+                  title="Submit search (Enter)"
+                >
+                  Submit
+                </button>
+              </form>
+            )}
+
+            {filteredScreens.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {activePlan.screens.map((sc) => (
+                {filteredScreens.map((sc) => (
                   <div
                     key={sc.id}
                     className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2 text-xs"
@@ -1671,6 +1782,18 @@ export default function FeatureWorkflowView({
                     )}
                   </div>
                 ))}
+              </div>
+            ) : screensSearchQuery ? (
+              <div className="p-8 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">
+                <Search className="h-6 w-6 text-slate-600 mx-auto" />
+                <h4 className="text-xs font-bold text-slate-300">No Screens Match &quot;{screensSearchQuery}&quot;</h4>
+                <button
+                  type="button"
+                  onClick={() => setScreensSearchQuery("")}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold underline cursor-pointer"
+                >
+                  Clear search query
+                </button>
               </div>
             ) : (
               <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">

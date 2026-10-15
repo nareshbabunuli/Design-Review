@@ -18,13 +18,20 @@ import { saveJob, appendLog } from "./job-store"
 import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
+  normalizeUrlForRestore,
   deriveScreenName,
   buildFigmaWorkflowMap,
 } from "./full-app-utils"
+import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
+import { applyAllScoringChecks } from "./ux-scoring-checks"
+import { calculateOverallUXScore } from "./ux-scoring-rubric"
 import {
   extractActionableInventory,
   createDummyFileBuffer,
+  authenticateIfNeeded,
 } from "./full-app-engine"
+import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
 import { SessionVideoRecorder } from "./visual-recorder"
@@ -386,6 +393,60 @@ function generateHeuristicWorkflowSpec(promptText: string, targetUrl: string): F
     }
   }
 
+  // 6. Settings, Top Icons & Multi-Screen / Bottom Navigation Flow
+  if (
+    p.includes("setting") ||
+    p.includes("bottom nav") ||
+    p.includes("navigation") ||
+    p.includes("tab") ||
+    p.includes("screen") ||
+    p.includes("icon") ||
+    p.includes("menu")
+  ) {
+    return {
+      workflowName: "Settings & Bottom Navigation Screens",
+      userGoal: promptText,
+      startingPoint: "Main Application Screen",
+      expectedOutcome: "Top settings and all primary navigation screens are discovered and verified.",
+      likelyScreens: [
+        "Home / Main Screen",
+        "Settings Screen",
+        "Navigation Screen 2",
+        "Navigation Screen 3",
+        "Navigation Screen 4",
+      ],
+      requiredActions: [
+        'Click "Settings" icon or header control',
+        "Verify Settings screen options",
+        "Return to Main Screen",
+        "Click bottom navigation tab 1",
+        "Click bottom navigation tab 2",
+        "Click bottom navigation tab 3",
+        "Click bottom navigation tab 4",
+      ],
+      formsInvolved: ["Settings Preferences"],
+      syntheticDataRequired: {},
+      possibleBranches: ["Switch tabs", "Toggle settings preference", "Return back"],
+      validationStates: ["Settings loaded state", "Active tab indicator state"],
+      edgeCases: [
+        {
+          id: "EDGE-001",
+          name: "Tab State Continuity",
+          type: "valid",
+          description: "Navigate sequentially across all bottom navigation tabs",
+          expectedBehavior: "Each screen loads its unique views without crashing or blank screens",
+        },
+        {
+          id: "EDGE-002",
+          name: "Settings Screen Dismissal",
+          type: "boundary",
+          description: "Open top settings and return back to previous screen",
+          expectedBehavior: "User cleanly returns to main screen without getting trapped",
+        },
+      ],
+    }
+  }
+
   // Default Generic Feature Workflow
   const cleanName = promptText.slice(0, 40).replace(/^test\s*/i, "")
   return {
@@ -613,6 +674,31 @@ export async function executeFeatureWorkflowJob(
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
     await new Promise((r) => setTimeout(r, 800))
 
+    // Handle login wall if encountered before workflow test
+    const loggedIn = await authenticateIfNeeded(job, page, params.credentials)
+    if (loggedIn) {
+      appendLog(job, "success", "[AUTH] Authentication verified. Proceeding with workflow discovery.")
+      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 6000 }).catch(() => null)
+      await new Promise((r) => setTimeout(r, 800))
+    }
+
+    const layaUrl = params.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL
+    let classifiedPageType = "dashboard"
+    if (layaUrl) {
+      try {
+        const pageText = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => "")
+        const layaResult = await classifyPage(pageText, page.url(), layaUrl)
+        if (layaResult) {
+          classifiedPageType = layaResult.pageType
+          appendLog(
+            job,
+            "info",
+            `[Laya ~30ms] Screen classified as: ${classifiedPageType.toUpperCase()} (Ready: ${layaResult.ready ? "Stable" : "Loading"}, Blocker: ${layaResult.hasBlockingIssue ? "YES" : "NO"})`
+          )
+        }
+      } catch {}
+    }
+
     // Capture Screen 1 (Entry)
     const initialInventory = await extractActionableInventory(page)
     let s1Shot = ""
@@ -690,9 +776,10 @@ export async function executeFeatureWorkflowJob(
       if (stepTargetUrl) {
         try {
           const dest = new URL(stepTargetUrl, job.targetUrl)
-          const current = new URL(page.url())
-          if (dest.origin === current.origin && dest.pathname !== current.pathname) {
-            appendLog(job, "info", `Restoring target screen before step execution: ${dest.pathname}`)
+          // Full-URL drift check: query-param states (e.g. ?tab=expired) must
+          // trigger restoration, not just pathname changes.
+          if (normalizeUrlForRestore(dest.href) !== normalizeUrlForRestore(page.url())) {
+            appendLog(job, "info", `Restoring target screen before step execution: ${dest.pathname}${dest.search}`)
             await page.goto(dest.href, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => null)
             await new Promise((r) => setTimeout(r, 600))
           }
@@ -709,11 +796,57 @@ export async function executeFeatureWorkflowJob(
           stepCoords = await page.evaluate((txt, isClick) => {
             let el: HTMLElement | null = null
             if (isClick) {
-              const clickables = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]')) as HTMLElement[]
-              el = clickables.find((c) => {
-                const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                return cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15)))
-              }) || clickables.find((c) => /create|add|new|save|submit|register|sign up|continue/i.test(c.textContent || "")) || null
+              const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
+              const isSettingsTarget = /setting|gear|cog|pref/i.test(txt)
+              const tabNumMatch = txt.match(/tab\s*(\d+)/i)
+              const targetTabIdx = tabNumMatch ? parseInt(tabNumMatch[1], 10) - 1 : null
+
+              const clickables = Array.from(
+                document.querySelectorAll(
+                  'button, a, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [data-testid], [aria-label], nav *, [class*="tab" i], [class*="nav" i], [tabindex]:not([tabindex="-1"])'
+                )
+              ).filter((e) => {
+                const r = (e as HTMLElement).getBoundingClientRect()
+                const style = getComputedStyle(e)
+                return r.width > 4 && r.height > 4 && style.visibility !== "hidden" && style.display !== "none"
+              }) as HTMLElement[]
+
+              if (targetTabIdx !== null) {
+                const tabs = clickables.filter((c) => {
+                  const role = c.getAttribute("role")
+                  const cls = (c.className || "").toString().toLowerCase()
+                  return role === "tab" || cls.includes("tab") || cls.includes("bottomnav")
+                })
+                if (tabs[targetTabIdx]) el = tabs[targetTabIdx]
+              }
+
+              if (!el && isSettingsTarget) {
+                el = clickables.find((c) => {
+                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase()
+                  const svg = c.querySelector("svg")
+                  const svgAria = svg ? (svg.getAttribute("aria-label") || svg.getAttribute("data-icon") || svg.querySelector("title")?.textContent || svg.className || "").toString().toLowerCase() : ""
+                  const cText = (c.textContent || "").toLowerCase()
+                  return /setting|gear|cog|pref/i.test(aria) || /setting|gear|cog|pref/i.test(svgAria) || /setting|gear|cog|pref/i.test(cText)
+                }) || null
+              }
+
+              if (!el) {
+                el = clickables.find((c) => {
+                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase().trim()
+                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                  if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
+                  return (aria && (txt.includes(aria) || aria.includes(txt.slice(0, 15)))) ||
+                         (cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15))))
+                }) || null
+              }
+
+              if (!el && !isExplicitLogout) {
+                el = clickables.find((c) => {
+                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                  if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
+                  return /create|add|new|save|submit|register|sign up|continue|next|apply/i.test(cText)
+                }) || null
+              }
             } else {
               el = (document.querySelector('input:not([type="hidden"]), textarea') as HTMLElement) || null
             }
@@ -777,34 +910,95 @@ export async function executeFeatureWorkflowJob(
 
         // 3. CLICK ACTION
         else if (step.actionType === "click") {
-          actionSuccess = await page.evaluate((txt) => {
-            const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
-            const clickables = Array.from(
-              document.querySelectorAll('button, a, [role="button"], input[type="submit"]')
-            ) as HTMLElement[]
+          // A. Try Laya System-1 Reflex (~30ms local fast decision)
+          if (layaUrl) {
+            try {
+              const reflex = await tryLayaReflexPlan(page, step.targetName, layaUrl)
+              if (reflex && reflex.actions.length > 0) {
+                const clicked = await page.evaluate((sel) => {
+                  const el = document.querySelector(sel) as HTMLElement | null
+                  if (el && el.offsetParent !== null) {
+                    el.click()
+                    return true
+                  }
+                  return false
+                }, reflex.actions[0].target)
+                if (clicked) {
+                  actionSuccess = true
+                  appendLog(job, "info", `⚡ ${reflex.planSummary}`)
+                }
+              }
+            } catch {}
+          }
 
-            // Try to match specific text
-            let target = clickables.find((c) => {
-              const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-              if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-              return cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15)))
-            })
+          // B. DOM Accessible & Icon Matcher
+          if (!actionSuccess) {
+            actionSuccess = await page.evaluate((txt) => {
+              const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
+              const isSettingsTarget = /setting|gear|cog|pref/i.test(txt)
+              const tabNumMatch = txt.match(/tab\s*(\d+)/i)
+              const targetTabIdx = tabNumMatch ? parseInt(tabNumMatch[1], 10) - 1 : null
 
-            // Or find primary action button
-            if (!target && !isExplicitLogout) {
-              target = clickables.find((c) => {
-                const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-                return /create|add|new|save|submit|register|sign up|continue/i.test(cText)
-              })
-            }
+              const clickables = Array.from(
+                document.querySelectorAll(
+                  'button, a, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [data-testid], [aria-label], nav *, [class*="tab" i], [class*="nav" i], [tabindex]:not([tabindex="-1"])'
+                )
+              ).filter((e) => {
+                const r = (e as HTMLElement).getBoundingClientRect()
+                const style = getComputedStyle(e)
+                return r.width > 4 && r.height > 4 && style.visibility !== "hidden" && style.display !== "none"
+              }) as HTMLElement[]
 
-            if (target && target.offsetParent !== null) {
-              target.click()
-              return true
-            }
-            return false
-          }, targetText)
+              let target: HTMLElement | null = null
+
+              // Tab matching by index (e.g. Tab 1, Tab 2, Tab 3, Tab 4)
+              if (targetTabIdx !== null) {
+                const tabs = clickables.filter((c) => {
+                  const role = c.getAttribute("role")
+                  const cls = (c.className || "").toString().toLowerCase()
+                  return role === "tab" || cls.includes("tab") || cls.includes("bottomnav")
+                })
+                if (tabs[targetTabIdx]) target = tabs[targetTabIdx]
+              }
+
+              // Settings icon matching
+              if (!target && isSettingsTarget) {
+                target = clickables.find((c) => {
+                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase()
+                  const svg = c.querySelector("svg")
+                  const svgAria = svg ? (svg.getAttribute("aria-label") || svg.getAttribute("data-icon") || svg.querySelector("title")?.textContent || svg.className || "").toString().toLowerCase() : ""
+                  const cText = (c.textContent || "").toLowerCase()
+                  return /setting|gear|cog|pref/i.test(aria) || /setting|gear|cog|pref/i.test(svgAria) || /setting|gear|cog|pref/i.test(cText)
+                }) || null
+              }
+
+              // Accessible name or text matching
+              if (!target) {
+                target = clickables.find((c) => {
+                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase().trim()
+                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                  if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
+                  return (aria && (txt.includes(aria) || aria.includes(txt.slice(0, 15)))) ||
+                         (cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15))))
+                }) || null
+              }
+
+              // Primary action fallback
+              if (!target && !isExplicitLogout) {
+                target = clickables.find((c) => {
+                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
+                  if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
+                  return /create|add|new|save|submit|register|sign up|continue|next|apply/i.test(cText)
+                }) || null
+              }
+
+              if (target && target.offsetParent !== null) {
+                target.click()
+                return true
+              }
+              return false
+            }, targetText)
+          }
 
           // Wait for DOM transition / modal / page load
           await new Promise((r) => setTimeout(r, 1000))
@@ -977,6 +1171,65 @@ export async function executeFeatureWorkflowJob(
     }
 
     job.edgeCasesTested = testedEdgeCases
+
+    // STEP 6.5: UX Intelligence Evidence Collection & Scoring
+    appendLog(job, "info", `Collecting UX Intelligence evidence across workflow steps...`)
+    try {
+      const uxEvidenceBundles: ScreenEvidenceBundle[] = []
+      const processedScreens = new Set<string>()
+      
+      for (const step of workflowPlan.steps) {
+        const screen = screenNodes.find((s) => s.id === step.screenId)
+        
+        if (screen && step.screenshotUrl && !processedScreens.has(screen.id)) {
+          try {
+            const screenSteps = workflowPlan.steps.filter((s) => s.screenId === screen.id)
+            const workflowEvidence = collectWorkflowEvidence(
+              screen.id,
+              screen.name,
+              screenSteps,
+              screenSteps.every(s => s.status === "passed") // completedSuccessfully
+            )
+            
+            const evidenceBundle = await collectScreenEvidence(
+              page,
+              screen,
+              step.screenshotUrl,
+              [workflowEvidence]
+            )
+            
+            uxEvidenceBundles.push(evidenceBundle)
+            processedScreens.add(screen.id)
+          } catch (uxErr: any) {
+            appendLog(job, "warn", `UX evidence collection failed for screen ${screen.id}: ${uxErr?.message}`)
+          }
+        }
+      }
+
+      if (uxEvidenceBundles.length > 0) {
+        appendLog(job, "info", `Running UX scoring checks across ${uxEvidenceBundles.length} workflow screens...`)
+        const allScoringChecks = uxEvidenceBundles.flatMap((bundle) => applyAllScoringChecks(bundle))
+        const uxScore = calculateOverallUXScore(allScoringChecks)
+        
+        // Store UX audit score with evidence bundles
+        job.uxAuditScore = {
+          overall: uxScore.overall,
+          grade: uxScore.grade,
+          confidence: uxScore.confidence,
+          dimensions: uxScore.dimensions,
+          totalChecksApplied: uxScore.totalChecksApplied,
+          evidenceBundles: uxEvidenceBundles as any[]
+        }
+        
+        const taskEffScore = uxScore.dimensions.find(d => d.dimension === 'taskEffectiveness')?.score || 0
+        const workflowEffScore = uxScore.dimensions.find(d => d.dimension === 'workflowEfficiency')?.score || 0
+        
+        appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overall.toFixed(1)}/100 (${uxScore.grade}) | Task Effectiveness: ${taskEffScore.toFixed(1)} | Workflow Efficiency: ${workflowEffScore.toFixed(1)}`)
+        saveJob(job)
+      }
+    } catch (uxErr: any) {
+      appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
+    }
 
     // STEP 7 & 9: Build focused Figma map and compile final report
     job.testingPhase = "reporting"

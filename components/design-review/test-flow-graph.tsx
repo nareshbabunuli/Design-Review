@@ -33,6 +33,9 @@ import {
   Play,
   Check,
   Trash2,
+  Search,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react"
 
 interface TestFlowGraphProps {
@@ -490,6 +493,104 @@ export default function TestFlowGraph({
     return m
   }, [screens, plan?.screens])
 
+  // Search tested screens in map
+  const [searchInput, setSearchInput] = useState("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0)
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false)
+
+  const matchingNodes = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return []
+    return visibleNodes.filter((node) => {
+      const matchedScreen = screensMap.get(node.id)
+      const name = (node.title || "").toLowerCase()
+      const path = (matchedScreen?.path || "").toLowerCase()
+      const id = (node.id || "").toLowerCase()
+      const comp = (node.componentLocation || "").toLowerCase()
+      const hasAction = (matchedScreen?.actionableElements || []).some((el) => (el.name || "").toLowerCase().includes(q))
+      const hasStep = (steps || plan?.steps || []).some(
+        (s) =>
+          (s.screenId === node.id || s.screenName?.toLowerCase() === name) &&
+          ((s.targetName || "").toLowerCase().includes(q) || (s.expectedResult || "").toLowerCase().includes(q))
+      )
+      return name.includes(q) || path.includes(q) || id.includes(q) || comp.includes(q) || hasAction || hasStep
+    })
+  }, [searchQuery, visibleNodes, screensMap, steps, plan?.steps])
+
+  const matchingNodeIds = useMemo(() => {
+    return new Set(matchingNodes.map((n) => n.id))
+  }, [matchingNodes])
+
+  const centerOnNode = useCallback(
+    (nodeId: string, openInspector = false) => {
+      const pos = nodePositions[nodeId]
+      if (!pos || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const targetX = rect.width / 2 - (pos.x + CARD_WIDTH / 2) * zoom
+      const targetY = rect.height / 2 - (pos.y + CARD_HEIGHT / 2) * zoom
+      setPan({ x: Math.round(targetX), y: Math.round(targetY) })
+      if (openInspector) {
+        setInspectingNodeId(nodeId)
+        onSelectScreen?.(nodeId)
+      }
+    },
+    [nodePositions, zoom, onSelectScreen]
+  )
+
+  const handleNavigateSearch = useCallback(
+    (direction: 1 | -1) => {
+      if (matchingNodes.length === 0) return
+      let nextIdx = (activeSearchIndex + direction) % matchingNodes.length
+      if (nextIdx < 0) nextIdx = matchingNodes.length - 1
+      setActiveSearchIndex(nextIdx)
+      centerOnNode(matchingNodes[nextIdx].id, false)
+    },
+    [matchingNodes, activeSearchIndex, centerOnNode]
+  )
+
+  // Submit search: updates query, highlights matches, and centers camera WITHOUT auto-opening inspector
+  const handleExecuteSearch = useCallback(
+    (customQuery?: string) => {
+      const q = (customQuery !== undefined ? customQuery : searchInput).trim()
+      setSearchQuery(q)
+      setIsSearchDropdownOpen(false)
+      if (!q) {
+        setActiveSearchIndex(0)
+        return
+      }
+
+      const lower = q.toLowerCase()
+      const firstMatch = visibleNodes.find((node) => {
+        const matchedScreen = screensMap.get(node.id)
+        const name = (node.title || "").toLowerCase()
+        const path = (matchedScreen?.path || "").toLowerCase()
+        const id = (node.id || "").toLowerCase()
+        const comp = (node.componentLocation || "").toLowerCase()
+        const hasAction = (matchedScreen?.actionableElements || []).some((el) => (el.name || "").toLowerCase().includes(lower))
+        const hasStep = (steps || plan?.steps || []).some(
+          (s) =>
+            (s.screenId === node.id || s.screenName?.toLowerCase() === name) &&
+            ((s.targetName || "").toLowerCase().includes(lower) || (s.expectedResult || "").toLowerCase().includes(lower))
+        )
+        return name.includes(lower) || path.includes(lower) || id.includes(lower) || comp.includes(lower) || hasAction || hasStep
+      })
+
+      if (firstMatch) {
+        setActiveSearchIndex(0)
+        centerOnNode(firstMatch.id, false)
+      }
+    },
+    [searchInput, visibleNodes, screensMap, steps, plan?.steps, centerOnNode]
+  )
+
+  const handleClearSearch = useCallback(() => {
+    setSearchInput("")
+    setSearchQuery("")
+    setIsSearchDropdownOpen(false)
+    setActiveSearchIndex(0)
+  }, [])
+
   // Current inspecting node & screen record
   const inspectingNode = useMemo(() => {
     if (!inspectingNodeId) return null
@@ -602,7 +703,97 @@ export default function TestFlowGraph({
       data-canvas-surface="true"
     >
       {/* 1. FIGMA TOP TOOLBAR */}
-      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-end pointer-events-none">
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none gap-2">
+        {/* Left: Search Tested Screens */}
+        <div className="relative pointer-events-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleExecuteSearch()
+            }}
+            className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-slate-700/80 shadow-lg text-xs"
+          >
+            <Search className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search tested screens..."
+              className="bg-transparent border-none text-xs text-white placeholder-slate-400 focus:outline-none w-32 sm:w-44"
+            />
+            <button
+              type="submit"
+              disabled={!searchInput.trim()}
+              className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-[10px] transition cursor-pointer shrink-0 shadow-xs"
+              title="Submit search (Enter)"
+            >
+              Submit
+            </button>
+            {searchQuery && (
+              <div className="flex items-center gap-1 pl-1 border-l border-slate-700">
+                <span className="text-[10px] font-mono font-bold text-indigo-300">
+                  {matchingNodes.length > 0 ? `${activeSearchIndex + 1}/${matchingNodes.length}` : "0"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSearch(-1)}
+                  disabled={matchingNodes.length <= 1}
+                  className="p-1 hover:bg-slate-800 disabled:opacity-30 text-slate-300 rounded cursor-pointer"
+                  title="Previous matching screen"
+                >
+                  <ChevronUp className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigateSearch(1)}
+                  disabled={matchingNodes.length <= 1}
+                  className="p-1 hover:bg-slate-800 disabled:opacity-30 text-slate-300 rounded cursor-pointer"
+                  title="Next matching screen"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded cursor-pointer"
+                  title="Clear search"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+          </form>
+
+          {/* Quick Match Dropdown */}
+          {isSearchDropdownOpen && searchQuery.trim() && matchingNodes.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-72 max-h-56 overflow-y-auto rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl z-50 p-1 space-y-1 backdrop-blur-md">
+              {matchingNodes.map((mNode, idx) => (
+                <div
+                  key={mNode.id}
+                  onClick={() => {
+                    setActiveSearchIndex(idx)
+                    centerOnNode(mNode.id)
+                    setIsSearchDropdownOpen(false)
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-between gap-2 transition ${
+                    idx === activeSearchIndex
+                      ? "bg-indigo-600/40 border border-indigo-500/50 text-white"
+                      : "hover:bg-slate-800/80 text-slate-300"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-bold truncate text-[11px]">{mNode.title}</div>
+                    <div className="text-[10px] text-slate-400 font-mono truncate">{mNode.id} • {mNode.url}</div>
+                  </div>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-slate-950 text-indigo-300 border border-slate-800 shrink-0">
+                    Jump →
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Right Controls */}
         <div className="flex items-center gap-1.5 pointer-events-auto bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-lg border border-slate-700/80 shadow-lg text-xs">
           {/* Zoom Out */}
@@ -840,6 +1031,8 @@ export default function TestFlowGraph({
             const isDragging = draggingNodeId === node.id
             const matchedScreen = screensMap.get(node.id)
             const elementsCount = matchedScreen?.actionableElements?.length ?? 0
+            const isMatch = matchingNodeIds.has(node.id)
+            const isDimmed = searchQuery.trim().length > 0 && !isMatch
 
             return (
               <div
@@ -861,8 +1054,12 @@ export default function TestFlowGraph({
                 className={`absolute select-none rounded-xl border cursor-grab active:cursor-grabbing flex flex-col justify-between overflow-hidden ${
                   isDragging
                     ? "z-40 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/30 scale-[1.03] transition-none"
+                    : isMatch
+                    ? "z-30 border-emerald-400 bg-slate-900 shadow-2xl shadow-emerald-500/40 ring-2 ring-emerald-400/80 scale-[1.02] transition-all"
                     : inspectingNodeId === node.id
                     ? "z-30 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/50 ring-2 ring-indigo-500/60 transition-all"
+                    : isDimmed
+                    ? "z-10 border-slate-800 bg-slate-950/80 opacity-30 grayscale-[70%] transition-all"
                     : "z-20 border-slate-700/80 bg-slate-900/95 hover:border-indigo-500/70 hover:shadow-xl shadow-lg transition-all"
                 }`}
                 style={{
@@ -878,6 +1075,11 @@ export default function TestFlowGraph({
                     <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                       {node.id}
                     </span>
+                    {isMatch && (
+                      <span className="px-1.5 py-0.2 rounded font-mono font-bold text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        MATCH
+                      </span>
+                    )}
                     <span className="text-[11px] font-bold text-white truncate max-w-[105px]" title={node.title}>
                       {node.title.replace(/^S\d+\s*/i, "")}
                     </span>
@@ -1440,9 +1642,9 @@ export default function TestFlowGraph({
                   {inspectorSubTab === "elements" && (
                     <div className="space-y-1.5">
                       {inspectingScreen && inspectingScreen.actionableElements.length > 0 ? (
-                        inspectingScreen.actionableElements.map((elem) => (
+                        inspectingScreen.actionableElements.map((elem, elemIndex) => (
                           <div
-                            key={elem.id}
+                            key={`${elem.id}-${elemIndex}`}
                             className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/80 flex items-center justify-between text-xs"
                           >
                             <div className="min-w-0 pr-2">

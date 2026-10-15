@@ -8,6 +8,70 @@ export interface DiscoveredProjectRoute {
   title?: string
 }
 
+/**
+ * Compiles an App Router path with dynamic segments into a RegExp:
+ * /leases/[id] -> ^/leases/([^/]+)$ ; /docs/[...slug] -> ^/docs/(.*)$
+ * Compiled patterns are cached per route object (WeakMap) so the public
+ * interface stays JSON-serializable.
+ */
+const routePatternCache = new WeakMap<DiscoveredProjectRoute, { pattern: RegExp; staticLength: number }>()
+
+function getRoutePattern(route: DiscoveredProjectRoute): { pattern: RegExp; staticLength: number } {
+  const cached = routePatternCache.get(route)
+  if (cached) return cached
+  const segments = route.path.split("?")[0].split("/").filter(Boolean)
+  let staticLength = 0
+  const parts = segments.map((seg) => {
+    const catchAll = /^\[\.\.\.(.+)\]$/.exec(seg)
+    if (catchAll) return "(.*)"
+    const param = /^\[(.+)\]$/.exec(seg)
+    if (param) return "([^/]+)"
+    staticLength += seg.length
+    return seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  })
+  const compiled = { pattern: new RegExp(`^/${parts.join("/")}$`), staticLength }
+  routePatternCache.set(route, compiled)
+  return compiled
+}
+
+/**
+ * Resolves a runtime URL path to the most specific discovered route.
+ * Precedence: exact literal match > dynamic-segment pattern match (most
+ * static characters, then most segments) > plain prefix fallback with a
+ * segment boundary. This fixes /leases/123 resolving to app/leases/page.tsx
+ * instead of app/leases/[id]/page.tsx, and stops /leases2 matching /leases.
+ */
+export function matchRouteForPath(
+  routes: DiscoveredProjectRoute[],
+  rawPath: string
+): DiscoveredProjectRoute | undefined {
+  const clean = rawPath.split("#")[0].split("?")[0].replace(/\/+$/, "") || "/"
+
+  let best: DiscoveredProjectRoute | undefined
+  let bestStatic = -1
+  let bestSegs = -1
+  let fallback: DiscoveredProjectRoute | undefined
+
+  for (const r of routes) {
+    const rClean = r.path.split("?")[0].replace(/\/+$/, "") || "/"
+    if (rClean === clean) return r // exact literal match always wins
+    const hasParams = /\[[^\]]+\]/.test(rClean)
+    if (hasParams) {
+      const { pattern, staticLength } = getRoutePattern(r)
+      if (!pattern.test(clean)) continue
+      const segs = rClean.split("/").length
+      if (staticLength > bestStatic || (staticLength === bestStatic && segs > bestSegs)) {
+        best = r
+        bestStatic = staticLength
+        bestSegs = segs
+      }
+    } else if (!fallback && (clean === rClean || clean.startsWith(rClean + "/"))) {
+      fallback = r
+    }
+  }
+  return best || fallback
+}
+
 export interface LocalProjectInfo {
   name: string
   path: string

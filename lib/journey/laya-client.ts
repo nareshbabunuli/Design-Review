@@ -8,7 +8,7 @@ import type { PageType } from "./types"
 const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || "http://127.0.0.1:8000"
 
 export interface LayaPredictPayload {
-  state: string
+  state: string | { image?: string; note?: string; text?: string; visual?: { screenshotUrl?: string; screenshotCapturedAt?: number } }
   questions: Record<
     string,
     | { type: "noul"; instructions: string }
@@ -17,30 +17,51 @@ export interface LayaPredictPayload {
   >
 }
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.LAYA_TIMEOUT_MS) || 120000
+
 async function predict(
   baseUrl: string,
-  payload: LayaPredictPayload
+  payload: LayaPredictPayload,
+  timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<Record<string, any> | null> {
   if (!baseUrl || !baseUrl.trim()) return null
-  const cleanBase = baseUrl.replace(/\/$/, "")
+  const cleanBase = baseUrl.replace(/\/$/, "").replace(/\/(predict|v1\/systemone|v1)$/, "")
   const endpoints = [`${cleanBase}/v1/systemone`, `${cleanBase}/predict`]
 
   for (const url of endpoints) {
-    try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 4000)
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      })
-      clearTimeout(timer)
-      if (res.ok) {
-        return await res.json()
+    let retries = 2
+    while (retries >= 0) {
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
+
+        if (res.ok) {
+          return await res.json()
+        }
+
+        if (res.status === 503 && retries > 0) {
+          // Laya is busy with another forward pass (concurrency lock); back off briefly and retry
+          retries--
+          await new Promise((r) => setTimeout(r, 2000))
+          continue
+        }
+
+        const errText = await res.text().catch(() => "")
+        console.warn(`[Laya] ${url} HTTP ${res.status}: ${errText}`)
+        // If 404, try alternate endpoint; otherwise break
+        if (res.status === 404) break
+        return null
+      } catch (err: any) {
+        console.warn(`[Laya] ${url} connection failed:`, err?.message || err)
+        break
       }
-    } catch {
-      // try fallback endpoint
     }
   }
   return null
@@ -67,9 +88,11 @@ export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boole
 export async function classifyPage(
   pageText: string,
   url: string,
-  baseUrl = DEFAULT_LAYA_URL
+  baseUrl = DEFAULT_LAYA_URL,
+  screenshotBase64?: string
 ): Promise<{ pageType: PageType; hasBlockingIssue: boolean; ready: boolean }> {
-  const state = `URL: ${url}\n\nPage content (truncated):\n${pageText.slice(0, 2500)}`
+  const note = `URL: ${url}\n\nPage content (truncated):\n${pageText.slice(0, 2500)}`
+  const state = screenshotBase64 ? { image: screenshotBase64, note } : note
 
   const result = await predict(baseUrl, {
     state,

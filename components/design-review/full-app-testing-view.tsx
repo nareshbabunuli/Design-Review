@@ -47,6 +47,9 @@ import {
   RotateCcw,
   Edit3,
   KeyRound,
+  Search,
+  X,
+  Video,
 } from "lucide-react"
 
 interface FullAppTestingViewProps {
@@ -126,6 +129,10 @@ export default function FullAppTestingView({
   const [isExportingZip, setIsExportingZip] = useState(false)
   const [isResettingData, setIsResettingData] = useState(false)
 
+  // Evidence stream screen search state
+  const [evidenceSearchInput, setEvidenceSearchInput] = useState("")
+  const [evidenceSearchQuery, setEvidenceSearchQuery] = useState("")
+
   // Step value inline editing
   const [editingStepId, setEditingStepId] = useState<string | null>(null)
   const [editingStepValue, setEditingStepValue] = useState<string>("")
@@ -135,6 +142,42 @@ export default function FullAppTestingView({
   const [planCredUser, setPlanCredUser] = useState("")
   const [planCredPass, setPlanCredPass] = useState("")
   const [isApplyingPlanCreds, setIsApplyingPlanCreds] = useState(false)
+
+  const testedScreensList = useMemo(() => {
+    const screenNames = new Set<string>()
+    if (plan?.screens) {
+      plan.screens.forEach((s) => {
+        if (s.name) screenNames.add(s.name)
+        else if (s.path) screenNames.add(s.path)
+      })
+    }
+    if (plan?.steps) {
+      plan.steps.forEach((s) => {
+        if (s.screenName) screenNames.add(s.screenName)
+      })
+    }
+    if (job?.actionLedger?.entries) {
+      job.actionLedger.entries.forEach((e) => {
+        const name = (e as any).screenName || e.screenPath || e.name || e.screenId
+        if (name) screenNames.add(name)
+      })
+    }
+    return Array.from(screenNames)
+  }, [plan?.screens, plan?.steps, job?.actionLedger?.entries])
+
+  const filteredEvidenceSteps = useMemo(() => {
+    const all = (plan?.steps || []).filter((s) => Boolean(s.screenshotUrl))
+    const q = evidenceSearchQuery.trim().toLowerCase()
+    if (!q) return all
+    return all.filter((s) => {
+      const sName = (s.screenName || "").toLowerCase()
+      const tName = (s.targetName || "").toLowerCase()
+      const sId = (s.screenId || s.id || "").toLowerCase()
+      const exp = (s.expectedResult || "").toLowerCase()
+      const act = (s.actualResult || "").toLowerCase()
+      return sName.includes(q) || tName.includes(q) || sId.includes(q) || exp.includes(q) || act.includes(q)
+    })
+  }, [plan?.steps, evidenceSearchQuery])
 
   useEffect(() => {
     try {
@@ -1415,8 +1458,90 @@ export default function FullAppTestingView({
               </div>
             </div>
 
-            {/* Reusable Action Queue: stays inside the existing execution view */}
-            <ActionLedgerPanel actionLedger={actionLedger} onViewEvidence={setScreenshotModal} autoExpand={isRunning} />
+            {/* Search Tested Screens Bar & Quick Screen Filter Pills */}
+            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 shadow-md space-y-2.5">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setEvidenceSearchQuery(evidenceSearchInput.trim())
+                }}
+                className="flex items-center gap-2"
+              >
+                <Search className="h-4 w-4 text-indigo-400 shrink-0" />
+                <input
+                  type="text"
+                  value={evidenceSearchInput}
+                  onChange={(e) => setEvidenceSearchInput(e.target.value)}
+                  placeholder="Search tested screens (e.g. Settings, Dashboard, Tabs, S001)..."
+                  className="w-full bg-transparent border-none text-xs text-white placeholder-slate-400 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!evidenceSearchInput.trim() && !evidenceSearchQuery}
+                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-[11px] transition cursor-pointer shrink-0 shadow-xs"
+                  title="Submit search (Enter)"
+                >
+                  Submit
+                </button>
+                {(evidenceSearchInput || evidenceSearchQuery) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEvidenceSearchInput("")
+                      setEvidenceSearchQuery("")
+                    }}
+                    className="p-1 rounded text-slate-400 hover:text-white transition cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </form>
+
+              {testedScreensList.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800/80">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Tested Screens:</span>
+                  {testedScreensList.map((sName) => (
+                    <button
+                      key={sName}
+                      type="button"
+                      onClick={() => {
+                        const next = evidenceSearchQuery.toLowerCase() === sName.toLowerCase() ? "" : sName
+                        setEvidenceSearchInput(next)
+                        setEvidenceSearchQuery(next)
+                      }}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition cursor-pointer ${
+                        evidenceSearchQuery.toLowerCase() === sName.toLowerCase()
+                          ? "bg-indigo-600 text-white font-bold shadow-xs"
+                          : "bg-slate-800/90 hover:bg-slate-700 text-slate-300"
+                      }`}
+                    >
+                      {sName}
+                    </button>
+                  ))}
+                  {evidenceSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEvidenceSearchInput("")
+                        setEvidenceSearchQuery("")
+                      }}
+                      className="text-[10px] text-indigo-400 hover:underline cursor-pointer ml-1"
+                    >
+                      Reset filter
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Reusable Action Queue: filtered by screen search query */}
+            <ActionLedgerPanel
+              actionLedger={actionLedger}
+              onViewEvidence={setScreenshotModal}
+              autoExpand={isRunning}
+              searchQuery={evidenceSearchQuery}
+            />
 
             {/* Current Active Step Banner */}
             {isRunning && job?.currentStep && (
@@ -1430,15 +1555,23 @@ export default function FullAppTestingView({
             )}
 
             {/* Evidence Gallery */}
-            {plan && plan.steps.filter((s) => s.screenshotUrl).length > 0 ? (
+            {plan && (plan.steps.filter((s) => s.screenshotUrl).length > 0 || evidenceSearchQuery) ? (
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                  Captured Step Evidence ({plan.steps.filter((s) => s.screenshotUrl).length})
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {plan.steps
-                    .filter((s) => s.screenshotUrl)
-                    .map((step) => (
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                    Captured Step Evidence ({filteredEvidenceSteps.length}
+                    {evidenceSearchQuery ? ` of ${plan.steps.filter((s) => s.screenshotUrl).length}` : ""})
+                  </h4>
+                  {evidenceSearchQuery && (
+                    <span className="text-[11px] text-indigo-300 font-mono">
+                      Filtered by &quot;{evidenceSearchQuery}&quot;
+                    </span>
+                  )}
+                </div>
+
+                {filteredEvidenceSteps.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredEvidenceSteps.map((step) => (
                       <div
                         key={step.id}
                         onClick={() => setScreenshotModal(step.screenshotUrl!)}
@@ -1460,7 +1593,22 @@ export default function FullAppTestingView({
                         </div>
                       </div>
                     ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="p-8 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center space-y-1.5">
+                    <Search className="h-5 w-5 text-slate-500 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-300">
+                      No captured evidence matching &quot;{evidenceSearchQuery}&quot;
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEvidenceSearchQuery("")}
+                      className="text-xs text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Clear search filter
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-8 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center text-xs text-slate-500">
@@ -1573,6 +1721,51 @@ export default function FullAppTestingView({
                 <div className="text-[10px] text-slate-400 mt-0.5">Screens found during execution</div>
               </div>
             </div>
+
+            {/* Session Video Recording */}
+            {(job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Video className="h-3.5 w-3.5 text-indigo-400" />
+                  Session Video Recording
+                </h4>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+                  {job.recordingUrl && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-400">
+                        Complete session recording with visible cursor movements, click ripples, and interaction overlays
+                      </p>
+                      <video
+                        controls
+                        preload="metadata"
+                        src={job.recordingUrl}
+                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
+                        aria-label="Recorded Full App Testing session"
+                      />
+                    </div>
+                  )}
+                  {job.recordingSegments && job.recordingSegments.length > 1 && (
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] text-slate-400 font-semibold block">Recording Segments:</span>
+                      <div className="flex flex-wrap gap-2">
+                        {job.recordingSegments.map((url, index) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-indigo-300 hover:text-indigo-200 font-medium transition flex items-center gap-1.5"
+                          >
+                            <Film className="h-3.5 w-3.5" />
+                            Segment {index + 1}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Issues List */}
             <div className="space-y-2">
