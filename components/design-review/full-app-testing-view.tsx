@@ -49,6 +49,7 @@ import {
   KeyRound,
   Search,
   X,
+  Video,
 } from "lucide-react"
 
 interface FullAppTestingViewProps {
@@ -1720,6 +1721,51 @@ export default function FullAppTestingView({
                 <div className="text-[10px] text-slate-400 mt-0.5">Screens found during execution</div>
               </div>
             </div>
+
+            {/* Session Video Recording */}
+            {(job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Video className="h-3.5 w-3.5 text-indigo-400" />
+                  Session Video Recording
+                </h4>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+                  {job.recordingUrl && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-400">
+                        Complete session recording with visible cursor movements, click ripples, and interaction overlays
+                      </p>
+                      <video
+                        controls
+                        preload="metadata"
+                        src={job.recordingUrl}
+                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
+                        aria-label="Recorded Full App Testing session"
+                      />
+                    </div>
+                  )}
+                  {job.recordingSegments && job.recordingSegments.length > 1 && (
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] text-slate-400 font-semibold block">Recording Segments:</span>
+                      <div className="flex flex-wrap gap-2">
+                        {job.recordingSegments.map((url, index) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-indigo-300 hover:text-indigo-200 font-medium transition flex items-center gap-1.5"
+                          >
+                            <Film className="h-3.5 w-3.5" />
+                            Segment {index + 1}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Issues List */}
             <div className="space-y-2">
