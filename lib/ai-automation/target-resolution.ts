@@ -279,16 +279,21 @@ async function readObservedTarget(page: Page, rawSelector: string): Promise<DomA
       Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
       .replace(/^lucide-/, "").replace(/-icon$/, "")
     const iconWords: Record<string, string> = {
-      x: "Close", close: "Close", menu: "Menu", search: "Search", plus: "Add",
-      "ellipsis": "More options", "ellipsis-vertical": "More options", "more-horizontal": "More options",
-      "arrow-left": "Back", "chevron-left": "Back", "arrow-right": "Next",
-      "chevron-right": "Next", settings: "Settings", pencil: "Edit", edit: "Edit",
-      "trash-2": "Delete", trash: "Delete", calendar: "Calendar", copy: "Copy",
+      x: "Close", close: "Close", menu: "Menu", "ellipsis": "More options",
+      "ellipsis-vertical": "More options", "more-horizontal": "More options", "more-vertical": "More options",
+      search: "Search", plus: "Add", "plus-circle": "Add", "arrow-left": "Back",
+      "chevron-left": "Back", "arrow-right": "Next", "chevron-right": "Next",
+      settings: "Settings", "settings-2": "Settings", pencil: "Edit", edit: "Edit",
+      "trash-2": "Delete", trash: "Delete", filter: "Filter", eye: "Show", "eye-off": "Hide",
+      bell: "Notifications", home: "Home", user: "Profile", "log-out": "Log out",
+      download: "Download", upload: "Upload", "external-link": "Open link", "refresh-cw": "Refresh",
+      "chevron-down": "Expand", "chevron-up": "Collapse", calendar: "Calendar",
+      help: "Help", "circle-help": "Help", copy: "Copy",
     }
     const label = String(html.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
       html.innerText || input.value || input.placeholder || html.getAttribute("name") || html.title ||
       tooltip || icon?.getAttribute("aria-label") || icon?.getAttribute("title") ||
-      icon?.querySelector("title")?.textContent || iconWords[iconName] ||
+      icon?.querySelector("title")?.textContent || icon?.textContent?.trim() || iconWords[iconName] ||
       html.getAttribute("data-testid") || html.getAttribute("data-test-id") || html.getAttribute("data-cy") || "")
       .replace(/\s+/g, " ").trim().slice(0, 120)
     if (!label) return null
