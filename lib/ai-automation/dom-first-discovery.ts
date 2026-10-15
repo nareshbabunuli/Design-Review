@@ -455,6 +455,9 @@ export async function resolveCurrentDomTarget(
   page: Page,
   hint: DomActionTargetHint,
 ): Promise<{ selector: string; label: string; href?: string; matchedBy: "selector" | "href" | "label" } | null> {
+  const hasStableIdentity = Boolean(hint.href?.trim()) ||
+    Boolean(hint.label?.trim() && !/unlabelled control|unlabelled icon/i.test(hint.label))
+  if (!hasStableIdentity) return null
   const snapshot = await inspectPageDom(page).catch(() => null)
   if (!snapshot) return null
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
