@@ -170,6 +170,15 @@ High-performance inference optimized for large language models.
 - **Single Page Application (SPA) Navigation**: Seamlessly explores complex React/Next.js single-page dashboards driven by state variables and tabs rather than URL changes.
 - **Dummy File Generation**: Synthesizes in-memory images, PDFs, CSVs, and documents on the fly to test file upload controls.
 
+### 📊 Comprehensive HTML Test Reports
+- **Interactive Report Viewer**: View detailed test reports directly in your browser with a single click, no download required.
+- **Print-to-PDF Ready**: Professional styling with optimized print layouts - press Ctrl+P (or Cmd+P) to save as PDF.
+- **Complete Test Documentation**: Executive summary, UX Intelligence audit scores, dimensional breakdowns, issues grouped by severity, screen documentation with screenshots, test plan execution details, workflow reports, and execution logs.
+- **Dual Access Options**: 
+  - **View Report** button opens comprehensive HTML report in new browser tab
+  - **Save Test ZIP** downloads complete bundle with embedded HTML report, screenshots, and JSON data
+- **No External Dependencies**: Self-contained HTML with inline CSS and base64 screenshots - works offline, shareable with stakeholders.
+
 ---
 
 ## 🎨 Pillar 2: Design Review & Client Sign-off
@@ -320,6 +329,46 @@ const result = await fetch('/api/ai-automation/start', {
   })
 });
 ```
+
+### Viewing Test Reports
+
+After tests complete, access comprehensive reports two ways:
+
+**Option 1: View in Browser**
+```typescript
+// Direct browser access (instant viewing, print to PDF)
+window.open(`/api/ai-automation/html-report?jobId=${jobId}`, '_blank');
+```
+Click the blue **"View Report"** button in the UI to open the interactive HTML report in a new tab.
+
+**Option 2: Download ZIP Bundle**
+```typescript
+// Download complete test bundle with embedded HTML report
+const response = await fetch(`/api/ai-automation/export-zip?jobId=${jobId}`);
+const blob = await response.blob();
+const url = window.URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `test-bundle-${jobId}.zip`;
+a.click();
+```
+Click the purple **"Save Test ZIP"** button to download the complete bundle including:
+- `test-report.html` - Comprehensive HTML report
+- `README.txt` - Instructions
+- All screenshots and JSON data files
+
+**Report Contents:**
+- Executive Summary with AI insights
+- UX Intelligence Audit with dimensional scores (0-100 with A-F grade)
+- Test Statistics (screens tested, issues found, coverage %)
+- Issues grouped by severity (blocker, high, medium, low) with correlated evidence
+- Screen documentation with multi-viewport screenshots
+- Test plan execution with step-by-step verdicts
+- Workflow reports with reproduction steps
+- Color-coded execution logs
+
+**Print to PDF:**
+Open the HTML report and press **Ctrl+P** (Windows) or **Cmd+P** (Mac) to save as PDF with optimized print styling.
 
 ### Switching AI Providers
 
