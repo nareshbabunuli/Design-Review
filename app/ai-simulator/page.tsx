@@ -2669,7 +2669,6 @@ export default function AISimulatorPage() {
                       />
                     )}
                   </div>
-                )}
               </div>
             </div>
 
