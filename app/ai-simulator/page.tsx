@@ -62,6 +62,7 @@ import {
   Plug,
   User,
   Archive,
+  FileBarChart,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -2506,6 +2507,15 @@ export default function AISimulatorPage() {
 
                   {currentJob?.id && (
                     <>
+                      <button
+                        type="button"
+                        onClick={() => window.open(`/api/ai-automation/html-report?jobId=${currentJob.id}`, '_blank')}
+                        className="px-2.5 py-1 rounded-md bg-blue-600/30 hover:bg-blue-600 border border-blue-500/50 text-blue-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                        title="View comprehensive HTML report in browser (with print-to-PDF)"
+                      >
+                        <FileBarChart className="h-3 w-3" />
+                        <span>View Report</span>
+                      </button>
                       <button
                         type="button"
                         onClick={handleExportZip}

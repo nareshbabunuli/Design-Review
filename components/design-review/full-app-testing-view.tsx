@@ -48,6 +48,7 @@ import {
   Edit3,
   KeyRound,
   Search,
+  FileBarChart,
   X,
   Video,
 } from "lucide-react"
@@ -834,6 +835,15 @@ export default function FullAppTestingView({
 
           {!fullPageView && job?.id && (
             <div className="flex items-center gap-1.5 shrink-0 ml-auto my-1">
+              <button
+                type="button"
+                onClick={() => window.open(`/api/ai-automation/html-report?jobId=${job.id}`, '_blank')}
+                className="px-2.5 py-1 rounded-lg bg-blue-600/30 hover:bg-blue-600 border border-blue-500/50 text-blue-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                title="View comprehensive HTML report in browser (with print-to-PDF)"
+              >
+                <FileBarChart className="h-3 w-3" />
+                <span>View Report</span>
+              </button>
               <button
                 type="button"
                 onClick={handleExportZip}
