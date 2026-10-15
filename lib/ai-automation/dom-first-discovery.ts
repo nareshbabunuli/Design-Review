@@ -233,7 +233,15 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
         if (h.closest('button,a,[role="button"],[role="link"],[role="tab"],[role="menuitem"]')) return false
         const parent = h.parentElement
         if (parent && getComputedStyle(parent).cursor === "pointer" && labelOf(parent) === labelOf(h)) return false
-        return Boolean(labelOf(el)) && labelOf(el) !== el.tagName.toLowerCase() + " (unlabelled control)"
+        const label = labelOf(el)
+        const hasIconSurface = Boolean(h.querySelector("svg,img,[data-icon],[data-lucide]"))
+        const hasActionMetadata = Boolean(h.getAttribute("data-action") || h.getAttribute("title") ||
+          h.getAttribute("aria-label") || h.getAttribute("aria-labelledby") ||
+          h.getAttribute("data-tooltip") || h.getAttribute("data-tooltip-content"))
+        // Keep icon-only pointer targets in the inventory even when their
+        // accessible name is missing. They are marked for review below.
+        return (Boolean(label) && label !== el.tagName.toLowerCase() + " (unlabelled control)") ||
+          hasIconSurface || hasActionMetadata
       })
     const nodes = Array.from(new Set([...semanticNodes, ...customPointerNodes])).filter(visible).slice(0, 800)
     const elements = nodes.map((el) => {
@@ -262,7 +270,8 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
         label,
         href,
         kind: (navigation ? "navigation" : overlay ? "overlay" : isForm ? "form" : stateChange ? "state-change" : /^(button)$/.test(el.tagName.toLowerCase()) || role === "button" || h.hasAttribute("onclick") ? "action" : "unknown") as DomDiscoveryElement["kind"],
-        risk: (risky ? "blocked" : external || target === "_blank" ? "review" : "safe") as DomDiscoveryElement["risk"],
+        risk: (risky ? "blocked" : external || target === "_blank" ||
+          /unlabelled control|unlabelled icon/i.test(label) ? "review" : "safe") as DomDiscoveryElement["risk"],
         enabled: !("disabled" in input && input.disabled) && h.getAttribute("aria-disabled") !== "true",
       }
     })
@@ -372,6 +381,70 @@ export async function resolveRankedLocator(
   return null
 }
 
+
+export type DomActionTargetHint = {
+  selector?: string
+  label?: string
+  role?: string
+  href?: string
+  elementType?: string
+}
+
+/**
+ * Resolve an action against the current DOM instead of trusting a selector
+ * captured before a state transition. Prefer exact selector/href identity;
+ * use a unique semantic label only when it identifies exactly one live control.
+ */
+export async function resolveCurrentDomTarget(
+  page: Page,
+  hint: DomActionTargetHint,
+): Promise<{ selector: string; label: string; href?: string; matchedBy: "selector" | "href" | "label" } | null> {
+  const snapshot = await inspectPageDom(page).catch(() => null)
+  if (!snapshot) return null
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
+  let match = hint.selector
+    ? snapshot.elements.find((element) => element.selector === hint.selector ||
+        element.locators.some((locator) => locator.selector === hint.selector))
+    : undefined
+  let matchedBy: "selector" | "href" | "label" = "selector"
+
+  if (!match && hint.href) {
+    let expectedHref = ""
+    try { expectedHref = new URL(hint.href, snapshot.url).href } catch {}
+    const hrefMatches = snapshot.elements.filter((element) => {
+      if (!element.href || !expectedHref) return false
+      try { return new URL(element.href, snapshot.url).href === expectedHref } catch { return false }
+    })
+    if (hrefMatches.length === 1) {
+      match = hrefMatches[0]
+      matchedBy = "href"
+    } else if (hrefMatches.length > 1) {
+      return null
+    }
+  }
+
+  if (!match && hint.label) {
+    const wanted = normalize(hint.label)
+    const labelMatches = snapshot.elements.filter((element) =>
+      normalize(element.label) === wanted &&
+      (!hint.role || normalize(element.role) === normalize(hint.role)) &&
+      (!hint.elementType || normalize(element.tag) === normalize(hint.elementType) ||
+        normalize(element.role) === normalize(hint.elementType))
+    )
+    if (labelMatches.length === 1) {
+      match = labelMatches[0]
+      matchedBy = "label"
+    } else if (labelMatches.length > 1) {
+      return null
+    }
+  }
+
+  if (!match) return null
+  const resolved = await resolveRankedLocator(page, match.locators)
+  if (!resolved) return null
+  return { selector: resolved.selector, label: match.label, href: match.href, matchedBy }
+}
+
 function discoveryStateSignature(snapshot: DomDiscoverySnapshot): string {
   return JSON.stringify({
     title: snapshot.title,
@@ -409,8 +482,22 @@ export async function exploreInternalLinkAndReturn(
     return { destination: null, observation: "Navigation path appears consequential and was blocked by the safe exploration policy.", restored: true, blocked: true }
   }
   const beforeSnapshot = await inspectPageDom(page).catch(() => null)
-  const element = await page.$(selector).catch(() => null)
-  if (!element) return { destination: null, observation: "Navigation element is no longer present; candidate remains unresolved.", restored: false }
+  const liveTarget = await resolveCurrentDomTarget(page, { selector, href: target.href }).catch(() => null)
+  const activeSelector = liveTarget?.selector || selector
+  let element = await page.$(activeSelector).catch(() => null)
+  // If the structural selector went stale, try an exact href match from the
+  // current inventory. Never fall back to an ambiguous label.
+  if (!element && beforeSnapshot) {
+    const matches = beforeSnapshot.elements.filter((item) => {
+      if (!item.href) return false
+      try { return new URL(item.href, sourceUrl).href === target.href } catch { return false }
+    })
+    if (matches.length === 1) {
+      const fresh = await resolveRankedLocator(page, matches[0].locators)
+      if (fresh) element = await page.$(fresh.selector).catch(() => null)
+    }
+  }
+  if (!element) return { destination: null, observation: "Navigation element is no longer present or could not be uniquely resolved; candidate remains unresolved.", restored: false }
   const linkInfo = await element.evaluate((el) => ({ href: (el as HTMLAnchorElement).href || "", target: el.getAttribute("target") || "" })).catch(() => ({ href: "", target: "" }))
   const liveHref = linkInfo.href
   if (linkInfo.target.toLowerCase() === "_blank") {
