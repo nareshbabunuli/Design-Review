@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import puppeteer from "puppeteer";
 import { exploreUiStates } from "../lib/ai-automation/state-explorer";
-import { inspectPageDom, resolveRankedLocator } from "../lib/ai-automation/dom-first-discovery";
+import { inspectPageDom, resolveRankedLocator, resolveCurrentDomTarget } from "../lib/ai-automation/dom-first-discovery";
 
 test("ranked locator resolution rejects ambiguous selectors and chooses a unique fallback", async () => {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
@@ -17,6 +17,37 @@ test("ranked locator resolution rejects ambiguous selectors and chooses a unique
     const resolved = await resolveRankedLocator(page, save.locators);
     assert.ok(resolved, "expected a unique live locator");
     assert.equal(await page.$eval(resolved.selector, (element) => element.getAttribute("data-testid")), "save-action");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("current DOM target resolver recovers from stale selectors using a unique semantic label", async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button data-testid="open-menu" aria-label="Open menu"><svg class="lucide-menu"></svg></button>');
+    const resolved = await resolveCurrentDomTarget(page, {
+      selector: "button:nth-of-type(99)",
+      label: "Open menu",
+      role: "button",
+      elementType: "button",
+    });
+    assert.ok(resolved, "expected a fresh semantic locator for the menu button");
+    assert.equal(resolved.matchedBy, "label");
+    assert.equal(await page.$eval(resolved.selector, (element) => element.getAttribute("data-testid")), "open-menu");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("current DOM target resolver rejects ambiguous semantic labels", async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button aria-label="More options">A</button><button aria-label="More options">B</button>');
+    const resolved = await resolveCurrentDomTarget(page, { selector: "button:nth-of-type(99)", label: "More options", role: "button", elementType: "button" });
+    assert.equal(resolved, null, "must not guess when multiple live controls have the same semantic name");
   } finally {
     await browser.close();
   }
