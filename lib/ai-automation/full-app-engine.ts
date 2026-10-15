@@ -35,6 +35,8 @@ import {
   synthesizeFullAppPlanFromJob,
   isFullAppCommand,
 } from "./full-app-utils"
+import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
+import { applyAllScoringChecks, calculateOverallUXScore } from "./ux-scoring-checks"
 import { classifyAction, isProductionLike, installNetworkGuard } from "./safety-guard"
 import {
   expectFor,
@@ -865,7 +867,8 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         options: options.slice(0, 8),
         formId,
       })
-    })    // 7. Tabs, Radios & Toggles
+    })
+    // 7. Tabs, Radios & Toggles
     document.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
@@ -4677,8 +4680,53 @@ export async function executeStructuredTestPlan(
     }
   }
 
-  // PHASE 5: Comprehensive Evidence Reporting & Markdown Artifact
-  appendLog(job, "info", `Generating Phase 5: Evidence-Based Failure Report & Markdown Artifact...`)
+  // PHASE 5: UX Intelligence Evidence Collection & Scoring
+  appendLog(job, "info", `Collecting UX Intelligence evidence across ${testPlan.steps.length} steps...`)
+  try {
+    const uxEvidenceBundles: ScreenEvidenceBundle[] = []
+    const processedScreens = new Set<string>()
+    
+    for (const step of testPlan.steps) {
+      const screen = testPlan.screens.find((s) => s.id === step.screenId)
+      
+      if (screen && step.screenshotUrl && !processedScreens.has(screen.id)) {
+        try {
+          const workflowEvidence = collectWorkflowEvidence(
+            screen.id,
+            screen.name,
+            testPlan.steps.filter((s) => s.screenId === screen.id)
+          )
+          
+          const evidenceBundle = await collectScreenEvidence(
+            page,
+            screen,
+            step.screenshotUrl,
+            [workflowEvidence]
+          )
+          
+          uxEvidenceBundles.push(evidenceBundle)
+          processedScreens.add(screen.id)
+        } catch (uxErr: any) {
+          appendLog(job, "warn", `UX evidence collection failed for screen ${screen.id}: ${uxErr?.message}`)
+        }
+      }
+    }
+
+    if (uxEvidenceBundles.length > 0) {
+      appendLog(job, "info", `Running UX scoring checks across ${uxEvidenceBundles.length} screens...`)
+      const allScoringChecks = uxEvidenceBundles.flatMap((bundle) => applyAllScoringChecks(bundle))
+      const uxScore = calculateOverallUXScore(allScoringChecks)
+      
+      job.uxAuditScore = uxScore
+      appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overallScore.toFixed(1)}/4.0 | Task Effectiveness: ${uxScore.dimensionalScores.taskEffectiveness.toFixed(1)} | Workflow Efficiency: ${uxScore.dimensionalScores.workflowEfficiency.toFixed(1)}`)
+      saveJob(job)
+    }
+  } catch (uxErr: any) {
+    appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
+  }
+
+  // PHASE 6: Comprehensive Evidence Reporting & Markdown Artifact
+  appendLog(job, "info", `Generating Phase 6: Evidence-Based Failure Report & Markdown Artifact...`)
   try {
     buildAutomationReport(job, testPlan, testPlan.workflows || [], {
       postmanSummary: options?.postmanSummary || testPlan.postmanSummary,

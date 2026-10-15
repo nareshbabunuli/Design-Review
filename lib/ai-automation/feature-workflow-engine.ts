@@ -22,6 +22,8 @@ import {
   deriveScreenName,
   buildFigmaWorkflowMap,
 } from "./full-app-utils"
+import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
+import { applyAllScoringChecks, calculateOverallUXScore } from "./ux-scoring-checks"
 import {
   extractActionableInventory,
   createDummyFileBuffer,
@@ -1168,6 +1170,51 @@ export async function executeFeatureWorkflowJob(
     }
 
     job.edgeCasesTested = testedEdgeCases
+
+    // STEP 6.5: UX Intelligence Evidence Collection & Scoring
+    appendLog(job, "info", `Collecting UX Intelligence evidence across workflow steps...`)
+    try {
+      const uxEvidenceBundles: ScreenEvidenceBundle[] = []
+      const processedScreens = new Set<string>()
+      
+      for (const step of workflowPlan.steps) {
+        const screen = screenNodes.find((s) => s.id === step.screenId)
+        
+        if (screen && step.screenshotUrl && !processedScreens.has(screen.id)) {
+          try {
+            const workflowEvidence = collectWorkflowEvidence(
+              screen.id,
+              screen.name,
+              workflowPlan.steps.filter((s) => s.screenId === screen.id)
+            )
+            
+            const evidenceBundle = await collectScreenEvidence(
+              page,
+              screen,
+              step.screenshotUrl,
+              [workflowEvidence]
+            )
+            
+            uxEvidenceBundles.push(evidenceBundle)
+            processedScreens.add(screen.id)
+          } catch (uxErr: any) {
+            appendLog(job, "warn", `UX evidence collection failed for screen ${screen.id}: ${uxErr?.message}`)
+          }
+        }
+      }
+
+      if (uxEvidenceBundles.length > 0) {
+        appendLog(job, "info", `Running UX scoring checks across ${uxEvidenceBundles.length} workflow screens...`)
+        const allScoringChecks = uxEvidenceBundles.flatMap((bundle) => applyAllScoringChecks(bundle))
+        const uxScore = calculateOverallUXScore(allScoringChecks)
+        
+        job.uxAuditScore = uxScore
+        appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overallScore.toFixed(1)}/4.0 | Task Effectiveness: ${uxScore.dimensionalScores.taskEffectiveness.toFixed(1)} | Workflow Efficiency: ${uxScore.dimensionalScores.workflowEfficiency.toFixed(1)}`)
+        saveJob(job)
+      }
+    } catch (uxErr: any) {
+      appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
+    }
 
     // STEP 7 & 9: Build focused Figma map and compile final report
     job.testingPhase = "reporting"
