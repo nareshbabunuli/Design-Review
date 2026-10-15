@@ -20,7 +20,8 @@ import {
 } from "./interaction-pattern-engine"
 import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
-import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents, resolveCurrentDomTarget } from "./dom-first-discovery"
+import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
+import { resolveGroundedTarget } from "./target-resolution"
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
 
 const MAX_LOOP_STEPS = 24
@@ -229,9 +230,14 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
 
   const beforeUrl = page.url()
   const freshTarget = candidate.target
-    ? await resolveCurrentDomTarget(page, candidate.target).catch(() => null)
+    ? await resolveGroundedTarget(page, {
+        description: candidate.title,
+        hint: candidate.target,
+      }).catch(() => null)
     : null
-  const activeSelector = freshTarget?.selector || candidate.target?.selector
+  // Never fall back to a selector captured before the latest DOM state.
+  // A missing/ambiguous/mismatched target remains unresolved and is not acted on.
+  const activeSelector = freshTarget?.selector
   const beforeTargetState = activeSelector ? await page.evaluate((selector) => {
     const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null
     if (!el) return null

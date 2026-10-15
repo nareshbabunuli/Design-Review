@@ -65,6 +65,8 @@ export type RankedLocatorCandidate = {
   confidence: number
   uniqueAtDiscovery: boolean
   context?: string
+  /** Absolute destination captured at discovery; revalidated before use. */
+  href?: string
 }
 
 export type DomDiscoveryElement = {
@@ -157,11 +159,29 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
     const locatorCandidatesOf = (el: Element, label: string): RankedLocatorCandidate[] => {
       const h = el as HTMLElement
       const candidates: RankedLocatorCandidate[] = []
-      const add = (candidate: RankedLocatorCandidate) => {
-        if (!candidate.selector || candidates.some((item) => item.strategy === candidate.strategy && item.selector === candidate.selector && item.role === candidate.role && item.name === candidate.name)) return
-        candidates.push(candidate)
-      }
       const role = roleOf(el)
+      const href = el instanceof HTMLAnchorElement || el instanceof HTMLAreaElement
+        ? el.href
+        : h.getAttribute("href") || undefined
+      const usableLabel = Boolean(label) && !/unlabelled control/i.test(label)
+      const add = (candidate: RankedLocatorCandidate) => {
+        // Every locator is tied to the element's observed semantic identity.
+        // A now-unique selector must not silently resolve to a different control.
+        const groundedCandidate: RankedLocatorCandidate = {
+          ...candidate,
+          role: candidate.role ?? (role || undefined),
+          name: candidate.name ?? (usableLabel ? label : undefined),
+          href: candidate.href ?? href,
+        }
+        if (!groundedCandidate.selector || candidates.some((item) =>
+          item.strategy === groundedCandidate.strategy &&
+          item.selector === groundedCandidate.selector &&
+          item.role === groundedCandidate.role &&
+          item.name === groundedCandidate.name &&
+          item.href === groundedCandidate.href
+        )) return
+        candidates.push(groundedCandidate)
+      }
       if (role && label) {
         const roleSelector = role === "button" ? 'button,[role="button"],[role="tab"],[role="menuitem"],summary' : '[role=' + JSON.stringify(role) + '],' + el.tagName.toLowerCase()
         const uniqueNamedMatch = (() => {
@@ -249,7 +269,7 @@ export async function inspectPageDom(page: Page): Promise<DomDiscoverySnapshot> 
       const input = el as HTMLInputElement
       const label = labelOf(el)
       const locators = locatorCandidatesOf(el, label)
-      const role = h.getAttribute("role") || ""
+      const role = roleOf(el)
       const href = el instanceof HTMLAnchorElement || el instanceof HTMLAreaElement ? el.href : undefined
       const target = h.getAttribute("target") || ""
       const path = (() => { try { return href ? new URL(href, location.href).pathname : "" } catch { return "" } })()
@@ -332,21 +352,25 @@ export async function resolveRankedLocator(
             Array.from((icon as SVGElement | null)?.classList || []).find((name) => name.startsWith("lucide-")) || "")
             .replace(/^lucide-/, "").replace(/-icon$/, "")
           const iconWords: Record<string, string> = {
-            x: "Close", menu: "Menu", search: "Search", plus: "Add", "plus-circle": "Add",
-            "ellipsis": "More options", "ellipsis-vertical": "More options", "more-horizontal": "More options",
-            "arrow-left": "Back", "chevron-left": "Back", "arrow-right": "Next", "chevron-right": "Next",
-            settings: "Settings", pencil: "Edit", edit: "Edit", trash: "Delete", "trash-2": "Delete",
-            filter: "Filter", eye: "Show", "eye-off": "Hide", calendar: "Calendar", copy: "Copy",
-            "log-out": "Log out", "external-link": "Open link", "refresh-cw": "Refresh",
-            "chevron-down": "Expand", "chevron-up": "Collapse", user: "Profile", home: "Home",
+            x: "Close", close: "Close", menu: "Menu", "ellipsis": "More options",
+            "ellipsis-vertical": "More options", "more-horizontal": "More options", "more-vertical": "More options",
+            search: "Search", plus: "Add", "plus-circle": "Add", "arrow-left": "Back",
+            "chevron-left": "Back", "arrow-right": "Next", "chevron-right": "Next",
+            settings: "Settings", "settings-2": "Settings", pencil: "Edit", edit: "Edit",
+            "trash-2": "Delete", trash: "Delete", filter: "Filter", eye: "Show", "eye-off": "Hide",
+            bell: "Notifications", home: "Home", user: "Profile", "log-out": "Log out",
+            download: "Download", upload: "Upload", "external-link": "Open link", "refresh-cw": "Refresh",
+            "chevron-down": "Expand", "chevron-up": "Collapse", calendar: "Calendar",
+            help: "Help", "circle-help": "Help", copy: "Copy",
           }
           const iconLabel = icon?.getAttribute("aria-label") || icon?.getAttribute("title") ||
-            icon?.querySelector("title")?.textContent || iconWords[iconName] || iconName
+            icon?.querySelector("title")?.textContent || icon?.textContent?.trim() || iconWords[iconName] || iconName
           const tooltip = h.getAttribute("data-tooltip") || h.getAttribute("data-tooltip-content") ||
             h.getAttribute("data-original-title") || h.getAttribute("data-action") || ""
           return String(h.getAttribute("aria-label") || referenced || input.labels?.[0]?.textContent ||
-            h.innerText || input.placeholder || h.getAttribute("name") || h.getAttribute("title") ||
-            tooltip || iconLabel || el.tagName)
+            h.innerText || input.value || input.placeholder || h.getAttribute("name") || h.getAttribute("title") ||
+            tooltip || iconLabel || h.getAttribute("data-testid") || h.getAttribute("data-test-id") ||
+            h.getAttribute("data-cy") || el.tagName)
             .replace(/\s+/g, " ").trim().slice(0, 120)
         }
         const matching = Array.from(document.querySelectorAll(expected.selector)).filter((el) => {
@@ -357,6 +381,20 @@ export async function resolveRankedLocator(
               style.opacity === "0" || h.getAttribute("aria-hidden") === "true") return false
           if (expected.role && roleOf(el) !== expected.role) return false
           if (expected.name && nameOf(el) !== expected.name) return false
+          if (expected.href) {
+            const observedHref = el instanceof HTMLAnchorElement || el instanceof HTMLAreaElement
+              ? el.href
+              : h.getAttribute("href") || ""
+            let expectedHref = ""
+            let actualHref = ""
+            try {
+              expectedHref = new URL(expected.href, location.href).href
+              actualHref = new URL(observedHref, location.href).href
+            } catch {
+              return false
+            }
+            if (!observedHref || expectedHref !== actualHref) return false
+          }
           return true
         })
         if (matching.length !== 1) return null
@@ -417,43 +455,71 @@ export async function resolveCurrentDomTarget(
   page: Page,
   hint: DomActionTargetHint,
 ): Promise<{ selector: string; label: string; href?: string; matchedBy: "selector" | "href" | "label" } | null> {
+  const hasStableIdentity = Boolean(hint.href?.trim()) ||
+    Boolean(hint.label?.trim() && !/unlabelled control|unlabelled icon/i.test(hint.label))
+  if (!hasStableIdentity) return null
   const snapshot = await inspectPageDom(page).catch(() => null)
   if (!snapshot) return null
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
-  let match = hint.selector
-    ? snapshot.elements.find((element) => element.selector === hint.selector ||
-        element.locators.some((locator) => locator.selector === hint.selector &&
-          locator.strategy !== "role" && locator.strategy !== "label-text" && locator.uniqueAtDiscovery))
-    : undefined
+  const normalizeHref = (value: string, base: string) => {
+    try { return new URL(value, base).href } catch { return "" }
+  }
+  const matchesIdentity = (element: DomDiscoveryElement) => {
+    if (hint.label && normalize(element.label) !== normalize(hint.label)) return false
+    if (hint.role && normalize(element.role) !== normalize(hint.role)) return false
+    if (hint.elementType &&
+      normalize(element.tag) !== normalize(hint.elementType) &&
+      normalize(element.role) !== normalize(hint.elementType)) return false
+    // A supplied href is a hard identity constraint, not merely a fallback.
+    // Never click a same-labelled link if its destination has changed.
+    if (hint.href) {
+      const expectedHref = normalizeHref(hint.href, snapshot.url)
+      const actualHref = element.href ? normalizeHref(element.href, snapshot.url) : ""
+      if (!expectedHref || !actualHref || expectedHref !== actualHref) return false
+    }
+    return true
+  }
+
+  let match: DomDiscoveryElement | undefined
   let matchedBy: "selector" | "href" | "label" = "selector"
 
+  if (hint.selector) {
+    const selectorMatches = snapshot.elements.filter((element) =>
+      element.selector === hint.selector ||
+      element.locators.some((locator) => locator.selector === hint.selector &&
+        locator.strategy !== "role" && locator.strategy !== "label-text" && locator.uniqueAtDiscovery)
+    )
+    const compatible = selectorMatches.filter(matchesIdentity)
+    if (compatible.length === 1) match = compatible[0]
+    else if (compatible.length > 1) return null
+  }
+
   if (!match && hint.href) {
-    let expectedHref = ""
-    try { expectedHref = new URL(hint.href, snapshot.url).href } catch {}
-    const hrefMatches = snapshot.elements.filter((element) => {
-      if (!element.href || !expectedHref) return false
-      try { return new URL(element.href, snapshot.url).href === expectedHref } catch { return false }
-    })
+    const expectedHref = normalizeHref(hint.href, snapshot.url)
+    if (!expectedHref) return null
+    const hrefMatches = snapshot.elements.filter((element) =>
+      Boolean(element.href) &&
+      normalizeHref(element.href!, snapshot.url) === expectedHref &&
+      matchesIdentity(element)
+    )
     if (hrefMatches.length === 1) {
       match = hrefMatches[0]
       matchedBy = "href"
-    } else if (hrefMatches.length > 1) {
+    } else {
+      // Missing or ambiguous exact destinations are never resolved by label.
       return null
     }
   }
 
   if (!match && hint.label) {
-    const wanted = normalize(hint.label)
     const labelMatches = snapshot.elements.filter((element) =>
-      normalize(element.label) === wanted &&
-      (!hint.role || normalize(element.role) === normalize(hint.role)) &&
-      (!hint.elementType || normalize(element.tag) === normalize(hint.elementType) ||
-        normalize(element.role) === normalize(hint.elementType))
+      normalize(element.label) === normalize(hint.label!) && matchesIdentity(element)
     )
     if (labelMatches.length === 1) {
       match = labelMatches[0]
       matchedBy = "label"
-    } else if (labelMatches.length > 1) {
+    } else {
+      // Ambiguous and missing live labels fail closed.
       return null
     }
   }
@@ -461,7 +527,23 @@ export async function resolveCurrentDomTarget(
   if (!match) return null
   const resolved = await resolveRankedLocator(page, match.locators)
   if (!resolved) return null
-  return { selector: resolved.selector, label: match.label, href: match.href, matchedBy }
+
+  // Re-check the resolved selector against a second live inventory. This closes
+  // the discovery-to-action gap if React replaced the target during resolution.
+  const finalSnapshot = await inspectPageDom(page).catch(() => null)
+  if (!finalSnapshot) return null
+  const finalMatches = finalSnapshot.elements.filter((element) =>
+    (element.selector === resolved.selector ||
+      element.locators.some((locator) => locator.selector === resolved.selector && locator.uniqueAtDiscovery)) &&
+    matchesIdentity(element)
+  )
+  if (finalMatches.length !== 1) return null
+  return {
+    selector: resolved.selector,
+    label: finalMatches[0].label,
+    href: finalMatches[0].href,
+    matchedBy,
+  }
 }
 
 function discoveryStateSignature(snapshot: DomDiscoverySnapshot): string {
