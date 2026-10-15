@@ -724,6 +724,32 @@ export type AutomationJob = {
     placeholder?: string
   }>
   pendingSettingsCredentials?: Record<string, string> & { skip?: boolean }
+  /** UX Intelligence audit score with dimensional breakdown and evidence bundles */
+  uxAuditScore?: {
+    overall: number // 0-100
+    grade: "A" | "B" | "C" | "D" | "F"
+    confidence: number // 0-1
+    dimensions: Array<{
+      dimension: string
+      score: number
+      weight: number
+      checks: Array<{
+        id: string
+        rating: number
+        evidence: string
+        researchBasis?: string
+      }>
+    }>
+    totalChecksApplied: number
+    evidenceBundles: Array<{
+      screenId: string
+      screenUrl: string
+      visual: any
+      dom: any
+      accessibility: any
+      workflows: any[]
+    }>
+  }
 }
 
 export type TestPaymentCredentials = {

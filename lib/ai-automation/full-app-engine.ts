@@ -36,7 +36,8 @@ import {
   isFullAppCommand,
 } from "./full-app-utils"
 import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
-import { applyAllScoringChecks, calculateOverallUXScore } from "./ux-scoring-checks"
+import { applyAllScoringChecks } from "./ux-scoring-checks"
+import { calculateOverallUXScore } from "./ux-scoring-rubric"
 import { classifyAction, isProductionLike, installNetworkGuard } from "./safety-guard"
 import {
   expectFor,
@@ -4691,10 +4692,12 @@ export async function executeStructuredTestPlan(
       
       if (screen && step.screenshotUrl && !processedScreens.has(screen.id)) {
         try {
+          const screenSteps = testPlan.steps.filter((s) => s.screenId === screen.id)
           const workflowEvidence = collectWorkflowEvidence(
             screen.id,
             screen.name,
-            testPlan.steps.filter((s) => s.screenId === screen.id)
+            screenSteps,
+            screenSteps.every(s => s.status === "passed") // completedSuccessfully
           )
           
           const evidenceBundle = await collectScreenEvidence(
@@ -4717,8 +4720,20 @@ export async function executeStructuredTestPlan(
       const allScoringChecks = uxEvidenceBundles.flatMap((bundle) => applyAllScoringChecks(bundle))
       const uxScore = calculateOverallUXScore(allScoringChecks)
       
-      job.uxAuditScore = uxScore
-      appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overallScore.toFixed(1)}/4.0 | Task Effectiveness: ${uxScore.dimensionalScores.taskEffectiveness.toFixed(1)} | Workflow Efficiency: ${uxScore.dimensionalScores.workflowEfficiency.toFixed(1)}`)
+      // Store UX audit score with evidence bundles
+      job.uxAuditScore = {
+        overall: uxScore.overall,
+        grade: uxScore.grade,
+        confidence: uxScore.confidence,
+        dimensions: uxScore.dimensions,
+        totalChecksApplied: uxScore.totalChecksApplied,
+        evidenceBundles: uxEvidenceBundles as any[]
+      }
+      
+      const taskEffScore = uxScore.dimensions.find(d => d.dimension === 'taskEffectiveness')?.score || 0
+      const workflowEffScore = uxScore.dimensions.find(d => d.dimension === 'workflowEfficiency')?.score || 0
+      
+      appendLog(job, "success", `✓ UX Intelligence Score: ${uxScore.overall.toFixed(1)}/100 (${uxScore.grade}) | Task Effectiveness: ${taskEffScore.toFixed(1)} | Workflow Efficiency: ${workflowEffScore.toFixed(1)}`)
       saveJob(job)
     }
   } catch (uxErr: any) {

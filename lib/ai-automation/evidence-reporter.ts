@@ -179,15 +179,12 @@ export function buildAutomationReport(
   // Generate UX Intelligence Report if scoring was completed
   if (job.uxAuditScore) {
     try {
-      const uxEvidenceBundles = [] // Evidence bundles already collected during execution
+      const uxEvidenceBundles: any[] = job.uxAuditScore.evidenceBundles || []
       const uxReport = generateUXIntelligenceReport(job, uxEvidenceBundles)
       const uxMarkdown = formatUXReportMarkdown(uxReport)
       
       // Append UX Intelligence section to main report
       report.markdownReport += `\n\n---\n\n# UX Intelligence Report\n\n${uxMarkdown}`
-      
-      // Store UX report separately for UI display
-      job.uxReport = uxReport
     } catch (uxErr: any) {
       console.warn("[UX Intelligence] Report generation failed:", uxErr)
     }
