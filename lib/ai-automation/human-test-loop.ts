@@ -20,7 +20,7 @@ import {
 } from "./interaction-pattern-engine"
 import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType } from "./types"
 import { appendLog, saveJob } from "./job-store"
-import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
+import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents, resolveCurrentDomTarget } from "./dom-first-discovery"
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
 
 const MAX_LOOP_STEPS = 24
@@ -396,7 +396,10 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     }
   }
 
-  const selector = candidate.target?.selector
+  const freshTarget = candidate.target
+    ? await resolveCurrentDomTarget(page, candidate.target).catch(() => null)
+    : null
+  const selector = freshTarget?.selector || candidate.target?.selector
   if (!selector) return { ok: false, observation: "Candidate has no executable target; it cannot be marked passed." }
   const target = await page.$(selector).catch(() => null)
   if (!target) return { ok: false, observation: "Target is no longer present; state changed before execution." }
