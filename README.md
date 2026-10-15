@@ -347,6 +347,154 @@ Navigate to Settings → AI Configuration and select your preferred provider, mo
 
 ---
 
+## 📚 Research Foundation
+
+Open Design AI's **UX Intelligence** scoring framework is grounded in 40+ years of peer-reviewed Human-Computer Interaction (HCI) research, not subjective AI opinions. Our evaluation methodology draws from the following 15 foundational publications:
+
+### Core Inspection Methods
+
+**[1] Heuristic evaluation of user interfaces**  
+Jakob Nielsen and Rolf Molich (1990)  
+*CHI '90: Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*  
+DOI: [10.1145/97243.97281](https://doi.org/10.1145/97243.97281)
+
+Establishes heuristic evaluation as a method to identify interface usability problems through systematic inspection.
+
+**[2] Enhancing the explanatory power of usability heuristics**  
+Jakob Nielsen (1994)  
+*CHI '94: Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*  
+DOI: [10.1145/191666.191729](https://doi.org/10.1145/191666.191729)
+
+Defines 10 usability heuristics: visibility of system status, match between system and real world, user control and freedom, consistency and standards, error prevention, recognition rather than recall, flexibility and efficiency, aesthetic and minimalist design, help users recognize and recover from errors, help and documentation.
+
+**[3] Cognitive walkthroughs: a method for theory-based evaluation of user interfaces**  
+Peter G. Polson, Clayton Lewis, John Rieman and Cathleen Wharton (1992)  
+*International Journal of Man-Machine Studies, 36(5), 741-773*  
+DOI: [10.1016/0020-7373(92)90039-N](https://doi.org/10.1016/0020-7373(92)90039-N)
+
+Provides step-by-step evaluation framework assessing whether users would know what to do, notice correct actions, and understand feedback.
+
+### UX Measurement & Validation
+
+**[4] Current practice in measuring usability: Challenges to usability studies and research**  
+Kasper Hornbæk (2006)  
+*International Journal of Human-Computer Studies, 64(2), 79-102*  
+DOI: [10.1016/j.ijhcs.2005.06.002](https://doi.org/10.1016/j.ijhcs.2005.06.002)
+
+Critical methodological warning that single metrics can miss important aspects of usability and must be properly justified.
+
+**[5] Measurement practices in user experience (UX) research: A systematic quantitative literature review**  
+Martin Schrepp et al. (2024)  
+*Frontiers in Computer Science, 6:1368860*  
+DOI: [10.3389/fcomp.2024.1368860](https://www.frontiersin.org/journals/computer-science/articles/10.3389/fcomp.2024.1368860/full)
+
+Reviews UX measurement in CHI research, documenting why each metric must be justified and validated.
+
+**[6] Understanding, scoping and defining user experience: a survey approach**  
+Effie Lai-Chong Law, Virpi Roto, Marc Hassenzahl, Arnold P.O.S. Vermeeren and Joke Kort (2009)  
+*CHI '09: Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*  
+DOI: [10.1145/1518701.1518813](https://doi.org/10.1145/1518701.1518813)
+
+Distinguishes usability from broader user experience, establishing why observable findings must be separated from satisfaction claims.
+
+**[11] Measuring the User Experience on a Large Scale: User-Centered Metrics for Web Applications**  
+Kerry Rodden, Hilary Hutchinson and Xin Fu (2010)  
+*CHI '10: Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*  
+[Read paper](https://research.google/pubs/measuring-the-user-experience-on-a-large-scale-user-centered-metrics-for-web-applications/)
+
+Presents HEART framework: Happiness, Engagement, Adoption, Retention, Task Success - connecting task-level usability to product goals.
+
+**[12] Estimating Completion Rates from Small Samples Using Binomial Confidence Intervals**  
+Jeff Sauro and James R. Lewis (2005)  
+*Proceedings of the Human Factors and Ergonomics Society Annual Meeting, 49(24)*  
+DOI: [10.1177/154193120504902407](https://doi.org/10.1177/154193120504902407)
+
+Establishes that task completion percentages have uncertainty with small samples and must not be presented as statistically definitive.
+
+### Human Experience Questionnaires
+
+**[7] SUS — A quick and dirty usability scale**  
+John Brooke (1996)  
+*Usability Evaluation in Industry, Taylor & Francis*  
+[Read paper](https://www.researchgate.net/publication/319394819_SUS_--_a_quick_and_dirty_usability_scale)
+
+System Usability Scale (SUS): standardized 10-item questionnaire measuring perceived usability from actual users.
+
+**[8] Construction and Evaluation of a User Experience Questionnaire**  
+Bettina Laugwitz, Theo Held and Martin Schrepp (2008)  
+*HCI and Usability for Education and Work, Lecture Notes in Computer Science, vol 5298*  
+DOI: [10.1007/978-3-540-89350-9_6](https://doi.org/10.1007/978-3-540-89350-9_6)
+
+User Experience Questionnaire (UEQ) measuring pragmatic quality, hedonic quality, and appeal beyond task completion.
+
+**[9] UMUX-LITE: when there's no time for the SUS**  
+James R. Lewis, Brian S. Utesch and Deborah E. Maher (2013)  
+*CHI '13: Proceedings of the SIGCHI Conference on Human Factors in Computing Systems*  
+DOI: [10.1145/2470654.2481287](https://doi.org/10.1145/2470654.2481287)
+
+Validated 2-item usability questionnaire for quick user feedback without lengthy surveys.
+
+**[13] Development of NASA-TLX (Task Load Index): Results of Empirical and Theoretical Research**  
+Sandra G. Hart and Lowell E. Staveland (1988)  
+*Advances in Psychology, 52, 139-183*  
+DOI: [10.1016/S0166-4115(08)62386-9](https://doi.org/10.1016/S0166-4115(08)62386-9)
+
+NASA Task Load Index measures perceived workload (mental demand, effort, frustration) from actual users.
+
+### Workflow Efficiency & Performance
+
+**[14] The Keystroke-Level Model for User Performance Time with Interactive Systems**  
+Stuart K. Card, Thomas P. Moran and Allen Newell (1980)  
+*Communications of the ACM, 23(7), 396-410*  
+DOI: [10.1145/358886.358895](https://doi.org/10.1145/358886.358895)
+
+Estimates expert task performance from operations (keystrokes, pointing, mental preparation) to identify unnecessary interaction steps.
+
+**[15] The Information Capacity of the Human Motor System in Controlling the Amplitude of Movement**  
+Paul M. Fitts (1954)  
+*Journal of Experimental Psychology, 47(6), 381-391*  
+DOI: [10.1037/h0055392](https://doi.org/10.1037/h0055392)
+
+Foundational work on movement time, distance and target precision, motivating inspection of button size, spacing and target placement.
+
+### Foundation Standards
+
+**[10] The Thing and I: Understanding the Relationship Between User and Product**  
+Marc Hassenzahl (2003)  
+*Funology: From Usability to Enjoyment, Springer*  
+DOI: [10.1007/1-4020-2967-5_4](https://doi.org/10.1007/1-4020-2967-5_4)
+
+Distinguishes pragmatic quality (goal achievement) from hedonic qualities (experience), showing visual attractiveness is not a substitute for usability.
+
+**ISO 9241-11:2018** - Ergonomics of human-system interaction — Part 11: Usability: Definitions and concepts  
+[International Organization for Standardization](https://www.iso.org/standard/63500.html)
+
+Defines usability as: "The extent to which a system, product or service can be used by specified users to achieve specified goals with effectiveness, efficiency and satisfaction in a specified context of use."
+
+**WCAG 2.2** - Web Content Accessibility Guidelines  
+[W3C Web Accessibility Initiative](https://www.w3.org/WAI/WCAG22/quickref/)
+
+Accessibility requirements for perceivable, operable, understandable, and robust web content.
+
+### Our 6-Dimension Scoring Framework
+
+Open Design AI evaluates usability through observable evidence across six dimensions:
+
+| Dimension | Weight | Research Basis |
+|-----------|--------|----------------|
+| **Task Effectiveness** | 25% | ISO 9241-11, Nielsen error prevention, Cognitive walkthrough |
+| **Workflow Efficiency** | 20% | ISO 9241-11, Card et al. KLM, HEART framework |
+| **Discoverability** | 15% | Nielsen visibility, Cognitive walkthrough, Fitts' law |
+| **Feedback & Recovery** | 15% | Nielsen visibility & error recovery, Hassenzahl |
+| **Accessibility** | 15% | WCAG 2.2, Fitts' law, Nielsen consistency |
+| **Visual Clarity** | 10% | Nielsen aesthetic design, WCAG contrast |
+
+Each check is scored 0-4 (blocked, major friction, needs improvement, good, excellent) based on observable evidence. Dimension scores are weighted and combined to produce an overall UX Audit Score (0-100) with confidence levels and transparent methodology.
+
+**Important:** Automated UX audits evaluate observable interface behavior. They are distinct from perceived user experience, which requires validated questionnaires (SUS, UEQ, UMUX-LITE) administered to actual users.
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
