@@ -543,7 +543,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   if (!after) return { ok: false, observation: "Click executed but post-action DOM could not be inspected." }
   const changed = afterUrl !== beforeUrl || before?.title !== after.title || before?.text !== after.text ||
     before?.dialogs !== after.dialogs || before?.forms !== after.forms || before?.tables !== after.tables || before?.controls !== after.controls
-  const afterTargetState = candidate.target?.selector ? await page.evaluate((selector) => {
+  const afterTargetState = activeSelector ? await page.evaluate((selector) => {
     const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null
     if (!el) return null
     return {
@@ -553,7 +553,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
       selected: el.getAttribute("aria-selected"),
       value: "value" in el ? String((el as HTMLInputElement).value || "") : null,
     }
-  }, candidate.target.selector).catch(() => null) : null
+  }, activeSelector).catch(() => null) : null
   const stateChanged = !!beforeTargetState && !!afterTargetState &&
     (beforeTargetState.checked !== afterTargetState.checked ||
       beforeTargetState.pressed !== afterTargetState.pressed ||
