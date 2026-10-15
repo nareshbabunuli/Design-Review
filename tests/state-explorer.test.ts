@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import puppeteer from "puppeteer";
 import { exploreUiStates } from "../lib/ai-automation/state-explorer";
 import { inspectPageDom, resolveRankedLocator, resolveCurrentDomTarget } from "../lib/ai-automation/dom-first-discovery";
-import { resolveGroundedTarget } from "../lib/ai-automation/target-resolution";
+import { createStagehandObservationProvider, resolveGroundedTarget } from "../lib/ai-automation/target-resolution";
 
 test("ranked locator resolution rejects ambiguous selectors and chooses a unique fallback", async () => {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
@@ -193,6 +193,40 @@ test("grounded resolver will not ask Stagehand to guess when the plan has no sta
     });
     assert.equal(resolved, null);
     assert.equal(observeCalls, 0, "AI must not invent the target identity");
+  } finally {
+    await browser.close();
+  }
+});
+
+
+test("Stagehand provider uses observe-only suggestions and converts XPath to a live unique CSS target", async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button id="save">Save</button>');
+    const observed: { instruction: string; page?: unknown; timeout?: number }[] = [];
+    let executionCalls = 0;
+    const fakeStagehand = {
+      observe: async (instruction: string, options?: { page?: unknown; timeout?: number }) => {
+        observed.push({ instruction, page: options?.page, timeout: options?.timeout });
+        return [{ selector: "/html/body/button[1]", description: "Save button", method: "click", arguments: [] }];
+      },
+      act: async () => { executionCalls++; },
+    };
+    const provider = createStagehandObservationProvider(fakeStagehand, page);
+    const snapshot = await inspectPageDom(page);
+    const proposals = await provider({
+      description: "Save button in the main form",
+      hint: { label: "Save", role: "button", elementType: "button" },
+      snapshot,
+    });
+    assert.equal(observed.length, 1, "expected exactly one observation request");
+    assert.match(observed[0].instruction, /OBSERVE ONLY/);
+    assert.equal(observed[0].page, page);
+    assert.ok(proposals?.length);
+    assert.equal(proposals?.[0].selector, "#save");
+    assert.equal(proposals?.[0].label, "Save");
+    assert.equal(executionCalls, 0, "provider must never call Stagehand act()");
   } finally {
     await browser.close();
   }
