@@ -656,6 +656,8 @@ export type AutomationJob = {
   flowGraph?: FlowGraph
   /** DOM-first route/state graph; distinct from the Stagehand scenario graph. */
   domDiscoveryGraph?: DomDiscoveryGraph
+  /** Routes that could not be fully explored due to restoration failures or navigation issues. */
+  unresolvedRoutes?: Array<{ url: string; reason: string; timestamp: number }>
   recordingUrl?: string
   recordingControl?: "recording" | "paused" | "stopped"
   recordingSegments?: string[]

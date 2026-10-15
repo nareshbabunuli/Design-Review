@@ -8,7 +8,7 @@ import type { PageType } from "./types"
 const DEFAULT_LAYA_URL = process.env.LAYA_BASE_URL || "http://127.0.0.1:8000"
 
 export interface LayaPredictPayload {
-  state: string | { image?: string; note?: string; text?: string }
+  state: string | { image?: string; note?: string; text?: string; visual?: { screenshotUrl?: string; screenshotCapturedAt?: number } }
   questions: Record<
     string,
     | { type: "noul"; instructions: string }
