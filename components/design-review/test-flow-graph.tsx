@@ -1642,9 +1642,9 @@ export default function TestFlowGraph({
                   {inspectorSubTab === "elements" && (
                     <div className="space-y-1.5">
                       {inspectingScreen && inspectingScreen.actionableElements.length > 0 ? (
-                        inspectingScreen.actionableElements.map((elem) => (
+                        inspectingScreen.actionableElements.map((elem, elemIndex) => (
                           <div
-                            key={elem.id}
+                            key={`${elem.id}-${elemIndex}`}
                             className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/80 flex items-center justify-between text-xs"
                           >
                             <div className="min-w-0 pr-2">
