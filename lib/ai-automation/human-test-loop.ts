@@ -22,6 +22,7 @@ import type { AutomationIssue, AutomationJob, AgentAction, ActionableElementType
 import { appendLog, saveJob } from "./job-store"
 import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
+import { logActionExecution } from "./stagehand-config"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -217,7 +218,7 @@ function isDestructive(candidate: CandidateTest): boolean {
   return candidate.risk === "destructive" || /delete|remove|destroy|purchase|pay|checkout|charge|send|publish|deploy|invite|refund|transfer|grant access|revoke access|change password|reset password|log\s*out|sign\s*out|unsubscribe/i.test(candidate.title)
 }
 
-async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{ ok: boolean; blocked?: boolean; observation: string }> {
+async function executeCandidate(page: Page, candidate: CandidateTest, job: AutomationJob): Promise<{ ok: boolean; blocked?: boolean; observation: string }> {
   const unsafeText = [candidate.title, candidate.target?.label || "", candidate.target?.href || ""].join(" ")
   if (
     isDestructive(candidate) ||
@@ -520,6 +521,15 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   try {
     await target.evaluate((el) => el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }))
     await target.click()
+    
+    // Phase 1: Log action source for audit trail
+    logActionExecution(
+      'full_app',  // This is always Full App Testing mode
+      'click',
+      'puppeteer',
+      candidate.target?.selector || candidate.title,
+      (level, message) => appendLog(job, level, message)
+    )
   } catch (error: any) {
     await target.dispose().catch(() => {})
     return { ok: false, observation: "Click failed: " + (error?.message || String(error)) }
@@ -1064,7 +1074,7 @@ export async function runHumanLikeDecisionLoop(
         }
       }
     } else {
-      observation = await executeCandidate(page, selected)
+      observation = await executeCandidate(page, selected, job)
       // Re-scan after successful safe interactions to discover controls revealed
       // by tabs, dialogs, dropdowns, expand/collapse and client-side UI changes.
       if (observation.ok) {

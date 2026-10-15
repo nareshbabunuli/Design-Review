@@ -42,6 +42,7 @@ import { runHumanLikeDecisionLoop } from "./human-test-loop"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
 import { clearJobSecrets } from "./job-secret-vault"
 import { SessionVideoRecorder } from "./visual-recorder"
+import { assertStagehandCanExecute, logActionExecution } from "./stagehand-config"
 
 export function isAutonomousCommand(cmd: string): boolean {
   return /(every page|all pages|full (test|audit|run)|autonomous|test every|explore( the app)?|end[\s-]?to[\s-]?end|\d+\s*scenarios?)/i.test(
@@ -291,6 +292,9 @@ async function runScenarioWithStagehand(
   params: StartAutomationRequest,
   scenario: { id: string; name: string; goal: string; instruction: string; expectedOutcome: string; needsAuth: boolean },
 ): Promise<ScenarioRun> {
+  // Phase 1 Safety Guard: Prevent Stagehand execution outside Autonomous mode
+  assertStagehandCanExecute(job.mode || 'unknown', 'runScenarioWithStagehand')
+  
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
   const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
@@ -526,6 +530,16 @@ async function runScenarioWithStagehand(
       const desc = String(a?.action || a?.type || "agent action")
       const t = typeof a?.timeMs === "number" ? `[${(a.timeMs / 1000).toFixed(0)}s] ` : ""
       out.steps.push(t + desc + (a?.reasoning ? ` — ${a.reasoning}` : ""))
+      
+      // Phase 1: Log action source for audit trail
+      logActionExecution(
+        job.mode || 'unknown',
+        desc,
+        'stagehand',
+        desc,
+        (level, message) => appendLog(job, level, message)
+      )
+      
       if (RISKY_ACTION.test(desc)) {
         out.riskyHit = desc
       }

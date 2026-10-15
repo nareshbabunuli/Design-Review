@@ -1,6 +1,7 @@
 import type { Browser, Page } from "puppeteer"
 import type { AutomationJob, AutomationIssue, StartAutomationRequest } from "./types"
 import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
+import { assertStagehandCanExecute, logActionExecution } from "./stagehand-config"
 
 type StagehandHooks = {
   appendLog: (job: AutomationJob, level: "info" | "success" | "warn" | "error", message: string) => void
@@ -46,6 +47,9 @@ export async function runStagehandExploration(
   params: StartAutomationRequest,
   hooks: StagehandHooks,
 ): Promise<{ pagesVisited: number; actions: number; issues: AutomationIssue[] }> {
+  // Phase 1 Safety Guard: Prevent Stagehand execution outside Autonomous mode
+  assertStagehandCanExecute(job.mode || 'unknown', 'runStagehandExploration')
+  
   const { Stagehand } = await import("@browserbasehq/stagehand")
 
   const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
@@ -153,6 +157,15 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
         job,
         "info",
         `Runner [${index + 1}/${actionList.length}] ${description}${action.reasoning ? ` — ${action.reasoning}` : ""}`,
+      )
+      
+      // Phase 1: Log action source for audit trail
+      logActionExecution(
+        job.mode || 'unknown',
+        raw,
+        'stagehand',
+        description,
+        (level, message) => hooks.appendLog(job, level, message)
       )
 
       job.currentStep = `Runner: ${description}`
