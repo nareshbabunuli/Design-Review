@@ -528,7 +528,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
       'click',
       'puppeteer',
       candidate.target?.selector || candidate.title,
-      (level, message) => appendLog(job, level, message)
+      (level, message) => appendLog(job, level === 'debug' ? 'info' : level, message)
     )
   } catch (error: any) {
     await target.dispose().catch(() => {})
@@ -762,8 +762,8 @@ function domGraphNodeId(snapshot: Awaited<ReturnType<typeof inspectPageDom>>): s
     title: snapshot.title,
     // Create a simplified element signature (first 10 elements to differentiate states)
     elementSignature: snapshot.elements.slice(0, 10).map((element) => [element.selector, element.label]),
-    formCount: snapshot.forms.length,
-    dialogCount: snapshot.dialogs.length,
+    formCount: snapshot.forms,
+    dialogCount: snapshot.dialogs,
   })
   let hash = 2166136261
   for (let i = 0; i < signature.length; i++) {
