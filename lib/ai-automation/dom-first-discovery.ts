@@ -404,7 +404,8 @@ export async function resolveCurrentDomTarget(
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLocaleLowerCase()
   let match = hint.selector
     ? snapshot.elements.find((element) => element.selector === hint.selector ||
-        element.locators.some((locator) => locator.selector === hint.selector))
+        element.locators.some((locator) => locator.selector === hint.selector &&
+          locator.strategy !== "role" && locator.strategy !== "label-text" && locator.uniqueAtDiscovery))
     : undefined
   let matchedBy: "selector" | "href" | "label" = "selector"
 
@@ -484,7 +485,7 @@ export async function exploreInternalLinkAndReturn(
   const beforeSnapshot = await inspectPageDom(page).catch(() => null)
   const liveTarget = await resolveCurrentDomTarget(page, { selector, href: target.href }).catch(() => null)
   const activeSelector = liveTarget?.selector || selector
-  let element = await page.$(activeSelector).catch(() => null)
+  let element = liveTarget ? await page.$(activeSelector).catch(() => null) : null
   // If the structural selector went stale, try an exact href match from the
   // current inventory. Never fall back to an ambiguous label.
   if (!element && beforeSnapshot) {
