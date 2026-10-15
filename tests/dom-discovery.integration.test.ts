@@ -22,6 +22,27 @@ test("production navigation observer captures SPA and hash changes", async () =>
   } finally { await browser.close(); }
 });
 
+test("production link explorer recovers a stale selector by exact same-origin href", async () => {
+  const server = createServer((req, res) => {
+    if (req.url === "/destination") { res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Destination</title><p>Destination page</p>"); return; }
+    res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Source</title><a id=internal href=/destination>Internal destination</a>");
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const sourceUrl = "http://127.0.0.1:" + address.port + "/";
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.goto(sourceUrl, { waitUntil: "domcontentloaded" });
+    const result = await exploreInternalLinkAndReturn(page, "a#stale-selector", sourceUrl + "destination");
+    assert.ok(result.destination, "expected link to be found by its exact live href");
+    assert.equal(result.destination.url, sourceUrl + "destination");
+    assert.equal(result.restored, true);
+    assert.equal(page.url(), sourceUrl);
+  } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+});
+
 test("production link explorer reports a real source-restoration failure", async () => {
   const server = createServer((req, res) => {
     if (req.url === "/destination") { res.writeHead(200, { "content-type": "text/html" }); res.end("<title>Destination</title><p>Destination page</p>"); return; }
