@@ -10,6 +10,7 @@ import {
 } from "./types"
 import { formatCurlCommand } from "./workflow-chainer"
 import { secretRedactor } from "./secure-credentials-manager"
+import { generateReferencesSection, ISO_9241_11_REFERENCE, WCAG_REFERENCE } from "./ux-research-references"
 
 function buildPostmanCoverageReport(testPlan: FullAppTestPlan, postmanSummary?: PostmanCollectionSummary): PostmanCoverageReport | undefined {
   if (!postmanSummary) return undefined
@@ -365,6 +366,10 @@ function generateMarkdownReportText(params: {
     sections.push(`${idx + 1}. ${recommendations[idx]}`)
   }
   sections.push("")
+
+  // Research References - Add at end of report
+  sections.push(`---\n`)
+  sections.push(generateReferencesSection())
 
   return secretRedactor ? secretRedactor.redact(sections.join("\n")) : sections.join("\n")
 }

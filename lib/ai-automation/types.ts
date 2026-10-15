@@ -55,6 +55,21 @@ export type DiscoveredScreen = {
     uxScore: number
     summary: string
   }
+  /** Research-backed UX Intelligence Report (when ux_intelligence mode is used) */
+  uxAuditScore?: {
+    overall: number
+    grade: "A" | "B" | "C" | "D" | "F"
+    confidence: number
+    dimensions: Array<{
+      dimension: string
+      score: number
+      weight: number
+      checksApplied: number
+    }>
+    methodology: string
+    limitations: string[]
+    calculatedAt: string
+  }
 }
 
 export type AutomationJobStatus = "queued" | "running" | "completed" | "failed" | "stopped"
