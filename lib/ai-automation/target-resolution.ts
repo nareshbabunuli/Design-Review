@@ -57,20 +57,33 @@ function confidenceFor(match: "selector" | "href" | "label" | "stagehand-observe
     case "label": return 0.84
     case "stagehand-observe": return 0.72
   }
+  return 0
 }
 
 async function materializeTarget(
   page: Page,
   resolved: { selector: string; label: string; href?: string; matchedBy: "selector" | "href" | "label" },
   source: TargetResolutionSource,
+  hint: DomActionTargetHint,
   snapshot?: DomDiscoverySnapshot,
 ): Promise<GroundedTarget | null> {
   const current = snapshot ?? await inspectPageDom(page).catch(() => null)
   if (!current) return null
-  const matches = current.elements.filter((element) =>
-    element.selector === resolved.selector ||
-    element.locators.some((locator) => locator.selector === resolved.selector && locator.uniqueAtDiscovery)
-  )
+  const matches = current.elements.filter((element) => {
+    const hasResolvedLocator = element.selector === resolved.selector ||
+      element.locators.some((locator) => locator.selector === resolved.selector && locator.uniqueAtDiscovery)
+    if (!hasResolvedLocator || normalize(element.label) !== normalize(hint.label || resolved.label)) return false
+    if (hint.role && normalize(element.role) !== normalize(hint.role)) return false
+    if (hint.elementType &&
+      normalize(element.tag) !== normalize(hint.elementType) &&
+      normalize(element.role) !== normalize(hint.elementType)) return false
+    if (hint.href) {
+      const expectedHref = normalizeHref(hint.href, current.url)
+      const actualHref = element.href ? normalizeHref(element.href, current.url) : ""
+      if (!expectedHref || !actualHref || expectedHref !== actualHref) return false
+    }
+    return true
+  })
   if (matches.length !== 1) return null
   const element = matches[0]
   const match: TargetResolutionMatch = source === "stagehand-observe" ? "stagehand-observe" : resolved.matchedBy
@@ -103,7 +116,7 @@ export async function resolveGroundedTarget(
   const { hint } = request
   const direct = await resolveCurrentDomTarget(page, hint).catch(() => null)
   if (direct) {
-    return materializeTarget(page, direct, "dom")
+    return materializeTarget(page, direct, "dom", hint)
   }
 
   // Do not let AI replace an absent intent with an arbitrary selector.
@@ -144,7 +157,7 @@ export async function resolveGroundedTarget(
     if (!grounded) continue
     const finalSnapshot = await inspectPageDom(page).catch(() => null)
     if (!finalSnapshot) return null
-    const result = await materializeTarget(page, grounded, "stagehand-observe", finalSnapshot)
+    const result = await materializeTarget(page, grounded, "stagehand-observe", constrainedHint, finalSnapshot)
     if (result) return result
   }
   return null
