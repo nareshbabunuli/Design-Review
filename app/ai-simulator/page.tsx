@@ -362,9 +362,9 @@ export default function AISimulatorPage() {
   type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage" | "chat"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
 
-  // Workspace layout mode: "device" (Phone Simulator) | "split" (Side-by-Side) | "stage" (Map & Plan)
-  type WorkspaceLayoutMode = "device" | "split" | "stage"
-  const [workspaceLayoutMode, setWorkspaceLayoutMode] = useState<WorkspaceLayoutMode>("split")
+  // Workspace layout mode: "stage" (Map & Plan only - no side-by-side comparison)
+  type WorkspaceLayoutMode = "stage"
+  const [workspaceLayoutMode, setWorkspaceLayoutMode] = useState<WorkspaceLayoutMode>("stage")
 
   // Sync testing mode when a job is active
   useEffect(() => {
@@ -474,8 +474,9 @@ export default function AISimulatorPage() {
     if (tabId === "simulator") {
       setWorkspaceLayoutMode("device")
     } else {
-      if (workspaceLayoutMode === "device") {
-        setWorkspaceLayoutMode("split")
+      // Keep stage view
+      if (workspaceLayoutMode === "stage") {
+        setWorkspaceLayoutMode("stage")
       }
     }
     if (tabId === "map" && !currentJob) {
@@ -1935,7 +1936,7 @@ export default function AISimulatorPage() {
       }
 
       localStorage.setItem("ai_automation_last_job_id", data.jobId)
-      setWorkspaceLayoutMode("split")
+      setWorkspaceLayoutMode("stage")
       handleSelectWorkspaceTab("map")
 
       // Fetch immediately to load initial state
@@ -2051,7 +2052,7 @@ export default function AISimulatorPage() {
 
       localStorage.setItem("ai_automation_last_job_id", data.jobId)
       setTestingMode("feature_workflow")
-      setWorkspaceLayoutMode("split")
+      setWorkspaceLayoutMode("stage")
       handleSelectWorkspaceTab("plan")
 
       // Fetch immediately to load initial state
@@ -2440,43 +2441,10 @@ export default function AISimulatorPage() {
 
             {/* 1. CORE WORKSPACE: PHONE SIMULATOR PAGE OR FULL PAGE TABS OR SIDE-BY-SIDE */}
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
-              {/* Top View Mode Switcher Header: Switch between Live Device, Side by Side Split, and App Map */}
+              {/* Top View Mode Switcher Header */}
               <div className="h-9 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between text-xs shrink-0 select-none z-20">
                 <div className="flex items-center gap-1">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Layout:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkspaceLayoutMode("split")
-                      if (stageViewMode === "simulator") setStageViewMode("map")
-                    }}
-                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
-                      workspaceLayoutMode === "split"
-                        ? "bg-indigo-600 text-white shadow-xs font-semibold ring-1 ring-indigo-400/30"
-                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
-                    }`}
-                    title="View Live Device and App Map side by side"
-                  >
-                    <Columns className="h-3.5 w-3.5" />
-                    <span>Side by Side</span>
-                    <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">Split</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkspaceLayoutMode("stage")
-                      if (stageViewMode === "simulator") setStageViewMode("map")
-                    }}
-                    className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 font-medium transition cursor-pointer text-xs ${
-                      workspaceLayoutMode === "stage" && stageViewMode !== "simulator"
-                        ? "bg-indigo-600 text-white shadow-xs font-semibold"
-                        : "text-slate-400 hover:text-white hover:bg-slate-800/60"
-                    }`}
-                    title="View Stage tabs in full width (hide phone simulator)"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    <span>Full Stage</span>
-                  </button>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">AI Testing</span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -2621,9 +2589,8 @@ export default function AISimulatorPage() {
                   </div>
                 )}
 
-                {/* 2. Stage View Pane (Map / Screens / Plan / Execution): shown in "stage" or "split" mode */}
-                {(workspaceLayoutMode === "stage" || workspaceLayoutMode === "split") && (
-                  <div className="flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0">
+                {/* Stage View Pane (Map / Screens / Plan / Execution) - Full Width */}
+                <div className="flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0">
                     {stageViewMode === "chat" || testingMode === "feature_workflow" ? (
                       <FeatureWorkflowView
                         job={currentJob}
@@ -2639,8 +2606,8 @@ export default function AISimulatorPage() {
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
                         fullPageView={true}
-                        isFullStage={workspaceLayoutMode === "stage"}
-                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
+                        isFullStage={true}
+                        onToggleFullStage={() => {}}
                         aiProvider={aiProvider}
                         onUpdateAiProvider={handleUpdateAiProvider}
                         nebiusApiKey={nebiusApiKey}
@@ -2696,9 +2663,9 @@ export default function AISimulatorPage() {
                         isMapPageActive={stageViewMode === "map"}
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
-                        isFullStage={workspaceLayoutMode === "stage"}
-                        isBesideScreen={workspaceLayoutMode === "split"}
-                        onToggleFullStage={() => setWorkspaceLayoutMode(workspaceLayoutMode === "stage" ? "split" : "stage")}
+                        isFullStage={true}
+                        isBesideScreen={false}
+                        onToggleFullStage={() => {}}
                       />
                     )}
                   </div>
