@@ -5,6 +5,7 @@ const nextConfig = {
     'puppeteer-screen-recorder',
     '@ffmpeg-installer/ffmpeg',
     '@browserbasehq/stagehand',
+    'sharp',
   ],
   typescript: {
     ignoreBuildErrors: true,

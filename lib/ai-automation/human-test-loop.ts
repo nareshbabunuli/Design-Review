@@ -93,7 +93,9 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
       'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="textbox"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[role="tab"],[role="menuitem"],[role="option"],[onclick],[tabindex]:not([tabindex="-1"])'
     )).filter(visible).slice(0, 120).map((el) => {
       const input = el as HTMLInputElement
+      const rect = el.getBoundingClientRect()
       return {
+        bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, left: rect.left },
         selector: visibleSelector(el),
         tag: el.tagName.toLowerCase(),
         role: el.getAttribute("role") || undefined,
@@ -818,11 +820,24 @@ export async function runHumanLikeDecisionLoop(
   const routeQueue: Array<{ url: string; returnTo: string }> = []
   const queuedRoutes = new Set<string>([page.url()])
   let activeRoute: { url: string; returnTo: string } | null = null
-  let restorationFailed = false
-  const markDiscoveryIncomplete = (reason: string) => {
-    restorationFailed = true
-    job.error = "[DOMDiscovery] " + reason + (job.error ? " Existing error: " + job.error : "")
-    appendLog(job, "error", "[DOMDiscovery] " + reason)
+  
+  // Helper to record unresolved routes without stopping discovery
+  const recordUnresolvedRoute = (url: string, reason: string) => {
+    if (!job.unresolvedRoutes) job.unresolvedRoutes = []
+    job.unresolvedRoutes.push({ url, reason, timestamp: Date.now() })
+    appendLog(job, "warn", `[DOMDiscovery] Route ${url} unresolved: ${reason}`)
+  }
+
+  // Restore unresolved routes from previous runs
+  if (job.unresolvedRoutes && job.unresolvedRoutes.length > 0) {
+    appendLog(job, "info", `[DOMDiscovery] Restoring ${job.unresolvedRoutes.length} unresolved routes from previous run.`)
+    for (const unresolved of job.unresolvedRoutes) {
+      if (!queuedRoutes.has(unresolved.url)) {
+        queuedRoutes.add(unresolved.url)
+        routeQueue.push({ url: unresolved.url, returnTo: page.url() })
+      }
+    }
+    job.unresolvedRoutes = [] // Clear after requeueing
   }
 
   for (let step = 0; step < maxSteps; step++) {
@@ -833,7 +848,7 @@ export async function runHumanLikeDecisionLoop(
         activeRoute = nextRoute
         appendLog(job, "info", `[DOMDiscovery] Exploring queued route ${nextRoute.url}; return target ${nextRoute.returnTo}.`)
       } else {
-        markDiscoveryIncomplete("Could not open queued route " + nextRoute.url + "; route remains unresolved.")
+        recordUnresolvedRoute(nextRoute.url, "Could not open queued route; navigation failed")
       }
     }
     const url = await page.url()
@@ -896,8 +911,11 @@ export async function runHumanLikeDecisionLoop(
       if (activeRoute) {
         const routeToReturn = activeRoute.returnTo
         const restored = await page.goto(routeToReturn, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
-        if (!restored) markDiscoveryIncomplete("Could not return to " + routeToReturn + " after route exploration.")
-        else appendLog(job, "info", "[DOMDiscovery] Returned to " + routeToReturn + " after route exploration.")
+        if (!restored) {
+          recordUnresolvedRoute(activeRoute.url, "Could not return to " + routeToReturn + " after route exploration")
+        } else {
+          appendLog(job, "info", "[DOMDiscovery] Returned to " + routeToReturn + " after route exploration.")
+        }
         activeRoute = null
         if (restored) continue
       }
@@ -907,22 +925,78 @@ export async function runHumanLikeDecisionLoop(
     const criteria = chooseCriteria(decisionCandidates)
     let selected: CandidateTest | null = null
     let selectionSource: "laya" | "fallback" = "fallback"
+    
+    // Capture screenshot before Laya decision
+    const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
+    
+    // Capture screenshot buffer for visual preprocessing
+    let screenshotBuffer: Buffer | undefined
+    let visualFeatures: any = undefined
     try {
+      const screenshot = await page.screenshot({ type: "png" }).catch(() => undefined)
+      screenshotBuffer = screenshot ? Buffer.from(screenshot) : undefined
+      if (screenshotBuffer) {
+        // Import vision preprocessor dynamically to avoid dependency issues
+        const { preprocessScreenshotForLaya } = await import("./vision-preprocessor").catch(() => ({ preprocessScreenshotForLaya: null }))
+        if (preprocessScreenshotForLaya) {
+          visualFeatures = await preprocessScreenshotForLaya(
+            screenshotBuffer,
+            state.elements
+              .filter(el => el.selector) // Filter out elements without selectors
+              .map(el => ({
+                selector: el.selector!,
+                bounds: el.bounds,
+                label: el.label,
+                type: el.type,
+              }))
+          )
+          appendLog(job, "info", `[VisionPreprocessor] Extracted ${visualFeatures.features.elementBoundingBoxes.length} element features; hierarchy depth: ${visualFeatures.features.visualHierarchy.length}`)
+        }
+      }
+    } catch (visionError: any) {
+      appendLog(job, "warn", `[VisionPreprocessor] Visual preprocessing failed: ${visionError?.message || String(visionError)}`)
+    }
+    
+    try {
+      // Prepare state payload with optional visual context
+      const statePayload: any = {
+        url: state.url,
+        title: state.title,
+        route: state.route,
+        interactiveCount: state.elements.length,
+        forms: state.forms.length,
+        tables: state.tables.map((t) => ({ name: t.name, rows: t.rowCount, empty: t.hasExplicitEmptyState })),
+        dialogs: state.dialogs.length,
+        consoleErrors: runtimeEvidence.consoleErrors.slice(-5),
+        pageErrors: runtimeEvidence.pageErrors.slice(-5),
+        failedRequests: runtimeEvidence.failedRequests.slice(-5),
+        badResponses: runtimeEvidence.badResponses.slice(-5),
+        previousTestIds: [...tested].slice(-20),
+      }
+      
+      // Add visual context if available
+      if (beforeScreenshotUrl || visualFeatures) {
+        statePayload.visual = {
+          screenshotUrl: beforeScreenshotUrl || undefined,
+          screenshotCapturedAt: Date.now(),
+          ...(visualFeatures?.features && {
+            elementCount: visualFeatures.features.elementBoundingBoxes.length,
+            topElements: visualFeatures.features.visualHierarchy.slice(0, 10).map((el: any) => ({
+              selector: el.selector,
+              rank: el.rank,
+              prominence: el.prominence,
+            })),
+            layoutClusters: visualFeatures.features.layoutClusters.map((cluster: any) => ({
+              group: cluster.spatialGroup,
+              elementCount: cluster.elements.length,
+            })),
+          }),
+        }
+        appendLog(job, "info", `[HumanLoop] Sending visual context to Laya: screenshot=${!!beforeScreenshotUrl}, features=${!!visualFeatures}`)
+      }
+      
       const result = await layaPredict(layaUrl, {
-        state: JSON.stringify({
-          url: state.url,
-          title: state.title,
-          route: state.route,
-          interactiveCount: state.elements.length,
-          forms: state.forms.length,
-          tables: state.tables.map((t) => ({ name: t.name, rows: t.rowCount, empty: t.hasExplicitEmptyState })),
-          dialogs: state.dialogs.length,
-          consoleErrors: runtimeEvidence.consoleErrors.slice(-5),
-          pageErrors: runtimeEvidence.pageErrors.slice(-5),
-          failedRequests: runtimeEvidence.failedRequests.slice(-5),
-          badResponses: runtimeEvidence.badResponses.slice(-5),
-          previousTestIds: [...tested].slice(-20),
-        }),
+        state: JSON.stringify(statePayload),
         questions: {
           next_test: {
             type: "choice",
@@ -957,7 +1031,7 @@ export async function runHumanLikeDecisionLoop(
       failedRequests: runtimeEvidence.failedRequests.length,
       badResponses: runtimeEvidence.badResponses.length,
     }
-    const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
+    
     let observation: { ok: boolean; blocked?: boolean; observation: string }
     let destinationScreenshotUrl = ""
     if (selected.pattern === "link_navigation" && selected.target?.selector && selected.target.href) {
@@ -985,7 +1059,9 @@ export async function runHumanLikeDecisionLoop(
           appendLog(job, "info", `[DOMDiscovery] Queued destination for full DOM exploration: ${explored.destination.url}.`)
         }
         recordDomInventory(job, explored.destination)
-        if (!explored.restored) markDiscoveryIncomplete("Could not restore source after visiting " + explored.destination.url + "; coverage remains incomplete.")
+        if (!explored.restored) {
+          recordUnresolvedRoute(explored.destination.url, "Could not restore source after visiting destination; link target remains partially explored")
+        }
       }
     } else {
       observation = await executeCandidate(page, selected)
@@ -1115,8 +1191,12 @@ export async function runHumanLikeDecisionLoop(
   // pending queue before deciding whether the run can honestly be complete.
   const missedCoverage = reconcileActionLedger(ledger, true)
   const graphTruncated = Boolean(job.domDiscoveryGraph?.truncated)
-  const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated && !restorationFailed
+  const hasUnresolvedRoutes = Boolean(job.unresolvedRoutes && job.unresolvedRoutes.length > 0)
+  const completed = maxSteps > 0 && missedCoverage.length === 0 && !graphTruncated && !hasUnresolvedRoutes
+  
   if (graphTruncated) appendLog(job, "warn", "[DOMDiscovery] Route/state graph reached its node or edge limit; discovery is incomplete.")
+  if (hasUnresolvedRoutes) appendLog(job, "warn", `[DOMDiscovery] ${job.unresolvedRoutes!.length} route(s) could not be fully explored; discovery is incomplete but all reachable routes were tested.`)
+  
   const signalCount = runtimeEvidence.consoleErrors.length + runtimeEvidence.pageErrors.length + runtimeEvidence.failedRequests.length + runtimeEvidence.badResponses.length
   if (signalCount) appendLog(job, "warn", "[HumanLoop] Captured " + signalCount + " console/network signal(s) for correlation.")
   return { actions, issues, completed, missedCoverage }
