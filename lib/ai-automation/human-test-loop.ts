@@ -228,7 +228,11 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
   }
 
   const beforeUrl = page.url()
-  const beforeTargetState = candidate.target?.selector ? await page.evaluate((selector) => {
+  const freshTarget = candidate.target
+    ? await resolveCurrentDomTarget(page, candidate.target).catch(() => null)
+    : null
+  const activeSelector = freshTarget?.selector || candidate.target?.selector
+  const beforeTargetState = activeSelector ? await page.evaluate((selector) => {
     const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null
     if (!el) return null
     return {
@@ -238,7 +242,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
       selected: el.getAttribute("aria-selected"),
       value: "value" in el ? String((el as HTMLInputElement).value || "") : null,
     }
-  }, candidate.target.selector).catch(() => null) : null
+  }, activeSelector).catch(() => null) : null
   const before = await page.evaluate(() => ({
     title: document.title,
     text: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1200),
@@ -396,10 +400,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest): Promise<{
     }
   }
 
-  const freshTarget = candidate.target
-    ? await resolveCurrentDomTarget(page, candidate.target).catch(() => null)
-    : null
-  const selector = freshTarget?.selector || candidate.target?.selector
+  const selector = activeSelector
   if (!selector) return { ok: false, observation: "Candidate has no executable target; it cannot be marked passed." }
   const target = await page.$(selector).catch(() => null)
   if (!target) return { ok: false, observation: "Target is no longer present; state changed before execution." }
