@@ -752,19 +752,27 @@ function recordDomInventory(job: AutomationJob, snapshot: Awaited<ReturnType<typ
 }
 
 function domGraphNodeId(snapshot: Awaited<ReturnType<typeof inspectPageDom>>): string {
+  // Create unique ID based on URL + title + element signature
+  // This ensures SPAs with same URL but different content get different nodes
+  const fullUrl = snapshot.url
+  const titlePart = snapshot.title ? `-${snapshot.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}` : ''
+  
   const signature = JSON.stringify({
-    url: snapshot.url,
+    url: fullUrl,
     title: snapshot.title,
-    elements: snapshot.elements.map((element) => [element.selector, element.label, element.kind, element.risk, element.enabled, element.href]),
-    forms: snapshot.forms,
-    dialogs: snapshot.dialogs,
+    // Create a simplified element signature (first 10 elements to differentiate states)
+    elementSignature: snapshot.elements.slice(0, 10).map((element) => [element.selector, element.label]),
+    formCount: snapshot.forms.length,
+    dialogCount: snapshot.dialogs.length,
   })
   let hash = 2166136261
   for (let i = 0; i < signature.length; i++) {
     hash ^= signature.charCodeAt(i)
     hash = Math.imul(hash, 16777619)
   }
-  return snapshot.url + "::dom-" + (hash >>> 0).toString(16)
+  
+  // Format: url + title-slug + dom-hash
+  return fullUrl + titlePart + "::dom-" + (hash >>> 0).toString(16)
 }
 
 function recordDomGraphNode(job: AutomationJob, snapshot: Awaited<ReturnType<typeof inspectPageDom>>): string {
