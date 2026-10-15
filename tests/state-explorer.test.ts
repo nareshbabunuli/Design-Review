@@ -41,6 +41,22 @@ test("current DOM target resolver recovers from stale selectors using a unique s
   }
 });
 
+test("icon-only controls can be discovered and resolved from inferred SVG names", async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<button data-testid="menu-control"><svg class="lucide-menu"></svg></button>');
+    const snapshot = await inspectPageDom(page);
+    const menu = snapshot.elements.find((element) => element.label === "Menu");
+    assert.ok(menu, "expected icon-only menu button to be inventoried");
+    const resolved = await resolveRankedLocator(page, menu.locators);
+    assert.ok(resolved, "expected inferred icon name to resolve the actual control");
+    assert.equal(await page.$eval(resolved.selector, (element) => element.getAttribute("data-testid")), "menu-control");
+  } finally {
+    await browser.close();
+  }
+});
+
 test("current DOM target resolver rejects ambiguous semantic labels", async () => {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   try {
