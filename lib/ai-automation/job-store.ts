@@ -22,34 +22,91 @@ const jobStore = globalThis.__AI_AUTOMATION_JOBS__
 
 const JOBS_DIR = path.join(process.cwd(), ".jobs")
 
+const pendingFlushTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const FLUSH_DEBOUNCE_MS = 250
+const MAX_JOB_LOGS = 1000
+let jobsDirEnsured = false
+
 function ensureJobsDir() {
+  if (jobsDirEnsured) return
   if (!fs.existsSync(JOBS_DIR)) {
     try {
       fs.mkdirSync(JOBS_DIR, { recursive: true })
     } catch {}
   }
+  jobsDirEnsured = true
 }
 
 export function toPersistedJob(job: AutomationJob): Record<string, unknown> {
   // Never persist interactive credentials, payment data, OTPs, or tokenized
   // verification links. They remain available only in the live process.
-  const persisted = JSON.parse(JSON.stringify(job)) as Record<string, unknown>
-  delete persisted.pendingCredentials
-  delete persisted.pendingSettingsCredentials
-  delete persisted.pendingPaymentCredentials
-  delete persisted.pendingVerification
-  return persisted
+  const {
+    pendingCredentials: _c,
+    pendingSettingsCredentials: _s,
+    pendingPaymentCredentials: _p,
+    pendingVerification: _v,
+    ...rest
+  } = job as Record<string, unknown>
+  return rest
 }
 
-export function saveJob(job: AutomationJob) {
-  jobStore.set(job.id, job)
+function flushJobToDiskSync(job: AutomationJob) {
   try {
     ensureJobsDir()
     const persisted = toPersistedJob(job)
-    fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(persisted, null, 2), "utf8")
+    const targetPath = path.join(JOBS_DIR, `${job.id}.json`)
+    const tmpPath = `${targetPath}.tmp`
+    fs.writeFileSync(tmpPath, JSON.stringify(persisted, null, 2), "utf8")
+    fs.renameSync(tmpPath, targetPath)
   } catch (err) {
     console.warn("[AI Runner] Failed to persist job to disk:", err)
   }
+}
+
+async function flushJobToDiskAsync(job: AutomationJob) {
+  try {
+    ensureJobsDir()
+    const persisted = toPersistedJob(job)
+    const payload = JSON.stringify(persisted, null, 2)
+    const targetPath = path.join(JOBS_DIR, `${job.id}.json`)
+    const tmpPath = `${targetPath}.tmp`
+    await fs.promises.writeFile(tmpPath, payload, "utf8")
+    await fs.promises.rename(tmpPath, targetPath)
+  } catch (err) {
+    console.warn("[AI Runner] Failed to persist job to disk:", err)
+  }
+}
+
+export function saveJob(job: AutomationJob, options?: { immediate?: boolean }) {
+  jobStore.set(job.id, job)
+
+  const isTerminal =
+    options?.immediate ||
+    job.status === "completed" ||
+    job.status === "failed" ||
+    job.status === "stopped"
+
+  const existingTimer = pendingFlushTimers.get(job.id)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+    pendingFlushTimers.delete(job.id)
+  }
+
+  if (isTerminal) {
+    flushJobToDiskSync(job)
+    return
+  }
+
+  const timer = setTimeout(() => {
+    pendingFlushTimers.delete(job.id)
+    const latest = jobStore.get(job.id) || job
+    void flushJobToDiskAsync(latest)
+  }, FLUSH_DEBOUNCE_MS)
+
+  if (typeof timer.unref === "function") {
+    timer.unref()
+  }
+  pendingFlushTimers.set(job.id, timer)
 }
 
 export function getJob(jobId: string): AutomationJob | null {
@@ -107,6 +164,9 @@ export function appendLog(job: AutomationJob, level: AutomationLog["level"], mes
     message: sanitized,
   }
   job.logs.push(log)
+  if (job.logs.length > MAX_JOB_LOGS) {
+    job.logs.splice(0, job.logs.length - MAX_JOB_LOGS)
+  }
   emitSessionEvent(job, level === "error" ? "error" : "progress", {
     message: sanitized,
     payload: { level },

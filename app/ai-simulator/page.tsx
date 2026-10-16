@@ -208,23 +208,29 @@ export default function AISimulatorPage() {
 
   // Movable split pane width state between Phone Simulator and Stage
   const [splitWidth, setSplitWidth] = useState(500)
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false)
   const isDraggingSplitterRef = useRef(false)
 
   const handleSplitterMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     isDraggingSplitterRef.current = true
+    setIsDraggingSplitter(true)
     const startX = e.clientX
     const startWidth = splitWidth
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingSplitterRef.current) return
       const delta = moveEvent.clientX - startX
-      const newWidth = Math.max(340, Math.min(window.innerWidth - 380, startWidth + delta))
+      const minLeft = 300
+      const minRight = 360
+      const maxLeft = Math.max(minLeft, window.innerWidth - minRight)
+      const newWidth = Math.max(minLeft, Math.min(maxLeft, startWidth + delta))
       setSplitWidth(newWidth)
     }
 
     const onMouseUp = () => {
       isDraggingSplitterRef.current = false
+      setIsDraggingSplitter(false)
       window.removeEventListener("mousemove", onMouseMove)
       window.removeEventListener("mouseup", onMouseUp)
     }
@@ -362,9 +368,9 @@ export default function AISimulatorPage() {
   type StageViewMode = "simulator" | "map" | "screens" | "plan" | "execution" | "files" | "coverage" | "chat"
   const [stageViewMode, setStageViewMode] = useState<StageViewMode>("simulator")
 
-  // Workspace layout mode: "stage" (Map & Plan only - no side-by-side comparison)
-  type WorkspaceLayoutMode = "stage"
-  const [workspaceLayoutMode, setWorkspaceLayoutMode] = useState<WorkspaceLayoutMode>("stage")
+  // Workspace layout mode: "device" (Phone Simulator) | "split" (Side-by-Side) | "stage" (Map & Plan)
+  type WorkspaceLayoutMode = "device" | "split" | "stage"
+  const [workspaceLayoutMode, setWorkspaceLayoutMode] = useState<WorkspaceLayoutMode>("split")
 
   // Sync testing mode when a job is active
   useEffect(() => {
@@ -2443,8 +2449,57 @@ export default function AISimulatorPage() {
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
               {/* Top View Mode Switcher Header */}
               <div className="h-9 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between text-xs shrink-0 select-none z-20">
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">AI Testing</span>
+                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-md p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceLayoutMode("split")
+                        if (stageViewMode === "simulator") setStageViewMode("chat")
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                        workspaceLayoutMode === "split"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                      title="Split View: Live Phone + AI Section"
+                    >
+                      <Columns className="h-3 w-3" />
+                      <span>Split</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceLayoutMode("stage")
+                        if (stageViewMode === "simulator") setStageViewMode("chat")
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                        workspaceLayoutMode === "stage"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                      title="Full AI Section (Maximize AI Bot & Testing workspace)"
+                    >
+                      <Maximize2 className="h-3 w-3" />
+                      <span>Full AI Section</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceLayoutMode("device")
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                        workspaceLayoutMode === "device"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                      title="Phone Simulator Only"
+                    >
+                      <Smartphone className="h-3 w-3" />
+                      <span>Phone Only</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -2543,9 +2598,10 @@ export default function AISimulatorPage() {
                       workspaceLayoutMode === "split"
                         ? "shrink-0 border-r border-slate-800 flex flex-col h-full overflow-hidden"
                         : "flex-1 h-full flex flex-col overflow-hidden"
-                    }`}
+                    } ${isDraggingSplitter ? "pointer-events-none select-none" : ""}`}
                   >
                     <WorkflowSimulator
+                      liveOnly={true}
                       project={mergedSimulatorProject}
                       initialWorkflowId={activeWorkflowId}
                       initialLiveMode={true}
@@ -2582,15 +2638,24 @@ export default function AISimulatorPage() {
                 {workspaceLayoutMode === "split" && (
                   <div
                     onMouseDown={handleSplitterMouseDown}
-                    className="w-1.5 hover:w-2.5 bg-slate-800 hover:bg-indigo-500 active:bg-indigo-600 transition-all cursor-col-resize shrink-0 z-30 flex items-center justify-center group select-none"
-                    title="Drag to resize Live Phone vs Stage view"
+                    onDoubleClick={() => setSplitWidth(Math.round(window.innerWidth / 2))}
+                    className="w-2 hover:w-2.5 bg-slate-900 hover:bg-indigo-600/30 active:bg-indigo-600/50 transition-all cursor-col-resize shrink-0 z-30 flex items-center justify-center group select-none border-x border-slate-800"
+                    title="Drag to resize Live Phone vs AI Section (Double-click to reset 50/50)"
                   >
-                    <div className="w-0.5 h-8 bg-slate-600 group-hover:bg-white rounded-full transition-colors" />
+                    <div className="w-0.5 h-8 bg-slate-600 group-hover:bg-indigo-400 group-active:bg-white rounded-full transition-colors" />
                   </div>
                 )}
 
+                {/* Fullscreen transparent capture overlay while dragging so iframe doesn't swallow mouse events */}
+                {isDraggingSplitter && (
+                  <div
+                    className="fixed inset-0 z-[9999] cursor-col-resize select-none pointer-events-auto"
+                    style={{ userSelect: "none" }}
+                  />
+                )}
+
                 {/* Stage View Pane (Map / Screens / Plan / Execution) - Full Width */}
-                <div className="flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0">
+                <div className={`flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0 ${isDraggingSplitter ? "pointer-events-none select-none" : ""}`}>
                     {stageViewMode === "chat" || testingMode === "feature_workflow" ? (
                       <FeatureWorkflowView
                         job={currentJob}

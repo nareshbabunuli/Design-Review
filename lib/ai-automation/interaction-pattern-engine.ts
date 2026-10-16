@@ -60,7 +60,7 @@ export type CandidateTest = {
 }
 
 export type PatternElement = {
-  bounds: any
+  bounds?: any
   selector?: string
   tag?: string
   role?: string

@@ -145,7 +145,7 @@ function generateUserImpact(dimension: string, rule: string, rating: number): st
   }
   
   const level = rating === 0 ? 'blocked' : rating === 1 ? 'major' : 'needs'
-  return impacts[dimension]?.[level] || 'Users may face difficulties'
+  return impacts[dimension as keyof typeof impacts]?.[level] || 'Users may face difficulties'
 }
 
 function generateRecommendation(dimension: string, rule: string, evidence: string): string {

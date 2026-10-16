@@ -537,7 +537,7 @@ async function runScenarioWithStagehand(
         desc,
         'stagehand',
         desc,
-        (level, message) => appendLog(job, level, message)
+        (_level, message) => appendLog(job, "info", message)
       )
       
       if (RISKY_ACTION.test(desc)) {

@@ -557,6 +557,15 @@ function generateUXAuditSection(job: AutomationJob): string {
 
   if (!uxScore) return ''
 
+  const methodology = 'methodology' in uxScore && uxScore.methodology
+    ? uxScore.methodology
+    : 'totalChecksApplied' in uxScore
+      ? `${uxScore.totalChecksApplied} checks applied`
+      : 'Heuristic UX Audit'
+  const limitations = 'limitations' in uxScore && Array.isArray(uxScore.limitations)
+    ? uxScore.limitations
+    : []
+
   return `
     <div class="page-break"></div>
     <h2>UX Intelligence Audit</h2>
@@ -568,28 +577,31 @@ function generateUXAuditSection(job: AutomationJob): string {
         <div style="font-size: 1em; opacity: 0.9;">out of 100</div>
         <div class="ux-grade">Grade ${uxScore.grade}</div>
         <div style="margin-top: 15px; font-size: 0.95em; opacity: 0.85;">
-          Confidence: ${Math.round(uxScore.confidence * 100)}% | ${uxScore.methodology}
+          Confidence: ${Math.round(uxScore.confidence * 100)}% | ${escapeHtml(methodology)}
         </div>
       </div>
 
       <h3 style="color: white; margin-top: 30px; margin-bottom: 15px;">Dimensional Breakdown</h3>
       <div class="ux-dimensions">
-        ${uxScore.dimensions.map(dim => `
+        ${uxScore.dimensions.map(dim => {
+          const checksCount = 'checksApplied' in dim ? dim.checksApplied : dim.checks.length
+          return `
           <div class="ux-dimension">
             <div class="ux-dimension-name">${escapeHtml(dim.dimension)}</div>
             <div class="ux-dimension-score">${dim.score.toFixed(1)}</div>
             <div style="font-size: 0.85em; opacity: 0.8; margin-top: 5px;">
-              Weight: ${(dim.weight * 100).toFixed(0)}% | ${dim.checksApplied} checks
+              Weight: ${(dim.weight * 100).toFixed(0)}% | ${checksCount} checks
             </div>
           </div>
-        `).join('')}
+        `
+        }).join('')}
       </div>
 
-      ${uxScore.limitations && uxScore.limitations.length > 0 ? `
+      ${limitations.length > 0 ? `
         <div style="margin-top: 30px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 8px;">
           <h3 style="color: white; margin-top: 0; font-size: 1em;">Limitations</h3>
           <ul style="margin-left: 20px; font-size: 0.9em;">
-            ${uxScore.limitations.map(l => `<li>${escapeHtml(l)}</li>`).join('')}
+            ${limitations.map((l: string) => `<li>${escapeHtml(l)}</li>`).join('')}
           </ul>
         </div>
       ` : ''}

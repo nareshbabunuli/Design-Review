@@ -2,10 +2,21 @@
  * Integration tests for context-aware testing: visual context and queue recovery
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "@jest/globals"
-import type { Page } from "puppeteer"
+import { describe, it } from "node:test"
+import assert from "node:assert/strict"
 import type { AutomationJob } from "@/lib/ai-automation/types"
 import { preprocessScreenshotForLaya } from "@/lib/ai-automation/vision-preprocessor"
+
+function expect(actual: any) {
+  return {
+    toBe: (expected: any) => assert.strictEqual(actual, expected),
+    toBeDefined: () => assert.notStrictEqual(actual, undefined),
+    toBeUndefined: () => assert.strictEqual(actual, undefined),
+    toHaveLength: (len: number) => assert.strictEqual(actual?.length, len),
+    toBeGreaterThan: (n: number) => assert.ok(actual > n, `Expected ${actual} > ${n}`),
+    toBeLessThanOrEqual: (n: number) => assert.ok(actual <= n, `Expected ${actual} <= ${n}`),
+  }
+}
 
 describe("Visual Context Integration", () => {
   describe("Vision Preprocessor", () => {

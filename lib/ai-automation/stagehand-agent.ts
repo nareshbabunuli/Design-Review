@@ -165,7 +165,7 @@ This is an exploration/QA task, not a task-completion task. Prioritize interacti
         raw,
         'stagehand',
         description,
-        (level, message) => hooks.appendLog(job, level, message)
+        (_level, message) => hooks.appendLog(job, "info", message)
       )
 
       job.currentStep = `Runner: ${description}`

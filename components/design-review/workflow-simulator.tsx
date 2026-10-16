@@ -100,6 +100,7 @@ export interface WorkflowSimulatorProps {
   onToggleFullscreen?: (val?: boolean) => void
   onNavigateView?: (mode: "dashboard" | "editor" | "simulator") => void
   hideLeftView?: boolean
+  liveOnly?: boolean
   onToggleHideLeftView?: (val?: boolean) => void
   currentAction?: AgentAction | null
   isRunningTest?: boolean
@@ -400,6 +401,7 @@ export function WorkflowSimulator({
   onToggleFullscreen,
   onNavigateView,
   hideLeftView: hideLeftViewProp,
+  liveOnly = false,
   onToggleHideLeftView,
   currentAction,
   isRunningTest = false,
@@ -482,9 +484,10 @@ export function WorkflowSimulator({
     } catch {}
   }, [])
 
-  const isLeftViewHidden = hideLeftViewProp !== undefined ? hideLeftViewProp : internalHideLeftView
+  const isLeftViewHidden = liveOnly ? true : (hideLeftViewProp !== undefined ? hideLeftViewProp : internalHideLeftView)
 
   const toggleHideLeftView = useCallback((val?: boolean) => {
+    if (liveOnly) return
     const next = typeof val === "boolean" ? val : !isLeftViewHidden
     if (onToggleHideLeftView) {
       onToggleHideLeftView(next)
@@ -1752,116 +1755,120 @@ export function WorkflowSimulator({
       {!isFullscreen && (
         <header className="min-h-12 h-auto border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 z-20 shrink-0 transition-colors overflow-visible">
         
-        {/* Left: workflow selector and navigation - Hidden on mobile */}
-        <div className="hidden md:flex items-center gap-1.5 sm:gap-2 order-0 shrink-0">
-          {/* Back to dashboard button */}
-          {onNavigateView && (
+        {/* Left: workflow selector and navigation - Hidden on mobile or in liveOnly mode */}
+        {!liveOnly && (
+          <div className="hidden md:flex items-center gap-1.5 sm:gap-2 order-0 shrink-0">
+            {/* Back to dashboard button */}
+            {onNavigateView && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== "undefined" && onNavigateView) {
+                    onNavigateView("dashboard")
+                  }
+                }}
+                className="p-1.5 rounded-lg text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
+                title="Back to dashboard"
+                aria-label="Back to dashboard"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Workflow selector dropdown */}
+            <div className="relative">
+              <select
+                value={activeWorkflowId}
+                onChange={(e) => handleSelectWorkflow(e.target.value)}
+                className="appearance-none bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-3 py-1.5 pr-8 text-xs sm:text-sm font-medium text-slate-800 dark:text-[#d1d5db] cursor-pointer hover:bg-slate-50 dark:hover:bg-[#202430] transition shadow-xs max-w-[140px] sm:max-w-[200px]"
+                aria-label="Select workflow"
+              >
+                {workflows.map((wf, idx) => (
+                  <option key={wf.id} value={wf.id}>
+                    {wf.title || `Screen ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 dark:text-[#6b7280] pointer-events-none" />
+            </div>
+
+            {/* Workflow navigation arrows - Hidden on mobile */}
+            <div className="hidden sm:flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md overflow-hidden shadow-xs">
+              <button
+                type="button"
+                onClick={handlePrevWorkflow}
+                disabled={currentWorkflowIndex === 0}
+                className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Previous workflow"
+                aria-label="Previous workflow"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
+              <button
+                type="button"
+                onClick={handleNextWorkflow}
+                disabled={currentWorkflowIndex >= workflows.length - 1}
+                className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Next workflow"
+                aria-label="Next workflow"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Center: primary comparison mode - Hidden in liveOnly mode */}
+        {!liveOnly && (
+          <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-1 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
+            {/* Hide/Show Left View Button */}
             <button
               type="button"
               onClick={() => {
-                if (typeof window !== "undefined" && onNavigateView) {
-                  onNavigateView("dashboard")
+                if (compareMode !== "side-by-side") {
+                  setCompareMode("side-by-side")
                 }
+                toggleHideLeftView()
               }}
-              className="p-1.5 rounded-lg text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer"
-              title="Back to dashboard"
-              aria-label="Back to dashboard"
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
+                !isLeftViewHidden
+                  ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                  : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
+              }`}
+              title={isLeftViewHidden ? "Show Left Spec View (Side-by-side comparison)" : "Hide Left View (Expand live device to full width)"}
             >
-              <ArrowLeft className="w-4 h-4" />
+              {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+              <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
             </button>
-          )}
 
-          {/* Workflow selector dropdown */}
-          <div className="relative">
-            <select
-              value={activeWorkflowId}
-              onChange={(e) => handleSelectWorkflow(e.target.value)}
-              className="appearance-none bg-white dark:bg-[#1b1e29] border border-slate-300 dark:border-[#272b38] rounded-md px-3 py-1.5 pr-8 text-xs sm:text-sm font-medium text-slate-800 dark:text-[#d1d5db] cursor-pointer hover:bg-slate-50 dark:hover:bg-[#202430] transition shadow-xs max-w-[140px] sm:max-w-[200px]"
-              aria-label="Select workflow"
+            <ToolbarButton
+              active={compareMode === "overlay"}
+              onClick={() => {
+                if (isLeftViewHidden) toggleHideLeftView(false)
+                setCompareMode(compareMode === "overlay" ? "side-by-side" : "overlay")
+                setShowOptions(true)
+              }}
+              title="Overlay design on top of the live app"
+              variant="primary"
             >
-              {workflows.map((wf, idx) => (
-                <option key={wf.id} value={wf.id}>
-                  {wf.title || `Screen ${idx + 1}`}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 dark:text-[#6b7280] pointer-events-none" />
+              Overlay
+            </ToolbarButton>
+            <ToolbarButton
+              active={compareMode === "difference"}
+              onClick={() => {
+                if (isLeftViewHidden) toggleHideLeftView(false)
+                setCompareMode(compareMode === "difference" ? "side-by-side" : "difference")
+                setShowOptions(true)
+              }}
+              title="Highlight pixel differences"
+              variant="primary"
+            >
+              <span className="sm:hidden">Diff</span>
+              <span className="hidden sm:inline">Difference</span>
+            </ToolbarButton>
           </div>
-
-          {/* Workflow navigation arrows - Hidden on mobile */}
-          <div className="hidden sm:flex items-center bg-white dark:bg-[#181a22] border border-slate-300 dark:border-[#272b38] rounded-md overflow-hidden shadow-xs">
-            <button
-              type="button"
-              onClick={handlePrevWorkflow}
-              disabled={currentWorkflowIndex === 0}
-              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Previous workflow"
-              aria-label="Previous workflow"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <div className="h-4 w-[1px] bg-slate-300 dark:bg-[#272b38]" />
-            <button
-              type="button"
-              onClick={handleNextWorkflow}
-              disabled={currentWorkflowIndex >= workflows.length - 1}
-              className="p-1 text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#202430] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Next workflow"
-              aria-label="Next workflow"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Center: primary comparison mode */}
-        <div className="flex items-center justify-start bg-transparent p-0 rounded-md gap-1 shrink-0 transition-colors order-1 w-auto mx-0" role="tablist" aria-label="Comparison mode">
-          {/* Hide/Show Left View Button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (compareMode !== "side-by-side") {
-                setCompareMode("side-by-side")
-              }
-              toggleHideLeftView()
-            }}
-            className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border ${
-              !isLeftViewHidden
-                ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
-                : "bg-white dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5] hover:bg-slate-100 dark:hover:bg-[#202430]"
-            }`}
-            title={isLeftViewHidden ? "Show Left Spec View (Side-by-side comparison)" : "Hide Left View (Expand live device to full width)"}
-          >
-            {isLeftViewHidden ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-            <span>{isLeftViewHidden ? "Show Left View" : "Hide Left View"}</span>
-          </button>
-
-          <ToolbarButton
-            active={compareMode === "overlay"}
-            onClick={() => {
-              if (isLeftViewHidden) toggleHideLeftView(false)
-              setCompareMode(compareMode === "overlay" ? "side-by-side" : "overlay")
-              setShowOptions(true)
-            }}
-            title="Overlay design on top of the live app"
-            variant="primary"
-          >
-            Overlay
-          </ToolbarButton>
-          <ToolbarButton
-            active={compareMode === "difference"}
-            onClick={() => {
-              if (isLeftViewHidden) toggleHideLeftView(false)
-              setCompareMode(compareMode === "difference" ? "side-by-side" : "difference")
-              setShowOptions(true)
-            }}
-            title="Highlight pixel differences"
-            variant="primary"
-          >
-            <span className="sm:hidden">Diff</span>
-            <span className="hidden sm:inline">Difference</span>
-          </ToolbarButton>
-        </div>
+        )}
 
         {/* Right: Options + Capture + Fullscreen */}
         <div className="flex items-center justify-end gap-1.5 sm:gap-2 shrink-0 order-2 ml-auto">
@@ -2163,145 +2170,147 @@ export function WorkflowSimulator({
 
           <div className={`w-full h-full ${compareMode === "side-by-side" ? "flex" : "fixed -left-[99999px] -top-[99999px] invisible pointer-events-none opacity-0 w-0 h-0 overflow-hidden"} ${isSwapped ? "flex-row-reverse" : "flex-row"}`}>
             {/* PANEL A: FIGMA SPEC */}
-            <section
-              style={{ width: isLeftViewHidden ? "0%" : (mobileComparePane === "design" ? "100%" : `${splitRatio}%`) }}
-              className={`${isLeftViewHidden ? "hidden" : (mobileComparePane === "live" ? "hidden sm:flex" : "flex")} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
-            >
-              <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
-                <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  {/* Dashboard Link - Only in fullscreen when top header is hidden */}
-                  {isFullscreen && onNavigateView && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (typeof window !== "undefined" && onNavigateView) {
-                          onNavigateView("dashboard")
-                        }
-                      }}
-                      className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
-                      title="Return to Dashboard"
-                    >
-                      <FolderKanban className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+            {!liveOnly && (
+              <section
+                style={{ width: isLeftViewHidden ? "0%" : (mobileComparePane === "design" ? "100%" : `${splitRatio}%`) }}
+                className={`${isLeftViewHidden ? "hidden" : (mobileComparePane === "live" ? "hidden sm:flex" : "flex")} h-full relative flex-col border-r border-slate-300 dark:border-[#1e222d] bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors`}
+              >
+                <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center justify-between text-[11px] text-slate-600 dark:text-[#7e8596] shrink-0 transition-colors gap-2 overflow-x-auto custom-scrollbar">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {/* Dashboard Link - Only in fullscreen when top header is hidden */}
+                    {isFullscreen && onNavigateView && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== "undefined" && onNavigateView) {
+                            onNavigateView("dashboard")
+                          }
+                        }}
+                        className="p-1 rounded text-slate-500 hover:text-slate-900 dark:text-[#8e95a5] dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1f2330] transition cursor-pointer shrink-0"
+                        title="Return to Dashboard"
+                      >
+                        <FolderKanban className="w-3.5 h-3.5" />
+                      </button>
+                    )}
 
-                  {/* Screen Switcher - Show only on mobile or in fullscreen mode when top header dropdown is hidden */}
-                  <div className={`${isFullscreen ? "flex" : "flex md:hidden"} items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0`}>
+                    {/* Screen Switcher - Show only on mobile or in fullscreen mode when top header dropdown is hidden */}
+                    <div className={`${isFullscreen ? "flex" : "flex md:hidden"} items-center gap-0.5 bg-slate-100 dark:bg-[#181a24] border border-slate-300 dark:border-[#272b38] rounded px-1 py-0.5 shrink-0`}>
+                      <button
+                        type="button"
+                        onClick={handlePrevWorkflow}
+                        disabled={currentWorkflowIndex <= 0}
+                        className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        title="Previous screen (←)"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                      </button>
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#a259ff] mx-0.5 shrink-0" />
+                      <span
+                        className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 px-1 max-w-[120px] sm:max-w-[160px] truncate"
+                        title={currentWorkflow?.title || "Screen"}
+                      >
+                        {currentWorkflow?.title || "Screen"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleNextWorkflow}
+                        disabled={currentWorkflowIndex >= workflows.length - 1}
+                        className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                        title="Next screen (→)"
+                      >
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {/* Duplicate Screen Button */}
+                    {currentWorkflow && (
+                      <button
+                        type="button"
+                        onClick={handleDuplicateScreen}
+                        disabled={isDuplicating}
+                        className="hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                        title="Duplicate this screen"
+                      >
+                        <CopyPlus className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                        <span>{isDuplicating ? "Duplicating…" : "Duplicate"}</span>
+                      </button>
+                    )}
+
+                    {/* Copy Image to Clipboard */}
+                    {currentWorkflow?.designA && (
+                      <button
+                        type="button"
+                        onClick={handleCopyFigmaImage}
+                        className="hidden sm:flex p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white items-center transition cursor-pointer shadow-xs shrink-0"
+                        title="Copy Figma spec image to clipboard"
+                      >
+                        {copiedFigma ? (
+                          <Check className="w-3 h-3 text-emerald-500" />
+                        ) : (
+                          <Copy className="w-3 h-3 text-slate-500 dark:text-[#8e95a5]" />
+                        )}
+                      </button>
+                    )}
+
+                    <div className="hidden sm:block h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
+
+                    {/* Enable Frame Toggle */}
                     <button
                       type="button"
-                      onClick={handlePrevWorkflow}
-                      disabled={currentWorkflowIndex <= 0}
-                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                      title="Previous screen (←)"
+                      onClick={() => setShowDeviceFrame(!showDeviceFrame)}
+                      className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
+                        showDeviceFrame
+                          ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
+                          : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
+                      }`}
+                      title="Toggle phone device frame"
                     >
-                      <ChevronLeft className="w-3 h-3" />
-                    </button>
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#a259ff] mx-0.5 shrink-0" />
-                    <span
-                      className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 px-1 max-w-[120px] sm:max-w-[160px] truncate"
-                      title={currentWorkflow?.title || "Screen"}
-                    >
-                      {currentWorkflow?.title || "Screen"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleNextWorkflow}
-                      disabled={currentWorkflowIndex >= workflows.length - 1}
-                      className="p-0.5 rounded text-slate-500 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                      title="Next screen (→)"
-                    >
-                      <ChevronRight className="w-3 h-3" />
+                      <Smartphone className="w-3 h-3" />
+                      <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
                     </button>
                   </div>
 
-                  {/* Duplicate Screen Button */}
-                  {currentWorkflow && (
-                    <button
-                      type="button"
-                      onClick={handleDuplicateScreen}
-                      disabled={isDuplicating}
-                      className="hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border border-purple-200 dark:border-purple-900/50 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                      title="Duplicate this screen"
-                    >
-                      <CopyPlus className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-                      <span>{isDuplicating ? "Duplicating…" : "Duplicate"}</span>
-                    </button>
-                  )}
+                  <div className="hidden sm:block font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
+                    {viewportWidth}×{viewportHeight}px
+                  </div>
+                </div>
 
-                  {/* Copy Image to Clipboard */}
-                  {currentWorkflow?.designA && (
-                    <button
-                      type="button"
-                      onClick={handleCopyFigmaImage}
-                      className="hidden sm:flex p-1 rounded text-[10px] font-medium border border-slate-300 dark:border-[#272b38] bg-slate-50 hover:bg-slate-100 dark:bg-[#181a22] dark:hover:bg-[#202430] text-slate-700 dark:text-[#c5c9d5] hover:text-slate-900 dark:hover:text-white items-center transition cursor-pointer shadow-xs shrink-0"
-                      title="Copy Figma spec image to clipboard"
-                    >
-                      {copiedFigma ? (
-                        <Check className="w-3 h-3 text-emerald-500" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-slate-500 dark:text-[#8e95a5]" />
-                      )}
-                    </button>
-                  )}
-
-                  <div className="hidden sm:block h-3.5 w-[1px] bg-slate-300 dark:bg-[#272b38] mx-0.5 shrink-0" />
-
-                  {/* Enable Frame Toggle */}
-                  <button
-                    type="button"
-                    onClick={() => setShowDeviceFrame(!showDeviceFrame)}
-                    className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer shrink-0 ${
-                      showDeviceFrame
-                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs"
-                        : "bg-slate-50 dark:bg-[#181a24] hover:bg-slate-100 dark:hover:bg-[#202430] border-slate-300 dark:border-[#272b38] text-slate-700 dark:text-[#c5c9d5]"
-                    }`}
-                    title="Toggle phone device frame"
+                <div className={`flex-1 relative p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#0c0d12] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
+                  <DeviceFrame
+                    frameType="none"
+                    finish={frameFinish}
+                    width={viewportWidth}
+                    height={viewportHeight}
+                    scale={currentScale}
+                    showFrame={false}
+                    showStatusBar={false}
                   >
-                    <Smartphone className="w-3 h-3" />
-                    <span>Frame: {showDeviceFrame ? "Yes" : "No"}</span>
-                  </button>
+                    {showGrid && (
+                      <div className="absolute inset-0 pointer-events-none z-20 border border-indigo-500/30">
+                        <div className="absolute top-4 left-4 text-[9px] font-mono text-indigo-400/80 bg-indigo-950/70 px-1 rounded">padding: 32px</div>
+                        <div className="absolute top-0 bottom-0 left-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                        <div className="absolute top-0 bottom-0 right-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
+                      </div>
+                    )}
+                    {currentWorkflow?.designA ? (
+                      <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={currentWorkflow.designA}
+                          alt="Figma spec design"
+                          className="w-full h-full object-contain select-none pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
+                          style={{ imageRendering: "-webkit-optimize-contrast" }}
+                        />
+                      </div>
+                    ) : (
+                      <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
+                    )}
+                  </DeviceFrame>
                 </div>
+              </section>
+            )}
 
-                <div className="hidden sm:block font-mono text-[10px] text-slate-500 dark:text-[#717888] shrink-0 ml-1">
-                  {viewportWidth}×{viewportHeight}px
-                </div>
-              </div>
-
-              <div className={`flex-1 relative p-4 flex items-center justify-center bg-slate-200/50 dark:bg-[#0c0d12] bg-[radial-gradient(#94a3b8_1px,transparent_1px)] dark:bg-[radial-gradient(#1e2230_1px,transparent_1px)] [background-size:18px_18px] select-none ${zoomMode === "fit" ? "overflow-hidden" : "overflow-auto"}`}>
-                <DeviceFrame
-                  frameType="none"
-                  finish={frameFinish}
-                  width={viewportWidth}
-                  height={viewportHeight}
-                  scale={currentScale}
-                  showFrame={false}
-                  showStatusBar={false}
-                >
-                  {showGrid && (
-                    <div className="absolute inset-0 pointer-events-none z-20 border border-indigo-500/30">
-                      <div className="absolute top-4 left-4 text-[9px] font-mono text-indigo-400/80 bg-indigo-950/70 px-1 rounded">padding: 32px</div>
-                      <div className="absolute top-0 bottom-0 left-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
-                      <div className="absolute top-0 bottom-0 right-[32px] w-[1px] bg-indigo-500/20 border-r border-dashed border-indigo-500/40" />
-                    </div>
-                  )}
-                  {currentWorkflow?.designA ? (
-                    <div className="w-full h-full bg-white dark:bg-[#0f1117] flex items-center justify-center overflow-hidden relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={currentWorkflow.designA}
-                        alt="Figma spec design"
-                        className="w-full h-full object-contain select-none pointer-events-none [image-rendering:-webkit-optimize-contrast] [image-rendering:crisp-edges]"
-                        style={{ imageRendering: "-webkit-optimize-contrast" }}
-                      />
-                    </div>
-                  ) : (
-                    <FigmaPrototypeMock viewportWidth={viewportWidth} viewportHeight={viewportHeight} title={currentWorkflow?.title || "Platform Health Overview"} />
-                  )}
-                </DeviceFrame>
-              </div>
-            </section>
-
-            {!isLeftViewHidden && (
+            {!liveOnly && !isLeftViewHidden && (
               <div
                 onMouseDown={() => setIsDraggingSplit(true)}
                 role="separator"
@@ -2320,8 +2329,8 @@ export function WorkflowSimulator({
 
             {/* PANEL B: LIVE INTERACTIVE BROWSER */}
             <section
-              style={{ width: isLeftViewHidden || mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
-              className={`${!isLeftViewHidden && mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors flex-1`}
+              style={{ width: liveOnly || isLeftViewHidden || mobileComparePane === "live" ? "100%" : `${100 - splitRatio}%` }}
+              className={`${!liveOnly && !isLeftViewHidden && mobileComparePane === "design" ? "hidden sm:flex" : "flex"} h-full relative flex-col bg-slate-100/70 dark:bg-[#0c0d12] overflow-hidden transition-colors flex-1`}
             >
               {/* Sleek Browser Toolbar */}
               <div className="h-9 border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#11131a] px-2.5 flex items-center gap-1.5 shrink-0 z-10 transition-colors overflow-x-auto custom-scrollbar">
