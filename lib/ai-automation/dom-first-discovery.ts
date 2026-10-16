@@ -1,4 +1,5 @@
 import type { Page } from "puppeteer"
+import { isSameOriginUrl } from "./full-app-utils"
 
 
 export type DomNavigationEvent = {
@@ -205,7 +206,7 @@ export async function exploreInternalLinkAndReturn(
   } catch {
     return { destination: null, observation: "Navigation candidate has an invalid URL; no click was attempted.", restored: true, blocked: true }
   }
-  if (target.origin !== sourceOrigin) {
+  if (!isSameOriginUrl(target.href, sourceOrigin)) {
     return { destination: null, observation: "External navigation was inventoried but not followed.", restored: true, blocked: true }
   }
   if (/\/(logout|log-out|signout|sign-out|delete|purchase|checkout|payment)(\/|$)/i.test(target.pathname)) {
@@ -237,6 +238,15 @@ export async function exploreInternalLinkAndReturn(
     ])
     await new Promise((resolve) => setTimeout(resolve, 250))
     const afterUrl = page.url()
+    if (!isSameOriginUrl(afterUrl, sourceOrigin)) {
+      const restored = await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).then(() => true).catch(() => false)
+      return {
+        destination: null,
+        observation: `Navigation redirected to external domain (${afterUrl}); returned to ${sourceUrl} without indexing external site.`,
+        restored,
+        blocked: true,
+      }
+    }
     if (afterUrl === sourceUrl) {
       const snapshot = await inspectPageDom(page)
       const stateChanged = Boolean(beforeSnapshot && discoveryStateSignature(beforeSnapshot) !== discoveryStateSignature(snapshot))

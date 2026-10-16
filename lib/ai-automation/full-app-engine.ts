@@ -30,11 +30,13 @@ import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
   normalizeUrlForRestore,
+  isSameOriginUrl,
   deriveScreenName,
   buildFigmaWorkflowMap,
   synthesizeFullAppPlanFromJob,
   isFullAppCommand,
 } from "./full-app-utils"
+export { isSameOriginUrl } from "./full-app-utils"
 import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
 import { applyAllScoringChecks } from "./ux-scoring-checks"
 import { calculateOverallUXScore } from "./ux-scoring-rubric"
@@ -121,6 +123,7 @@ import {
   collectLinks,
   collectLinksWithExpansion,
   discoverAndMapApp,
+  completeJourneyReturnAndLogout,
 } from "./full-app-discovery"
 
 export {
@@ -135,6 +138,7 @@ export {
   collectLinks,
   collectLinksWithExpansion,
   discoverAndMapApp,
+  completeJourneyReturnAndLogout,
 } from "./full-app-discovery"
 
 /** Find the visible field represented by a planned selector, with a semantic fallback. */
@@ -780,6 +784,13 @@ export async function executeStructuredTestPlan(
           }
         }
       }
+
+      const targetOrigin = new URL(testPlan.targetUrl).origin
+      const preActionUrl = isSameOriginUrl(page.url(), targetOrigin)
+        ? page.url()
+        : targetScreen?.url && isSameOriginUrl(targetScreen.url, targetOrigin)
+          ? targetScreen.url
+          : testPlan.targetUrl
 
       // 2. Determine target coordinates for visual cursor animation & mirror overlay
       let actionCoords: { x: number; y: number } | undefined
@@ -1810,9 +1821,45 @@ export async function executeStructuredTestPlan(
 
       // 5. Dynamic inventory: rescan after EVERY action, even if the route
       // already exists. A modal, tab or expanded section can reveal new controls
-      // without changing the URL.
+      // without changing the URL. Never index external domains (e.g. linkedin.com);
+      // return immediately to the main app page.
       const currentUrl = page.url()
       const origin = new URL(testPlan.targetUrl).origin
+      if (!isSameOriginUrl(currentUrl, origin)) {
+        appendLog(
+          job,
+          "info",
+          `↩️ [EXTERNAL NAVIGATION] "${step.targetName}" navigated to external domain (${secretRedactor.redact(currentUrl)}). Returning to ${secretRedactor.redact(preActionUrl)} without testing external site.`
+        )
+        step.actualResult = `${observation} (External navigation to ${secretRedactor.redact(currentUrl)} verified; returned to main page)`
+        await page.goto(preActionUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+        await waitForSpaPageReady(page, 1500).catch(() => {})
+        job.currentUrl = page.url()
+        await publishLiveFrame(job, page).catch(() => {})
+        emitSessionEvent(job, "test_result", {
+          url: job.currentUrl,
+          message: `Step ${step.id}: ${step.status} — ${step.targetName} (external link verified, returned to main app)`,
+          payload: {
+            stepId: step.id,
+            screenId: step.screenId,
+            status: step.status,
+            verdict: step.verdict,
+            hasScreenshot: Boolean(step.screenshotUrl),
+          },
+        })
+        testPlan.coverage = {
+          screensTested: testedScreensSet.size,
+          totalScreens: testPlan.screens.length,
+          actionsTested: passedCount + failedCount + blockedCount + suspectedCount + skippedUnsafeCount,
+          totalActions: testPlan.steps.length,
+          formsTested: testPlan.screens.filter((s) => testedScreensSet.has(s.id)).reduce((acc, s) => acc + (s.forms?.length || 0), 0),
+          totalForms: testPlan.screens.reduce((acc, s) => acc + (s.forms?.length || 0), 0),
+          percentage: Math.round(((passedCount + failedCount + blockedCount + suspectedCount + skippedUnsafeCount) / testPlan.steps.length) * 100),
+        }
+        saveJob(job)
+        continue
+      }
+
       const currentNorm = normalizePath(currentUrl, origin)
       const newInv = await extractActionableInventory(page)
       const hasActiveModal = Boolean(newInv.modalTitle)
@@ -2087,6 +2134,43 @@ export async function executeStructuredTestPlan(
     } catch (wfErr: any) {
       appendLog(job, "warn", `Workflow chaining encountered error: ${wfErr?.message}`)
     }
+  }
+
+  // PHASE 4.5: Return to Main Page & Complete Authenticated Logout Journey
+  try {
+    const journeyEnd = await completeJourneyReturnAndLogout(
+      job,
+      page,
+      testPlan.targetUrl,
+      testPlan.screens,
+      testPlan.transitions,
+      credentials
+    )
+    if (journeyEnd.loggedOut) {
+      const mainScreen = testPlan.screens.find((s) => s.id === journeyEnd.mainScreenId) || testPlan.screens[0]
+      const logoutStep: TestPlanStep = {
+        id: `STEP-${String(testPlan.steps.length + 1).padStart(3, "0")}`,
+        stepIndex: testPlan.steps.length + 1,
+        screenId: mainScreen?.id || "S001",
+        screenName: mainScreen?.name || "Main Page",
+        url: journeyEnd.finalUrl,
+        actionType: "click",
+        targetName: journeyEnd.logoutLabel || "Log Out",
+        expectedResult: "Return to main page and log out to complete the authenticated application journey.",
+        actualResult: `Returned to main page and clicked "${journeyEnd.logoutLabel || "Log Out"}" -> navigated to ${secretRedactor.redact(journeyEnd.finalUrl)}.`,
+        status: "passed",
+        verdict: "passed",
+        screenshotUrl: journeyEnd.screenshotUrl,
+        evidenceTimestamp: new Date().toISOString(),
+      }
+      testPlan.steps.push(logoutStep)
+      passedCount++
+    }
+    job.flowGraph = buildFigmaWorkflowMap(testPlan)
+    job.fullAppTestPlan = testPlan
+    saveJob(job)
+  } catch (journeyErr: any) {
+    appendLog(job, "warn", `Journey completion return/logout check encountered error: ${journeyErr?.message}`)
   }
 
   // PHASE 5: UX Intelligence Evidence Collection & Scoring

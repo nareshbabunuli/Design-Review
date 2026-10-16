@@ -19,6 +19,7 @@ import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
   normalizeUrlForRestore,
+  isSameOriginUrl,
   deriveScreenName,
   buildFigmaWorkflowMap,
 } from "./full-app-utils"
@@ -29,6 +30,7 @@ import {
   extractActionableInventory,
   createDummyFileBuffer,
   authenticateIfNeeded,
+  completeJourneyReturnAndLogout,
 } from "./full-app-engine"
 import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { tryLayaReflexPlan } from "./laya-reflex"
@@ -1049,60 +1051,71 @@ export async function executeFeatureWorkflowJob(
         }).catch(() => {})
 
         // STEP 8: Handle newly discovered paths or completion loops
-        const currentPath = normalizePath(page.url(), origin)
-        const isLogoutAction = /log\s*out|sign\s*out|log\s*off/i.test(step.targetName)
-        const existingNode = screenNodes.find((n) => n.path === currentPath)
-        if (!existingNode) {
-          const inv = await extractActionableInventory(page)
-          const newScreenId = `S${String(screenSeq++).padStart(3, "0")}`
-          const compLoc = getComponentLocationForPath(currentPath)
-          const newNode: AppScreenNode = {
-            id: newScreenId,
-            name: deriveScreenName(currentPath, inv.heading, inv.modalTitle),
-            url: page.url(),
-            path: currentPath,
-            componentLocation: compLoc,
-            sourceFile: compLoc,
-            screenshotUrl: shot || undefined,
-            actionableElements: inv.actionableElements,
-            forms: inv.forms,
-            isNewDiscovery: true,
-            discoveredAt: new Date().toISOString(),
-          }
-          screenNodes.push(newNode)
-          workflowPlan.screens = [...screenNodes]
+        const isExternalStepUrl = !isSameOriginUrl(page.url(), origin)
 
-          // Add forward transition
-          workflowPlan.transitions.push({
-            id: `TRANS-NEW-${screenNodes.length}`,
-            fromScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
-            toScreenId: newScreenId,
-            action: step.targetName,
-            actionType: "click",
-          })
-          // Add return journey transition
-          workflowPlan.transitions.push({
-            id: `TRANS-RET-${screenNodes.length}`,
-            fromScreenId: newScreenId,
-            toScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
-            action: "Return / Back ↩️",
-            actionType: "click",
-          })
-          job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
-          appendLog(job, "info", `✨ [DISCOVERY] Workflow navigated to relevant new screen: "${newNode.name}" (${newNode.id})`)
-        } else if (isLogoutAction || /login|sign[-_ ]?in/i.test(existingNode.path) || /login|sign[-_ ]?in/i.test(existingNode.name)) {
-          // If action was logout or landed back on Login screen, map workflow loop to complete cycle!
-          const fromId = step.screenId || screenNodes[screenNodes.length - 1]?.id || "S001"
-          if (fromId !== existingNode.id && !workflowPlan.transitions.some((t) => t.fromScreenId === fromId && t.toScreenId === existingNode.id && /log\s*out|sign\s*out/i.test(t.action))) {
+        if (isExternalStepUrl) {
+          appendLog(
+            job,
+            "info",
+            `↩️ [EXTERNAL NAVIGATION] Step "${step.targetName}" navigated to external domain (${page.url()}). Returning to main page without mapping external site.`
+          )
+          await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+        } else {
+          const currentPath = normalizePath(page.url(), origin)
+          const isLogoutAction = /log\s*out|sign\s*out|log\s*off/i.test(step.targetName)
+          const existingNode = screenNodes.find((n) => n.path === currentPath)
+          if (!existingNode) {
+            const inv = await extractActionableInventory(page)
+            const newScreenId = `S${String(screenSeq++).padStart(3, "0")}`
+            const compLoc = getComponentLocationForPath(currentPath)
+            const newNode: AppScreenNode = {
+              id: newScreenId,
+              name: deriveScreenName(currentPath, inv.heading, inv.modalTitle),
+              url: page.url(),
+              path: currentPath,
+              componentLocation: compLoc,
+              sourceFile: compLoc,
+              screenshotUrl: shot || undefined,
+              actionableElements: inv.actionableElements,
+              forms: inv.forms,
+              isNewDiscovery: true,
+              discoveredAt: new Date().toISOString(),
+            }
+            screenNodes.push(newNode)
+            workflowPlan.screens = [...screenNodes]
+
+            // Add forward transition
             workflowPlan.transitions.push({
-              id: `TRANS-LOOP-${Date.now()}`,
-              fromScreenId: fromId,
-              toScreenId: existingNode.id,
-              action: step.targetName || "Log out (Return to Login)",
-              actionType: "navigation",
+              id: `TRANS-NEW-${screenNodes.length}`,
+              fromScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
+              toScreenId: newScreenId,
+              action: step.targetName,
+              actionType: "click",
+            })
+            // Add return journey transition
+            workflowPlan.transitions.push({
+              id: `TRANS-RET-${screenNodes.length}`,
+              fromScreenId: newScreenId,
+              toScreenId: screenNodes[screenNodes.length - 2]?.id || "S001",
+              action: "Return / Back ↩️",
+              actionType: "click",
             })
             job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
-            appendLog(job, "success", `🔄 [WORKFLOW COMPLETE] Mapped "${fromId}" back to "${existingNode.name}" (${existingNode.id}) via "${step.targetName || 'Log out'}". Workflow completed!`)
+            appendLog(job, "info", `✨ [DISCOVERY] Workflow navigated to relevant new screen: "${newNode.name}" (${newNode.id})`)
+          } else if (isLogoutAction || /login|sign[-_ ]?in/i.test(existingNode.path) || /login|sign[-_ ]?in/i.test(existingNode.name)) {
+            // If action was logout or landed back on Login screen, map workflow loop to complete cycle!
+            const fromId = step.screenId || screenNodes[screenNodes.length - 1]?.id || "S001"
+            if (fromId !== existingNode.id && !workflowPlan.transitions.some((t) => t.fromScreenId === fromId && t.toScreenId === existingNode.id && /log\s*out|sign\s*out/i.test(t.action))) {
+              workflowPlan.transitions.push({
+                id: `TRANS-LOOP-${Date.now()}`,
+                fromScreenId: fromId,
+                toScreenId: existingNode.id,
+                action: step.targetName || "Log out (Return to Login)",
+                actionType: "navigation",
+              })
+              job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
+              appendLog(job, "success", `🔄 [WORKFLOW COMPLETE] Mapped "${fromId}" back to "${existingNode.name}" (${existingNode.id}) via "${step.targetName || 'Log out'}". Workflow completed!`)
+            }
           }
         }
 
@@ -1171,6 +1184,20 @@ export async function executeFeatureWorkflowJob(
     }
 
     job.edgeCasesTested = testedEdgeCases
+
+    // STEP 6.2: Return to Main Page & Complete Logout Journey if Logged In
+    try {
+      await completeJourneyReturnAndLogout(
+        job,
+        page,
+        job.targetUrl,
+        screenNodes,
+        workflowPlan.transitions,
+        params.credentials
+      )
+      job.flowGraph = buildFigmaWorkflowMap(workflowPlan)
+      saveJob(job)
+    } catch {}
 
     // STEP 6.5: UX Intelligence Evidence Collection & Scoring
     appendLog(job, "info", `Collecting UX Intelligence evidence across workflow steps...`)

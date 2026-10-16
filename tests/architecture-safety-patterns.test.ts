@@ -5,6 +5,7 @@ import path from "node:path"
 import { detectInteractionPatterns, generateCandidateTests, type PatternState } from "../lib/ai-automation/interaction-pattern-engine"
 import { classifyAction } from "../lib/ai-automation/safety-guard"
 import { expectFor } from "../lib/ai-automation/outcome-semantics"
+import { isSameOriginUrl, normalizePath } from "../lib/ai-automation/full-app-utils"
 
 const baseState: PatternState = {
   stateKey: "fixture-home",
@@ -125,4 +126,30 @@ test("chat input is delivered to an active session instead of starting a second 
   assert.match(pageSource, /action: "session_input"/)
   assert.match(statusSource, /action === "session_input"/)
   assert.match(pageSource, /session-event-\$\{event\.id\}/)
+})
+
+test("sub-pages and sub-domains are allowed, external domains (e.g. linkedin.com) return immediately, and journey ends by returning to main page + logout", () => {
+  assert.equal(isSameOriginUrl("https://mydomain.com/newpages", "https://mydomain.com"), true)
+  assert.equal(isSameOriginUrl("https://www.mydomain.com/contact", "https://mydomain.com"), true)
+  assert.equal(isSameOriginUrl("https://app.mydomain.com/newpages", "https://mydomain.com"), true)
+  assert.equal(isSameOriginUrl("https://portal.sub.mydomain.com/dashboard", "https://mydomain.com"), true)
+  assert.equal(isSameOriginUrl("https://www.linkedin.com/company/mydomain", "https://mydomain.com"), false)
+  assert.equal(isSameOriginUrl("https://mydomain.com.attacker.invalid/", "https://mydomain.com"), false)
+
+  assert.equal(normalizePath("https://mydomain.com/newpages", "https://mydomain.com"), "/newpages")
+  assert.equal(normalizePath("https://app.mydomain.com/newpages", "https://mydomain.com"), "/app.mydomain.com/newpages")
+
+  const engineSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/full-app-engine.ts"), "utf8")
+  const discoverySource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/full-app-discovery.ts"), "utf8")
+  const humanLoopSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/human-test-loop.ts"), "utf8")
+  const featureSource = fs.readFileSync(path.join(process.cwd(), "lib/ai-automation/feature-workflow-engine.ts"), "utf8")
+
+  assert.match(engineSource, /if \(!isSameOriginUrl\(currentUrl, origin\)\)/)
+  assert.match(engineSource, /await page\.goto\(preActionUrl/)
+  assert.match(engineSource, /await completeJourneyReturnAndLogout\(/)
+  assert.match(discoverySource, /export async function completeJourneyReturnAndLogout/)
+  assert.match(discoverySource, /if \(!isSameOriginUrl\(page\.url\(\), origin\)\)/)
+  assert.match(humanLoopSource, /if \(isExternalAfter\)/)
+  assert.match(featureSource, /if \(isExternalStepUrl\)/)
+  assert.match(featureSource, /await completeJourneyReturnAndLogout\(/)
 })

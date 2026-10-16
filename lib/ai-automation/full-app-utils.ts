@@ -45,9 +45,29 @@ export function isFullAppCommand(text: string): boolean {
   )
 }
 
+export function getRootDomain(hostname: string): string {
+  const clean = hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "")
+  if (!clean || clean === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(clean) || clean.includes(":")) {
+    return clean
+  }
+  const parts = clean.split(".")
+  if (parts.length <= 2) return clean
+  const lastTwo = parts.slice(-2).join(".")
+  if (/^(co|com|org|net|gov|edu|ac)\.[a-z]{2}$/.test(lastTwo) && parts.length >= 3) {
+    return parts.slice(-3).join(".")
+  }
+  return lastTwo
+}
+
 export function normalizePath(urlStr: string, origin: string): string {
   try {
     const u = new URL(urlStr)
+    const base = new URL(origin)
+    const stripWww = (h: string) => h.toLowerCase().replace(/^www\./, "")
+    if (stripWww(u.hostname) !== stripWww(base.hostname) && getRootDomain(u.hostname) === getRootDomain(base.hostname)) {
+      const subPath = u.pathname && u.pathname !== "/" ? u.pathname : ""
+      return `/${u.hostname.toLowerCase()}${subPath}`
+    }
     return u.pathname || "/"
   } catch {
     return urlStr.replace(origin, "").split("?")[0] || "/"
@@ -66,6 +86,29 @@ export function normalizeUrlForRestore(urlStr: string): string {
     return `${u.origin}${u.pathname}${u.search}`
   } catch {
     return urlStr.split("#")[0]
+  }
+}
+
+/**
+ * Returns true when candidateUrl belongs to the same root domain or subdomain
+ * as targetUrlOrOrigin (e.g. mydomain.com/newpages, app.mydomain.com), while
+ * returning false for external third-party domains (e.g. linkedin.com).
+ */
+export function isSameOriginUrl(candidateUrl: string, targetUrlOrOrigin: string): boolean {
+  try {
+    const base = new URL(targetUrlOrOrigin)
+    const cand = new URL(candidateUrl, base.origin)
+    if (cand.origin === base.origin) return true
+    if (!/^https?:$/.test(cand.protocol)) return false
+    const baseRoot = getRootDomain(base.hostname)
+    const candRoot = getRootDomain(cand.hostname)
+    if (!baseRoot || baseRoot !== candRoot) return false
+    if (baseRoot === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(baseRoot)) {
+      return cand.port === base.port
+    }
+    return true
+  } catch {
+    return false
   }
 }
 

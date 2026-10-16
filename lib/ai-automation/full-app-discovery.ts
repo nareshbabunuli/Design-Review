@@ -9,7 +9,7 @@ import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes, matchRouteForPath } from "./discover-routes"
 import { getJobSecrets } from "./job-secret-vault"
 import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
-import { normalizePath, deriveScreenName } from "./full-app-utils"
+import { normalizePath, normalizeUrlForRestore, deriveScreenName, isSameOriginUrl } from "./full-app-utils"
 import { humanClick, humanMouseMove } from "./human-actions"
 import { maskPageSecretsBeforeScreenshot, secretRedactor } from "./secure-credentials-manager"
 import { extractActionableInventory } from "./full-app-inventory"
@@ -568,6 +568,20 @@ export async function collectLinks(
       const list: Array<{ text: string; href: string }> = []
       const seen = new Set<string>()
 
+      const rootOf = (host: string) => {
+        const clean = host.toLowerCase().replace(/^www\./, "").replace(/\.$/, "")
+        if (!clean || clean === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(clean) || clean.includes(":")) return clean
+        const parts = clean.split(".")
+        if (parts.length <= 2) return clean
+        const lastTwo = parts.slice(-2).join(".")
+        if (/^(co|com|org|net|gov|edu|ac)\.[a-z]{2}$/.test(lastTwo) && parts.length >= 3) return parts.slice(-3).join(".")
+        return lastTwo
+      }
+      const baseHost = (() => {
+        try { return new URL(org).hostname } catch { return "" }
+      })()
+      const baseRoot = rootOf(baseHost)
+
       const tryAdd = (href?: string | null, rawText?: string | null) => {
         try {
           if (!href || typeof href !== "string") return
@@ -588,7 +602,11 @@ export async function collectLinks(
             full = org + "/" + full.replace(/^\/+/, "")
           }
 
-          if (!full.startsWith(org)) return
+          const parsed = new URL(full)
+          const sameAppDomain =
+            full.startsWith(org) ||
+            (Boolean(baseRoot) && baseRoot !== "localhost" && rootOf(parsed.hostname) === baseRoot)
+          if (!sameAppDomain) return
           if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) return
 
           const norm = full.replace(/\/+$/, "") || full
@@ -814,7 +832,7 @@ export async function collectLinksWithExpansion(
       if (!full || /^(javascript:|mailto:|tel:)/i.test(full)) continue
       if (full.startsWith("/")) full = origin + full
       else if (!/^https?:\/\//i.test(full)) full = origin + "/" + full.replace(/^\/+/, "")
-      if (!full.startsWith(origin)) continue
+      if (!isSameOriginUrl(full, origin)) continue
       if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) continue
       const norm = full.replace(/\/+$/, "") || full
       if (!seen.has(norm)) {
@@ -1049,6 +1067,17 @@ export async function discoverAndMapApp(
       await page.goto(cand.href, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
       await waitForSpaPageReady(page, 2000)
 
+      if (!isSameOriginUrl(page.url(), origin)) {
+        appendLog(
+          job,
+          "info",
+          `↩️ [EXTERNAL REDIRECT] "${cand.text || cand.href}" navigated to external domain (${secretRedactor.redact(page.url())}). Returning to ${baseUrl} without mapping external site.`
+        )
+        await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+        await waitForSpaPageReady(page, 1500)
+        continue
+      }
+
       // Check if redirected to login wall mid-crawl
       const pageHadLoginWall = await hasLoginWall(page)
       if (pageHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
@@ -1142,6 +1171,21 @@ export async function discoverAndMapApp(
         document.querySelectorAll(tabQuery).forEach((el: any) => {
           const style = window.getComputedStyle(el)
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+          const anchor = (el.tagName?.toLowerCase() === "a" ? el : el.closest?.("a")) as HTMLAnchorElement | null
+          if (anchor) {
+            const rawHref = anchor.getAttribute("href") || ""
+            if (rawHref && !rawHref.startsWith("#") && !rawHref.startsWith("javascript:")) {
+              try {
+                const resolved = new URL(rawHref, window.location.href)
+                const rootOf = (h: string) => {
+                  const c = h.toLowerCase().replace(/^www\./, "").replace(/\.$/, "")
+                  const p = c.split(".")
+                  return p.length <= 2 ? c : p.slice(-2).join(".")
+                }
+                if (resolved.origin !== window.location.origin && rootOf(resolved.hostname) !== rootOf(window.location.hostname)) return
+              } catch {}
+            }
+          }
           const txt = getAccessibleControlName(el, "").trim().replace(/\s+/g, " ")
           if (!txt || txt.length > 35 || /(logout|sign\s*out|log\s*off|delete)/i.test(txt)) return
           if (seenNames.has(txt.toLowerCase())) return
@@ -1159,6 +1203,7 @@ export async function discoverAndMapApp(
       for (const tab of spaTabs) {
         if (screens.length >= maxLimit || job.status !== "running") break
         try {
+          const beforeTabUrl = page.url()
           const clicked = await page.evaluate((target) => {
             const findEl = (sel?: string) => {
               if (!sel || !sel.trim()) return null
@@ -1177,6 +1222,17 @@ export async function discoverAndMapApp(
 
           if (clicked) {
             await new Promise((r) => setTimeout(r, 600))
+            if (!isSameOriginUrl(page.url(), origin)) {
+              appendLog(
+                job,
+                "info",
+                `↩️ [EXTERNAL NAVIGATION] "${tab.name}" navigated to external domain (${secretRedactor.redact(page.url())}). Returning to main page without mapping external site.`
+              )
+              const restoreUrl = isSameOriginUrl(beforeTabUrl, origin) ? beforeTabUrl : baseUrl
+              await page.goto(restoreUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+              await waitForSpaPageReady(page, 1500)
+              continue
+            }
             const inv = await extractActionableInventory(page)
             const screenHeading = inv.heading || tab.name
             if (!screens.some((s) => s.name.toLowerCase() === screenHeading.toLowerCase())) {
@@ -1255,6 +1311,7 @@ export async function discoverAndMapApp(
       for (const trig of modalTriggers) {
         if (screens.length >= maxLimit || job.status !== "running") break
         try {
+          const beforeModalUrl = page.url()
           const clicked = await page.evaluate((sel, name) => {
             const el = ((sel ? document.querySelector(sel) : null) ||
               Array.from(document.querySelectorAll('button, [role="button"]')).find((b: any) =>
@@ -1267,6 +1324,12 @@ export async function discoverAndMapApp(
 
           if (clicked) {
             await new Promise((r) => setTimeout(r, 450))
+            if (!isSameOriginUrl(page.url(), origin)) {
+              const restoreUrl = isSameOriginUrl(beforeModalUrl, origin) ? beforeModalUrl : baseUrl
+              await page.goto(restoreUrl, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => null)
+              await waitForSpaPageReady(page, 1500)
+              continue
+            }
             const modalFound = await page.evaluate(() => {
               const dlg = document.querySelector('[role="dialog"], dialog[open], [class*="modal" i], [class*="drawer" i]')
               return Boolean(dlg)
@@ -1321,8 +1384,219 @@ export async function discoverAndMapApp(
     }
   }
 
-  // Return to the start screen before test planning
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+  // Return to the main start screen before test planning
+  const mainStartScreen = screens.find((s) => s.id === startId)
+  await page.goto(mainStartScreen?.url || baseUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
 
   return { screens, transitions }
+}
+
+/**
+ * Finalizes the application journey after sub-pages/sub-domains are tested:
+ * 1. Navigates back to the main page so the session verifies the app journey is complete.
+ * 2. If logged in (or a logout control is present on the main page / user menu),
+ *    locates and clicks the Logout / Sign out button to complete the session lifecycle.
+ */
+export async function completeJourneyReturnAndLogout(
+  job: AutomationJob,
+  page: Page,
+  targetUrl: string,
+  screens: AppScreenNode[],
+  transitions: AppWorkflowTransition[],
+  credentials?: LoginCreds
+): Promise<{
+  returnedToMain: boolean
+  loggedOut: boolean
+  logoutLabel?: string
+  mainScreenId: string
+  finalUrl: string
+  screenshotUrl?: string
+}> {
+  const isAuthenticated =
+    job.authState === "logged_in" || Boolean(credentials?.username || credentials?.password)
+  const mainScreen =
+    (isAuthenticated ? screens.find((s) => !s.isLoginWall) : undefined) ||
+    screens[0]
+  const mainScreenId = mainScreen?.id || "S001"
+  const mainPageUrl =
+    mainScreen?.url && isSameOriginUrl(mainScreen.url, targetUrl)
+      ? mainScreen.url
+      : targetUrl
+
+  const currentBeforeReturn = page.url()
+  const lastScreen =
+    screens.find((s) => normalizeUrlForRestore(s.url) === normalizeUrlForRestore(currentBeforeReturn)) ||
+    screens[screens.length - 1] ||
+    mainScreen
+
+  let returnedToMain = false
+  if (normalizeUrlForRestore(currentBeforeReturn) !== normalizeUrlForRestore(mainPageUrl)) {
+    appendLog(
+      job,
+      "info",
+      `🏠 [JOURNEY COMPLETION] Returning from "${lastScreen?.name || currentBeforeReturn}" back to main page (${secretRedactor.redact(mainPageUrl)})...`
+    )
+    await page.goto(mainPageUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+    await waitForSpaPageReady(page, 2000).catch(() => {})
+    returnedToMain = true
+    job.currentUrl = page.url()
+    await publishLiveFrame(job, page).catch(() => {})
+
+    if (lastScreen && lastScreen.id !== mainScreenId) {
+      const hasReturnEdge = transitions.some(
+        (t) => t.fromScreenId === lastScreen.id && t.toScreenId === mainScreenId && /return|main page|back/i.test(t.action)
+      )
+      if (!hasReturnEdge) {
+        transitions.push({
+          id: `tr-return-main-${transitions.length + 1}`,
+          fromScreenId: lastScreen.id,
+          toScreenId: mainScreenId,
+          action: "Return to Main Page ↩️ (Journey Complete)",
+          actionType: "navigation",
+        })
+      }
+    }
+  } else {
+    returnedToMain = true
+    appendLog(
+      job,
+      "info",
+      `🏠 [JOURNEY COMPLETION] Main page verified (${secretRedactor.redact(page.url())}).`
+    )
+  }
+
+  // Helper to locate and click a visible Logout / Sign Out control on the page
+  const tryClickLogoutOnPage = async (): Promise<string | null> => {
+    return page
+      .evaluate(() => {
+        const isVisible = (el: HTMLElement) => {
+          const r = el.getBoundingClientRect()
+          const s = window.getComputedStyle(el)
+          return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0"
+        }
+        const candidates = Array.from(
+          document.querySelectorAll(
+            'button, a, [role="button"], [role="menuitem"], input[type="button"], input[type="submit"], [data-action], [data-testid]'
+          )
+        ) as HTMLElement[]
+
+        for (const el of candidates) {
+          if (!isVisible(el)) continue
+          const label = (
+            el.textContent ||
+            (el as HTMLInputElement).value ||
+            el.getAttribute("aria-label") ||
+            el.getAttribute("title") ||
+            ""
+          )
+            .trim()
+            .replace(/\s+/g, " ")
+          const href = el.getAttribute("href") || ""
+          const testId = el.getAttribute("data-testid") || ""
+          const actionAttr = el.getAttribute("data-action") || ""
+          const combined = `${label} ${href} ${testId} ${actionAttr}`
+          if (/\b(log\s*out|sign\s*out|log\s*off)\b/i.test(combined) || /(logout|signout|sign-out)/i.test(href + " " + testId + " " + actionAttr)) {
+            el.click()
+            return label.slice(0, 40) || "Log Out"
+          }
+        }
+        return null
+      })
+      .catch(() => null)
+  }
+
+  let loggedOut = false
+  let logoutLabel: string | undefined
+  let screenshotUrl: string | undefined
+
+  const onLoginWallNow = await hasLoginWall(page).catch(() => false)
+  if (!onLoginWallNow) {
+    let clickedLabel = await tryClickLogoutOnPage()
+
+    // If not directly visible and the session is logged in, try opening user/profile/account menu first
+    if (!clickedLabel && isAuthenticated) {
+      const openedMenu = await page
+        .evaluate(() => {
+          const isVisible = (el: HTMLElement) => {
+            const r = el.getBoundingClientRect()
+            const s = window.getComputedStyle(el)
+            return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden"
+          }
+          const triggers = Array.from(
+            document.querySelectorAll(
+              '[aria-label*="profile" i], [aria-label*="account" i], [aria-label*="user" i], [aria-label*="menu" i], [data-testid*="user" i], [data-testid*="profile" i], [data-testid*="account" i], [aria-haspopup="menu"], header button, nav button'
+            )
+          ) as HTMLElement[]
+          for (const trig of triggers.slice(0, 6)) {
+            if (!isVisible(trig)) continue
+            trig.click()
+            return true
+          }
+          return false
+        })
+        .catch(() => false)
+
+      if (openedMenu) {
+        await new Promise((r) => setTimeout(r, 350))
+        clickedLabel = await tryClickLogoutOnPage()
+      }
+    }
+
+    if (clickedLabel) {
+      loggedOut = true
+      logoutLabel = clickedLabel
+      appendLog(
+        job,
+        "info",
+        `🚪 [JOURNEY COMPLETION] Found logout control "${clickedLabel}" on main page — clicking to complete authenticated journey...`
+      )
+      await new Promise((r) => setTimeout(r, 1000))
+      await waitForSpaPageReady(page, 2000).catch(() => {})
+      try {
+        const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 65 })
+        screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+        job.currentScreenshotUrl = screenshotUrl
+      } catch {}
+      job.currentUrl = page.url()
+      await publishLiveFrame(job, page).catch(() => {})
+
+      const loginScreen =
+        screens.find((s) => s.isLoginWall || /login|sign\s*in/i.test(s.name) || /login|sign[-_ ]?in/i.test(s.path)) ||
+        screens[0]
+      if (loginScreen) {
+        const hasLogoutEdge = transitions.some(
+          (t) => t.fromScreenId === mainScreenId && t.toScreenId === loginScreen.id && /log\s*out|sign\s*out/i.test(t.action)
+        )
+        if (!hasLogoutEdge) {
+          transitions.push({
+            id: `tr-journey-logout-${transitions.length + 1}`,
+            fromScreenId: mainScreenId,
+            toScreenId: loginScreen.id,
+            action: `${clickedLabel} (Journey Complete)`,
+            actionType: "navigation",
+          })
+        }
+      }
+      appendLog(
+        job,
+        "success",
+        `🔄 [JOURNEY COMPLETE] Returned to main page and logged out via "${clickedLabel}" -> ${secretRedactor.redact(page.url())}.`
+      )
+    } else if (isAuthenticated) {
+      appendLog(
+        job,
+        "info",
+        `🏠 [JOURNEY COMPLETE] Returned to main page (${secretRedactor.redact(page.url())}); no visible logout button found.`
+      )
+    }
+  }
+
+  return {
+    returnedToMain,
+    loggedOut,
+    logoutLabel,
+    mainScreenId,
+    finalUrl: page.url(),
+    screenshotUrl,
+  }
 }

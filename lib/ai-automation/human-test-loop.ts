@@ -23,6 +23,7 @@ import { appendLog, saveJob } from "./job-store"
 import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObserver, drainDomNavigationEvents } from "./dom-first-discovery"
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
 import { logActionExecution } from "./stagehand-config"
+import { isSameOriginUrl } from "./full-app-utils"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -1085,26 +1086,34 @@ export async function runHumanLikeDecisionLoop(
       observation = await executeCandidate(page, selected, job)
       // Re-scan after successful safe interactions to discover controls revealed
       // by tabs, dialogs, dropdowns, expand/collapse and client-side UI changes.
+      // If the interaction navigated to an external domain (e.g. linkedin.com),
+      // return immediately to the app page without indexing the external site.
       if (observation.ok) {
         const afterUrl = page.url()
-        const refreshed = await inspectPageDom(page).catch(() => null)
-        if (refreshed) {
-          recordDomInventory(job, refreshed)
-          const destinationGraphNodeId = recordDomGraphNode(job, refreshed)
-          if (destinationGraphNodeId !== sourceGraphNodeId) {
-            recordDomGraphEdge(job, {
-              from: sourceGraphNodeId,
-              to: destinationGraphNodeId,
-              action: selected.title,
-              selector: selected.target?.selector,
-              transition: afterUrl !== url ? "navigation" : "same_url_state",
-              status: "passed",
-              evidence: "Fresh DOM inventory after safe interaction. URL: " + url + " → " + afterUrl + "; newly visible controls remain untested until selected.",
-            })
-          }
-          if (afterUrl !== url) appendLog(job, "info", "[DOMDiscovery] Detected client-side navigation/state URL change: " + url + " → " + afterUrl + ".")
+        const isExternalAfter = !isSameOriginUrl(afterUrl, job.targetUrl || url)
+        if (isExternalAfter) {
+          appendLog(job, "info", `[DOMDiscovery] External navigation detected (${afterUrl}). Returning to ${url} without indexing external domain.`)
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
         } else {
-          appendLog(job, "warn", "[DOMDiscovery] Post-interaction DOM rescan failed; newly revealed controls may remain undiscovered.")
+          const refreshed = await inspectPageDom(page).catch(() => null)
+          if (refreshed) {
+            recordDomInventory(job, refreshed)
+            const destinationGraphNodeId = recordDomGraphNode(job, refreshed)
+            if (destinationGraphNodeId !== sourceGraphNodeId) {
+              recordDomGraphEdge(job, {
+                from: sourceGraphNodeId,
+                to: destinationGraphNodeId,
+                action: selected.title,
+                selector: selected.target?.selector,
+                transition: afterUrl !== url ? "navigation" : "same_url_state",
+                status: "passed",
+                evidence: "Fresh DOM inventory after safe interaction. URL: " + url + " → " + afterUrl + "; newly visible controls remain untested until selected.",
+              })
+            }
+            if (afterUrl !== url) appendLog(job, "info", "[DOMDiscovery] Detected client-side navigation/state URL change: " + url + " → " + afterUrl + ".")
+          } else {
+            appendLog(job, "warn", "[DOMDiscovery] Post-interaction DOM rescan failed; newly revealed controls may remain undiscovered.")
+          }
         }
       }
     }
