@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser } from "@/lib/auth/require-project-access"
 import {
   decryptConnection,
+  encryptConnection,
+  oauthCookieOptions,
   providerBaseUrl,
+  refreshRepositoryConnection,
   tokenCookieName,
+  type RepositoryConnection,
 } from "@/lib/integrations/repository-connections"
 
 export const dynamic = "force-dynamic"
 
-type GitLabConnection = { accessToken: string; userId: string; username?: string; connectedAt: number }
+type GitLabConnection = RepositoryConnection
 
 async function gitlabRequest(url: string, accessToken: string, init?: RequestInit) {
   return fetch(url, {
@@ -61,13 +65,18 @@ export async function POST(request: NextRequest) {
   }
 
   const baseUrl = providerBaseUrl("gitlab")
+  let activeConnection = connection
+  let refreshedCookieValue: string | null = null
   try {
+    const refreshed = await refreshRepositoryConnection("gitlab", connection)
+    activeConnection = refreshed.connection
+    if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
     // Resolve the user's actual available privilege IDs and deliberately exclude
     // GitLab-write and git-push privileges. The agent may prepare changes in its
     // isolated workspace, but it cannot commit or push them to the project.
     const privilegesResponse = await gitlabRequest(
       `${baseUrl}/api/v4/ai/duo_workflows/workflows/agent_privileges`,
-      connection.accessToken
+      activeConnection.accessToken
     )
     if (!privilegesResponse.ok) {
       const detail = privilegesResponse.status === 403
@@ -133,7 +142,7 @@ export async function POST(request: NextRequest) {
       return errorResponse(502, message.trim())
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       workflow: {
         id: String(data.id),
@@ -151,6 +160,8 @@ export async function POST(request: NextRequest) {
         requiresHumanReview: true,
       },
     }, { status: 201 })
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
   } catch (error) {
     console.error("Failed to start GitLab Duo workflow", error)
     return errorResponse(502, "The GitLab Duo request failed unexpectedly. Check your connection and try again.")
@@ -170,7 +181,12 @@ export async function GET(request: NextRequest) {
   if (!/^\d+$/.test(workflowId)) return errorResponse(400, "A valid workflowId is required.")
 
   const baseUrl = providerBaseUrl("gitlab")
+  let activeConnection = connection
+  let refreshedCookieValue: string | null = null
   try {
+    const refreshed = await refreshRepositoryConnection("gitlab", connection)
+    activeConnection = refreshed.connection
+    if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
     const [flowResponse, traceResponse] = await Promise.all([
       gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}`, connection.accessToken),
       gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}/trace.jsonl`, connection.accessToken),
@@ -193,7 +209,7 @@ export async function GET(request: NextRequest) {
         return []
       }
     })
-    return NextResponse.json({
+    const response = NextResponse.json({
       workflow: {
         id: String(flow.id),
         status: flow.status || "unknown",
@@ -203,6 +219,8 @@ export async function GET(request: NextRequest) {
       },
       messages,
     })
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
   } catch (error) {
     console.error("Failed to retrieve GitLab Duo workflow", error)
     return errorResponse(502, "Could not retrieve the Duo session. Retry in a moment.")
