@@ -291,7 +291,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
             ))}
           </div>
           <p className="border-t border-slate-800 bg-slate-900/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
-            Human review is required. No changes are applied to the connected repository and no push is performed by this workflow. Proposed diffs must be reviewed and applied through the explicit approval step.
+            Human review is required. No changes are applied to the connected repository and no push is performed by this workflow. Review the proposed changes below and explicitly approve each fix or the remaining batch before applying it.
           </p>
         </div>
       )}
