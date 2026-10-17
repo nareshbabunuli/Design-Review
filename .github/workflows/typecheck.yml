@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - action-ledger-development
+      - feature/duo-agent-opencv-integration
   pull_request:
     branches:
       - action-ledger-development
