@@ -345,15 +345,22 @@ export default function FullAppTestingView({
     setPlanChatInput("")
     setPlanChatBusy(true)
     try {
+      const asksForRediscovery = /\\b(missing|missed|forgotten|not mapped|not in the map|not discovered)\\b.{0,100}\\b(screen|page|tab|dialog|modal|state|notification|settings|profile|security)\\b|\\b(screen|page|tab|dialog|modal|state)\\b.{0,100}\\b(missing|missed|not mapped|not discovered)\\b/i.test(instruction)
+      const action = asksForRediscovery ? "rediscover_missing_screen" : "edit_test_plan"
       const response = await fetch("/api/ai-automation/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, action: "edit_test_plan", instruction }),
+        body: JSON.stringify({ jobId: job.id, action, instruction }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || "Could not update the plan")
+      if (!response.ok) throw new Error(data.error || (asksForRediscovery ? "Could not rediscover the missing screen" : "Could not update the plan"))
       if (data.job) onJobUpdate?.(data.job)
-      setPlanChatMessages((messages) => [...messages, { role: "assistant", text: data.message || "Plan updated. Review the changes before approving." }])
+      setPlanChatMessages((messages) => [...messages, {
+        role: "assistant",
+        text: data.message || (asksForRediscovery
+          ? "I’ll revisit that part of the app and merge verified missing screens into the map."
+          : "Plan updated. Review the changes before approving."),
+      }])
     } catch (error) {
       setPlanChatMessages((messages) => [...messages, { role: "assistant", text: error instanceof Error ? error.message : "Could not update the plan." }])
     } finally {
