@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
+import { requireUser } from "@/lib/auth/require-project-access"
 import {
   getProviderConfig,
   oauthCookieOptions,
@@ -11,6 +12,9 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ provider: string }> }
 ) {
+  const user = await requireUser().catch(() => null)
+  if (!user) return NextResponse.json({ error: "Sign in to Open Design AI before connecting a repository account." }, { status: 401 })
+
   const { provider: rawProvider } = await context.params
   if (rawProvider !== "github" && rawProvider !== "gitlab") {
     return NextResponse.json({ error: "Unsupported repository provider." }, { status: 404 })
@@ -38,6 +42,6 @@ export async function GET(
   }
 
   const response = NextResponse.redirect(authorize)
-  response.cookies.set(stateCookieName(provider), state, oauthCookieOptions(10 * 60))
+  response.cookies.set(stateCookieName(provider), `${state}.${user.id}`, oauthCookieOptions(10 * 60))
   return response
 }
