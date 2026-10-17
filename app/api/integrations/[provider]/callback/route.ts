@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireUser } from "@/lib/auth/require-project-access"
 import {
   encryptConnection,
   getProviderConfig,
@@ -16,13 +17,16 @@ export async function GET(request: NextRequest, context: OAuthParams) {
     return NextResponse.json({ error: "Unsupported repository provider." }, { status: 404 })
   }
   const provider = rawProvider as RepositoryProvider
+  const user = await requireUser().catch(() => null)
   const origin = request.nextUrl.origin
   const fail = (reason: string) =>
     NextResponse.redirect(new URL(`/?settings=integrations&connection_error=${encodeURIComponent(reason)}`, origin))
 
-  const expectedState = request.cookies.get(stateCookieName(provider))?.value
+  const expectedStateCookie = request.cookies.get(stateCookieName(provider))?.value || ""
+  const [expectedState, initiatingUserId] = expectedStateCookie.split(".")
   const receivedState = request.nextUrl.searchParams.get("state")
-  if (!expectedState || !receivedState || expectedState !== receivedState) {
+  if (!user) return fail("Your Open Design AI session expired. Sign in and connect again.")
+  if (!expectedState || !receivedState || expectedState !== receivedState || initiatingUserId !== user.id) {
     return fail("OAuth state validation failed. Please try connecting again.")
   }
   if (request.nextUrl.searchParams.get("error")) {
@@ -81,6 +85,7 @@ export async function GET(request: NextRequest, context: OAuthParams) {
       accessToken,
       username: String(profile.login || profile.username || profile.name || ""),
       connectedAt: Date.now(),
+      userId: user.id,
     })
     const response = NextResponse.redirect(new URL("/?settings=integrations&connection=connected", origin))
     response.cookies.set(tokenCookieName(provider), cookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
