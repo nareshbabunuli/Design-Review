@@ -27,8 +27,14 @@ Do not expose these values with a `NEXT_PUBLIC_` prefix or commit real secrets t
 
 Users can disconnect from Settings. They can also revoke the app from GitHub or GitLab's own authorized-app settings.
 
-## Current implementation boundary
+## Duo review and approval workflow
 
-The OAuth flow, encrypted HTTP-only token cookies, repository listing, and disconnect endpoints are implemented. The repository list currently fetches the first 100 accessible projects per provider. Tokens are encrypted using AES-256-GCM and kept out of browser JavaScript, but this cookie-based storage is an MVP choice; for a multi-device or team deployment, migrate encrypted credentials to a server-side database with per-user ownership, expiry, rotation, and audit logging.
+After full-app testing completes, the report view can launch a GitLab Duo Agent Platform flow for a selected GitLab project. The flow is called through GitLab's documented Flows API at `/api/v4/ai/duo_workflows/workflows`. It receives the test findings and is deliberately limited to `read_only_gitlab`, `read_write_files`, and `run_commands` privileges; GitLab-write and git-push privileges are excluded. See the [GitLab Flows API documentation](https://docs.gitlab.com/api/duo_agent_platform_flows/).
 
-**GitLab Duo agent execution is not implied by connecting GitLab.** Duo Agent Platform availability and its supported programmatic interface must be verified for the actual GitLab account. Do not send code to an undocumented endpoint. The next stage is a provider-specific agent adapter that returns proposed diffs for review, applies nothing until approval, reruns tests, and requires a separate explicit approval before every push.
+The panel reads the workflow trace and looks for structured proposals with complete replacement content. A user must explicitly approve an individual proposal or the remaining batch. Approved content is committed to a dedicated `open-design-ai/duo-fixes-<workflow-id>` branch; the default branch is never modified by this flow.
+
+GitHub and GitLab OAuth connections and repository listing are implemented. The current Duo workflow is GitLab-project based: the GitHub connector is not yet wired into the Duo execution/apply path. The workflow requires GitLab Duo Agent Platform access, API availability, and appropriate project configuration; an OAuth connection alone does not guarantee that GitLab will permit flow execution.
+
+## Token storage note
+
+Tokens are encrypted using AES-256-GCM in secure, HTTP-only cookies bound to the signed-in Open Design AI user. This is an MVP storage choice; for a multi-device or team deployment, migrate encrypted credentials to a server-side database with per-user ownership, expiry, rotation, and audit logging.
