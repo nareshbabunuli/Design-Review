@@ -37,14 +37,23 @@ export async function GET(request: NextRequest, context: OAuthParams) {
   const callbackUrl = new URL(config.callbackPath, origin).toString()
 
   try {
-    const body = provider === "github"
-      ? { client_id: config.clientId, client_secret: config.clientSecret, code, redirect_uri: callbackUrl }
-      : { client_id: config.clientId, client_secret: config.clientSecret, code, grant_type: "authorization_code", redirect_uri: callbackUrl }
+    const tokenBody = provider === "github"
+      ? JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, code, redirect_uri: callbackUrl })
+      : new URLSearchParams({
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
+          code,
+          grant_type: "authorization_code",
+          redirect_uri: callbackUrl,
+        }).toString()
 
     const tokenResponse = await fetch(config.tokenUrl, {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": provider === "github" ? "application/json" : "application/x-www-form-urlencoded",
+      },
+      body: tokenBody,
       cache: "no-store",
     })
     const tokenData = await tokenResponse.json()
