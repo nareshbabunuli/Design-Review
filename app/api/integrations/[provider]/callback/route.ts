@@ -86,6 +86,10 @@ export async function GET(request: NextRequest, context: OAuthParams) {
       username: String(profile.login || profile.username || profile.name || ""),
       connectedAt: Date.now(),
       userId: user.id,
+      ...(provider === "gitlab" ? {
+        refreshToken: typeof tokenData.refresh_token === "string" ? tokenData.refresh_token : undefined,
+        expiresAt: Date.now() + (typeof tokenData.expires_in === "number" ? tokenData.expires_in : 7200) * 1000,
+      } : {}),
     })
     const response = NextResponse.redirect(new URL("/?settings=integrations&connection=connected", origin))
     response.cookies.set(tokenCookieName(provider), cookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
