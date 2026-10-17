@@ -26,12 +26,12 @@ import {
 import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
 import { applyAllScoringChecks } from "./ux-scoring-checks"
 import { calculateOverallUXScore } from "./ux-scoring-rubric"
+import { extractActionableInventory } from "./full-app-inventory"
+import { createDummyFileBuffer } from "./test-file-manager"
 import {
-  extractActionableInventory,
-  createDummyFileBuffer,
   authenticateIfNeeded,
   completeJourneyReturnAndLogout,
-} from "./full-app-engine"
+} from "./full-app-discovery"
 import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
