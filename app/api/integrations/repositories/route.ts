@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireUser } from "@/lib/auth/require-project-access"
 import {
   decryptConnection,
   tokenCookieName,
@@ -9,15 +10,17 @@ import {
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
+  const user = await requireUser().catch(() => null)
+  if (!user) return NextResponse.json({ connected: false, repositories: [], error: "Sign in to Open Design AI to access connected repositories." }, { status: 401 })
   const rawProvider = request.nextUrl.searchParams.get("provider")
   if (rawProvider !== "github" && rawProvider !== "gitlab") {
     return NextResponse.json({ error: "Choose github or gitlab as the provider." }, { status: 400 })
   }
   const provider = rawProvider as RepositoryProvider
-  const connection = decryptConnection<{ accessToken: string; username?: string; connectedAt: number }>(
+  const connection = decryptConnection<{ accessToken: string; username?: string; connectedAt: number; userId: string }>(
     request.cookies.get(tokenCookieName(provider))?.value
   )
-  if (!connection) {
+  if (!connection || connection.userId !== user.id) {
     return NextResponse.json({ connected: false, repositories: [], error: "This provider is not connected. Reconnect it in Settings." }, { status: 401 })
   }
 
