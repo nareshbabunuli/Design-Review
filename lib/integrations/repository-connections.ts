@@ -31,7 +31,7 @@ export function stateCookieName(provider: RepositoryProvider) {
   return STATE_COOKIE[provider]
 }
 
-export function encryptConnection(value: { accessToken: string; username?: string; connectedAt: number }) {
+export function encryptConnection(value: { accessToken: string; username?: string; connectedAt: number; userId: string }) {
   const iv = randomBytes(12)
   const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv)
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()])
