@@ -960,7 +960,7 @@ export async function discoverAndMapApp(
         return Array.from(document.querySelectorAll(selector)).slice(0, 150).map((element, index) => {
           const rect = element.getBoundingClientRect()
           const node = element as HTMLElement
-          const label = (node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || node.getAttribute("placeholder") || node.tagName).trim().replace(/\\s+/g, " ").slice(0, 80)
+          const label = (node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || node.getAttribute("placeholder") || node.tagName).trim().replace(/\s+/g, " ").slice(0, 80)
           const stableId = node.id ? `#${node.id}` : node.getAttribute("data-testid") ? `[data-testid="${node.getAttribute("data-testid")}"]` : `${node.tagName.toLowerCase()}[visual-index="${index}"]`
           return {
             selector: stableId,
@@ -1000,7 +1000,7 @@ export async function discoverAndMapApp(
     let layaInfo: { pageType?: string; hasBlockingIssue?: boolean; ready?: boolean } = {}
     try {
       const pageText = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => "")
-      const layaContext = visualSummary ? `${pageText}\\n\\nVisual prominence: ${visualSummary}` : pageText
+      const layaContext = visualSummary ? `${pageText}\n\nVisual prominence: ${visualSummary}` : pageText
       const layaResult = await classifyPage(layaContext, page.url(), layaUrl, layaShot)
       if (layaResult) {
         layaInfo = layaResult
