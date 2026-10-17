@@ -26,17 +26,102 @@ import {
 import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
 import { applyAllScoringChecks } from "./ux-scoring-checks"
 import { calculateOverallUXScore } from "./ux-scoring-rubric"
+import { extractActionableInventory } from "./full-app-inventory"
+import { createDummyFileBuffer } from "./test-file-manager"
 import {
-  extractActionableInventory,
-  createDummyFileBuffer,
   authenticateIfNeeded,
   completeJourneyReturnAndLogout,
-} from "./full-app-engine"
+} from "./full-app-discovery"
 import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
 import { SessionVideoRecorder } from "./visual-recorder"
+
+/**
+ * Shared DOM target matcher used for both cursor positioning and fallback clicks.
+ * Keep the matching rules in one place so these two execution paths cannot drift.
+ */
+async function resolveFeatureWorkflowTarget(
+  page: Page,
+  targetText: string,
+  isClickAction: boolean,
+  operation: "coordinates" | "click"
+): Promise<{ x: number; y: number } | null | boolean> {
+  return page.evaluate((txt, isClick, mode) => {
+    let target: HTMLElement | null = null
+
+    if (isClick) {
+      const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
+      const isSettingsTarget = /setting|gear|cog|pref/i.test(txt)
+      const tabNumMatch = txt.match(/tab\s*(\d+)/i)
+      const targetTabIdx = tabNumMatch ? parseInt(tabNumMatch[1], 10) - 1 : null
+
+      const clickables = Array.from(
+        document.querySelectorAll(
+          'button, a, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [data-testid], [aria-label], nav *, [class*="tab" i], [class*="nav" i], [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => {
+        const rect = (element as HTMLElement).getBoundingClientRect()
+        const style = getComputedStyle(element)
+        return rect.width > 4 && rect.height > 4 && style.visibility !== "hidden" && style.display !== "none"
+      }) as HTMLElement[]
+
+      if (targetTabIdx !== null) {
+        const tabs = clickables.filter((element) => {
+          const role = element.getAttribute("role")
+          const className = (element.className || "").toString().toLowerCase()
+          return role === "tab" || className.includes("tab") || className.includes("bottomnav")
+        })
+        if (tabs[targetTabIdx]) target = tabs[targetTabIdx]
+      }
+
+      if (!target && isSettingsTarget) {
+        target = clickables.find((element) => {
+          const aria = (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("data-testid") || "").toLowerCase()
+          const svg = element.querySelector("svg")
+          const svgAria = svg
+            ? (svg.getAttribute("aria-label") || svg.getAttribute("data-icon") || svg.querySelector("title")?.textContent || svg.className || "").toString().toLowerCase()
+            : ""
+          const text = (element.textContent || "").toLowerCase()
+          return /setting|gear|cog|pref/i.test(aria) || /setting|gear|cog|pref/i.test(svgAria) || /setting|gear|cog|pref/i.test(text)
+        }) || null
+      }
+
+      if (!target) {
+        target = clickables.find((element) => {
+          const aria = (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("data-testid") || "").toLowerCase().trim()
+          const text = (element.textContent || (element as any).value || "").toLowerCase().trim()
+          if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(text)) return false
+          return (aria && (txt.includes(aria) || aria.includes(txt.slice(0, 15)))) ||
+                 (text && (txt.includes(text) || text.includes(txt.slice(0, 15))))
+        }) || null
+      }
+
+      if (!target && !isExplicitLogout) {
+        target = clickables.find((element) => {
+          const text = (element.textContent || (element as any).value || "").toLowerCase().trim()
+          if (/(log\s*out|sign\s*out|log\s*off)/i.test(text)) return false
+          return /create|add|new|save|submit|register|sign up|continue|next|apply/i.test(text)
+        }) || null
+      }
+    } else {
+      target = (document.querySelector('input:not([type="hidden"]), textarea') as HTMLElement) || null
+    }
+
+    if (mode === "coordinates") {
+      if (!target) return null
+      const rect = target.getBoundingClientRect()
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+    }
+
+    if (target && target.offsetParent !== null) {
+      target.click()
+      return true
+    }
+    return false
+  }, targetText, isClickAction, operation)
+}
 
 /**
  * Checks if a user prompt is requesting Feature / Workflow Testing
@@ -795,69 +880,12 @@ export async function executeFeatureWorkflowJob(
         // Locate coordinates of action target for visual cursor
         let stepCoords: { x: number; y: number } | null = null
         try {
-          stepCoords = await page.evaluate((txt, isClick) => {
-            let el: HTMLElement | null = null
-            if (isClick) {
-              const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
-              const isSettingsTarget = /setting|gear|cog|pref/i.test(txt)
-              const tabNumMatch = txt.match(/tab\s*(\d+)/i)
-              const targetTabIdx = tabNumMatch ? parseInt(tabNumMatch[1], 10) - 1 : null
-
-              const clickables = Array.from(
-                document.querySelectorAll(
-                  'button, a, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [data-testid], [aria-label], nav *, [class*="tab" i], [class*="nav" i], [tabindex]:not([tabindex="-1"])'
-                )
-              ).filter((e) => {
-                const r = (e as HTMLElement).getBoundingClientRect()
-                const style = getComputedStyle(e)
-                return r.width > 4 && r.height > 4 && style.visibility !== "hidden" && style.display !== "none"
-              }) as HTMLElement[]
-
-              if (targetTabIdx !== null) {
-                const tabs = clickables.filter((c) => {
-                  const role = c.getAttribute("role")
-                  const cls = (c.className || "").toString().toLowerCase()
-                  return role === "tab" || cls.includes("tab") || cls.includes("bottomnav")
-                })
-                if (tabs[targetTabIdx]) el = tabs[targetTabIdx]
-              }
-
-              if (!el && isSettingsTarget) {
-                el = clickables.find((c) => {
-                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase()
-                  const svg = c.querySelector("svg")
-                  const svgAria = svg ? (svg.getAttribute("aria-label") || svg.getAttribute("data-icon") || svg.querySelector("title")?.textContent || svg.className || "").toString().toLowerCase() : ""
-                  const cText = (c.textContent || "").toLowerCase()
-                  return /setting|gear|cog|pref/i.test(aria) || /setting|gear|cog|pref/i.test(svgAria) || /setting|gear|cog|pref/i.test(cText)
-                }) || null
-              }
-
-              if (!el) {
-                el = clickables.find((c) => {
-                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase().trim()
-                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                  if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-                  return (aria && (txt.includes(aria) || aria.includes(txt.slice(0, 15)))) ||
-                         (cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15))))
-                }) || null
-              }
-
-              if (!el && !isExplicitLogout) {
-                el = clickables.find((c) => {
-                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                  if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-                  return /create|add|new|save|submit|register|sign up|continue|next|apply/i.test(cText)
-                }) || null
-              }
-            } else {
-              el = (document.querySelector('input:not([type="hidden"]), textarea') as HTMLElement) || null
-            }
-            if (el) {
-              const r = el.getBoundingClientRect()
-              return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-            }
-            return null
-          }, targetText, step.actionType === "click")
+          stepCoords = await resolveFeatureWorkflowTarget(
+            page,
+            targetText,
+            step.actionType === "click",
+            "coordinates"
+          ) as { x: number; y: number } | null
         } catch {}
 
         const actType = step.actionType === "fill" ? "type" : step.actionType === "click" ? "click" : "inspect"
@@ -935,71 +963,7 @@ export async function executeFeatureWorkflowJob(
 
           // B. DOM Accessible & Icon Matcher
           if (!actionSuccess) {
-            actionSuccess = await page.evaluate((txt) => {
-              const isExplicitLogout = /log\s*out|sign\s*out|log\s*off/i.test(txt)
-              const isSettingsTarget = /setting|gear|cog|pref/i.test(txt)
-              const tabNumMatch = txt.match(/tab\s*(\d+)/i)
-              const targetTabIdx = tabNumMatch ? parseInt(tabNumMatch[1], 10) - 1 : null
-
-              const clickables = Array.from(
-                document.querySelectorAll(
-                  'button, a, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [data-testid], [aria-label], nav *, [class*="tab" i], [class*="nav" i], [tabindex]:not([tabindex="-1"])'
-                )
-              ).filter((e) => {
-                const r = (e as HTMLElement).getBoundingClientRect()
-                const style = getComputedStyle(e)
-                return r.width > 4 && r.height > 4 && style.visibility !== "hidden" && style.display !== "none"
-              }) as HTMLElement[]
-
-              let target: HTMLElement | null = null
-
-              // Tab matching by index (e.g. Tab 1, Tab 2, Tab 3, Tab 4)
-              if (targetTabIdx !== null) {
-                const tabs = clickables.filter((c) => {
-                  const role = c.getAttribute("role")
-                  const cls = (c.className || "").toString().toLowerCase()
-                  return role === "tab" || cls.includes("tab") || cls.includes("bottomnav")
-                })
-                if (tabs[targetTabIdx]) target = tabs[targetTabIdx]
-              }
-
-              // Settings icon matching
-              if (!target && isSettingsTarget) {
-                target = clickables.find((c) => {
-                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase()
-                  const svg = c.querySelector("svg")
-                  const svgAria = svg ? (svg.getAttribute("aria-label") || svg.getAttribute("data-icon") || svg.querySelector("title")?.textContent || svg.className || "").toString().toLowerCase() : ""
-                  const cText = (c.textContent || "").toLowerCase()
-                  return /setting|gear|cog|pref/i.test(aria) || /setting|gear|cog|pref/i.test(svgAria) || /setting|gear|cog|pref/i.test(cText)
-                }) || null
-              }
-
-              // Accessible name or text matching
-              if (!target) {
-                target = clickables.find((c) => {
-                  const aria = (c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-testid") || "").toLowerCase().trim()
-                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                  if (!isExplicitLogout && /(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-                  return (aria && (txt.includes(aria) || aria.includes(txt.slice(0, 15)))) ||
-                         (cText && (txt.includes(cText) || cText.includes(txt.slice(0, 15))))
-                }) || null
-              }
-
-              // Primary action fallback
-              if (!target && !isExplicitLogout) {
-                target = clickables.find((c) => {
-                  const cText = (c.textContent || (c as any).value || "").toLowerCase().trim()
-                  if (/(log\s*out|sign\s*out|log\s*off)/i.test(cText)) return false
-                  return /create|add|new|save|submit|register|sign up|continue|next|apply/i.test(cText)
-                }) || null
-              }
-
-              if (target && target.offsetParent !== null) {
-                target.click()
-                return true
-              }
-              return false
-            }, targetText)
+            actionSuccess = await resolveFeatureWorkflowTarget(page, targetText, true, "click") as boolean
           }
 
           // Wait for DOM transition / modal / page load
