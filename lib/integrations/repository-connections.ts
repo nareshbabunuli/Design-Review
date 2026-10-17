@@ -1,6 +1,6 @@
 import "server-only"
 
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 
 export type RepositoryProvider = "github" | "gitlab"
 
@@ -19,8 +19,8 @@ function encryptionKey() {
   if (!secret || secret.length < 32) {
     throw new Error("Repository connections are not configured. Set REPOSITORY_CONNECTION_SECRET to a random secret of at least 32 characters.")
   }
-  // Derive a fixed-size key without storing a second secret.
-  return Buffer.from(secret).subarray(0, 32)
+  // Hash the configured secret into a fixed-size AES-256 key.
+  return createHash("sha256").update(secret, "utf8").digest()
 }
 
 export function tokenCookieName(provider: RepositoryProvider) {
