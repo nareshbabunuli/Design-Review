@@ -2586,7 +2586,7 @@ export async function executeFullAppTestingJob(
             title: `${screen.id} ${screen.name}`,
             screenshotUrl: screen.screenshotUrl,
             testedAt: new Date().toISOString(),
-            screenshots: screen.screenshotUrl ? { Desktop: screen.screenshotUrl } : {},
+            screenshots: screen.screenshotUrl ? { Desktop: screen.screenshotUrl } : ({} as Record<string, string>),
             backNavigationStatus: "passed" as const,
             responsiveStatus: "passed" as const,
             issuesCount: 0,
