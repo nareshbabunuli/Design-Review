@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(url, {
       headers: provider === "github"
         ? { Authorization: `Bearer ${activeConnection.accessToken}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
-        : { Authorization: `Bearer ${connection.accessToken}` },
+        : { Authorization: `Bearer ${activeConnection.accessToken}` },
       cache: "no-store",
     })
     if (!response.ok) {
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
     return withConnectionCookie(NextResponse.json({
       connected: true,
       provider,
-      username: connection.username || "",
+      username: activeConnection.username || "",
       repositories,
     }))
   } catch (error) {
