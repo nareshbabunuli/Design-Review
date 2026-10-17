@@ -47,10 +47,14 @@ export async function POST(request: NextRequest) {
     : ""
   const goal = typeof body.goal === "string" ? body.goal.trim() : ""
   const appUrl = typeof body.appUrl === "string" ? body.appUrl.trim() : ""
+  const baseBranch = typeof body.baseBranch === "string" ? body.baseBranch.trim() : ""
   const findings = Array.isArray(body.findings) ? body.findings.slice(0, 30) : []
 
   if (!projectId || !/^[0-9]+$/.test(projectId)) {
     return errorResponse(400, "Choose a GitLab repository before starting the Duo review.")
+  }
+  if (!baseBranch || baseBranch.length > 200 || baseBranch.startsWith("-")) {
+    return errorResponse(400, "A valid repository base branch is required.")
   }
   if (!goal || goal.length > 8000) {
     return errorResponse(400, "Provide a review goal between 1 and 8,000 characters.")
@@ -93,7 +97,7 @@ export async function POST(request: NextRequest) {
       appUrl ? `Application under test: ${appUrl}` : "",
       "Work only in the isolated agent workspace. Do not commit, push, create a branch, open a merge request, or write to the GitLab project through GitLab APIs.",
       "Inspect relevant source files and tests. Prepare candidate fixes in priority order, explain the evidence and rationale, and run relevant local tests when possible.",
-      "Return proposed changes as unified diffs grouped by issue and file. Do not claim a fix has been applied to the user's repository. The user must review and explicitly approve each change before any repository mutation.",
+      "Do not create or modify files in the GitLab repository itself. Prepare candidate fixes and return your final result as one valid JSON object, with no markdown fences, shaped like: {\"proposals\":[{\"id\":\"fix-1\",\"issue\":\"short issue title\",\"summary\":\"why this change helps\",\"files\":[{\"path\":\"relative/path.ts\",\"content\":\"complete replacement file content\"}]}]}. Each proposal must contain complete file contents for every changed file. Do not include unchanged files. Keep proposals small and separate by issue. Do not claim a fix has been applied to the user's repository. The user must review and explicitly approve each proposal before any repository mutation.",
     ].filter(Boolean).join("\n\n")
 
     const additionalContext = [{
@@ -138,6 +142,7 @@ export async function POST(request: NextRequest) {
         summary: data.summary || "Duo is reviewing the supplied test findings.",
         webUrl: data.web_url || null,
         projectId,
+        baseBranch,
         provider: "gitlab",
       },
       safety: {
