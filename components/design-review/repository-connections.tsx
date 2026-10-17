@@ -33,6 +33,7 @@ export function RepositoryConnections() {
     github: emptyState(), gitlab: emptyState(),
   })
   const [working, setWorking] = useState<Provider | null>(null)
+  const [oauthNotice, setOauthNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null)
 
   const loadProvider = useCallback(async (provider: Provider) => {
     setStates(current => ({ ...current, [provider]: { ...current[provider], loading: true, error: "" } }))
@@ -73,6 +74,11 @@ export function RepositoryConnections() {
   }, [])
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connection = params.get("connection")
+    const connectionError = params.get("connection_error")
+    if (connection === "connected") setOauthNotice({ kind: "success", text: "Repository provider connected successfully." })
+    if (connectionError) setOauthNotice({ kind: "error", text: connectionError })
     void loadProvider("github")
     void loadProvider("gitlab")
   }, [loadProvider])
@@ -118,6 +124,7 @@ export function RepositoryConnections() {
 
   return (
     <section className="space-y-4" aria-label="Repository connections">
+      {oauthNotice && <div role="status" className={`rounded-xl border p-3 text-xs ${oauthNotice.kind === "success" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300"}`}>{oauthNotice.text}</div>}
       <div>
         <h3 className="text-sm font-bold text-slate-900 dark:text-white">Repository Connections</h3>
         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
