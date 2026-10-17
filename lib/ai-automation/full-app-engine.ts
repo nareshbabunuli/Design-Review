@@ -2265,6 +2265,70 @@ export {
   deriveScreenName,
 } from "./full-app-utils"
 
+
+// Merge targeted rediscovery into the existing graph without throwing away verified
+// screens. URL + screen name distinguishes meaningful UI states on the same route.
+function mergeRediscoveredGraph(
+  existingScreens: AppScreenNode[],
+  existingTransitions: AppWorkflowTransition[],
+  freshScreens: AppScreenNode[],
+  freshTransitions: AppWorkflowTransition[],
+): { screens: AppScreenNode[]; transitions: AppWorkflowTransition[] } {
+  const screens = existingScreens.map((screen) => ({ ...screen }))
+  const transitions = existingTransitions.map((transition) => ({ ...transition }))
+  const identity = (screen: AppScreenNode) => {
+    let route = screen.path || screen.url
+    try {
+      const parsed = new URL(screen.url)
+      route = `${parsed.origin}${parsed.pathname.replace(/\/$/, "") || "/"}`
+    } catch {
+      route = route.split(/[?#]/)[0].replace(/\/$/, "") || "/"
+    }
+    return `${route.toLowerCase()}::${screen.name.trim().toLowerCase()}::${(screen.modalTriggerText || "").trim().toLowerCase()}`
+  }
+  const ids = new Map<string, string>()
+  const known = new Map(screens.map((screen) => [identity(screen), screen]))
+  let sequence = screens.reduce((max, screen) => Math.max(max, Number(screen.id.replace(/^S/i, "")) || 0), 0) + 1
+
+  for (const fresh of freshScreens) {
+    const key = identity(fresh)
+    const prior = known.get(key)
+    if (prior) {
+      // Refresh evidence/inventory for a known state but preserve its stable ID.
+      Object.assign(prior, fresh, { id: prior.id, isNewDiscovery: false })
+      ids.set(fresh.id, prior.id)
+      continue
+    }
+    const id = `S${String(sequence++).padStart(3, "0")}`
+    const added = { ...fresh, id, isNewDiscovery: true }
+    screens.push(added)
+    known.set(key, added)
+    ids.set(fresh.id, id)
+  }
+
+  const transitionKeys = new Set(transitions.map((t) => `${t.fromScreenId}::${t.toScreenId}::${t.action.toLowerCase()}`))
+  for (const fresh of freshTransitions) {
+    const fromScreenId = ids.get(fresh.fromScreenId) || fresh.fromScreenId
+    const toScreenId = ids.get(fresh.toScreenId) || fresh.toScreenId
+    if (!screens.some((screen) => screen.id === fromScreenId) || !screens.some((screen) => screen.id === toScreenId)) continue
+    const key = `${fromScreenId}::${toScreenId}::${fresh.action.toLowerCase()}`
+    if (transitionKeys.has(key)) continue
+    transitions.push({ ...fresh, id: `tr-${transitions.length + 1}`, fromScreenId, toScreenId })
+    transitionKeys.add(key)
+  }
+  return { screens, transitions }
+}
+
+function extractRediscoveryUrl(prompt: string, fallback: string, origin: string): string {
+  const match = prompt.match(/https?:\/\/[^\s"'<>]+/i)
+  if (!match) return fallback
+  try {
+    const candidate = new URL(match[0].replace(/[),.;]+$/, ""))
+    if (candidate.origin === origin) return candidate.toString()
+  } catch {}
+  return fallback
+}
+
 export async function executeFullAppTestingJob(
   job: AutomationJob,
   params: StartAutomationRequest
@@ -2403,12 +2467,32 @@ export async function executeFullAppTestingJob(
         `⚡ Executing approved test plan with ${testPlan.steps.length} steps directly.`
       )
     } else {
-      const discovery = await discoverAndMapApp(job, page, job.targetUrl, {
-        maxScreens: params.maxScreens || 10,
+      const rediscoveryPrompt = typeof (job as any).rediscoveryPrompt === "string" ? (job as any).rediscoveryPrompt : ""
+      const discoveryStartUrl = rediscoveryPrompt
+        ? extractRediscoveryUrl(rediscoveryPrompt, job.targetUrl, new URL(job.targetUrl).origin)
+        : job.targetUrl
+      if (rediscoveryPrompt) {
+        appendLog(job, "info", `[REDISCOVERY] User requested a targeted map update: ${rediscoveryPrompt.slice(0, 240)}`)
+        await page.goto(discoveryStartUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
+        await waitForSpaPageReady(page, 2500)
+      }
+      let discovery = await discoverAndMapApp(job, page, discoveryStartUrl, {
+        maxScreens: rediscoveryPrompt ? Math.max(params.maxScreens || 10, 15) : (params.maxScreens || 10),
         credentials: sessionCreds,
         projectDir: params.projectDir,
         layaUrl: (params as any).layaBaseUrl || (job as any).layaBaseUrl,
       })
+      if (rediscoveryPrompt && job.fullAppTestPlan) {
+        const merged = mergeRediscoveredGraph(
+          job.fullAppTestPlan.screens || [],
+          job.fullAppTestPlan.transitions || [],
+          discovery.screens,
+          discovery.transitions,
+        )
+        discovery = merged
+        appendLog(job, "success", `[REDISCOVERY] Merged verified discoveries into the existing map: ${merged.screens.length} screens, ${merged.transitions.length} transitions.`)
+        ;(job as any).rediscoveryPrompt = undefined
+      }
 
       // Populate screens for UI compatibility
       job.screens = discovery.screens.map((s) => {
@@ -2475,6 +2559,51 @@ export async function executeFullAppTestingJob(
         if (refreshed.status !== "running") {
           job.status = refreshed.status
           return
+        }
+        const requestedRediscovery = typeof (refreshed as any).rediscoveryPrompt === "string" ? (refreshed as any).rediscoveryPrompt.trim() : ""
+        if (requestedRediscovery && requestedRediscovery !== (job as any).lastProcessedRediscoveryPrompt) {
+          ;(job as any).lastProcessedRediscoveryPrompt = requestedRediscovery
+          appendLog(job, "info", `[REDISCOVERY] Revisiting the application for: ${requestedRediscovery.slice(0, 240)}`)
+          const startUrl = extractRediscoveryUrl(requestedRediscovery, job.targetUrl, new URL(job.targetUrl).origin)
+          await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
+          await waitForSpaPageReady(page, 2500)
+          const extra = await discoverAndMapApp(job, page, startUrl, {
+            maxScreens: Math.max(params.maxScreens || 10, 15),
+            credentials: sessionCreds,
+            projectDir: params.projectDir,
+            layaUrl: (params as any).layaBaseUrl || (job as any).layaBaseUrl,
+          })
+          const merged = mergeRediscoveredGraph(testPlan.screens || [], testPlan.transitions || [], extra.screens, extra.transitions)
+          testPlan = generateStructuredTestPlan(job.targetUrl, merged.screens, merged.transitions, {
+            isAuthenticated: job.authState === "logged_in",
+            postmanCollection: params.postmanCollection || job.postmanCollection,
+          })
+          linkTestPlanStepsToLedger(job, testPlan)
+          queueUnplannedLedgerActions(job, testPlan)
+          job.screens = merged.screens.map((screen) => ({
+            url: screen.url,
+            path: screen.path,
+            title: `${screen.id} ${screen.name}`,
+            screenshotUrl: screen.screenshotUrl,
+            testedAt: new Date().toISOString(),
+            screenshots: screen.screenshotUrl ? { Desktop: screen.screenshotUrl } : {},
+            backNavigationStatus: "passed" as const,
+            responsiveStatus: "passed" as const,
+            issuesCount: 0,
+          }))
+          job.fullAppTestPlan = testPlan
+          job.flowGraph = buildFigmaWorkflowMap(testPlan)
+          job.planApprovalState = "awaiting_review"
+          job.progress = 35
+          job.currentStep = "Map updated with rediscovered screens. Review the updated map and test plan, then approve execution."
+          ;(job as any).rediscoveryPrompt = undefined
+          saveJob(job)
+          emitSessionEvent(job, "progress", {
+            message: "Targeted rediscovery finished and the existing app map was updated. Review the revised plan.",
+            payload: { phase: "rediscovery", screenCount: merged.screens.length, transitionCount: merged.transitions.length },
+          })
+          appendLog(job, "success", `[REDISCOVERY] Updated plan now covers ${testPlan.screens.length} screens and ${testPlan.steps.length} steps. Awaiting user review.`)
+          continue
         }
         if (refreshed.fullAppTestPlan && refreshed.fullAppTestPlan.id === testPlan.id) {
           Object.assign(testPlan, refreshed.fullAppTestPlan)

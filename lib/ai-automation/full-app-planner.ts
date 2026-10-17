@@ -10,7 +10,7 @@ import {
   PostmanEndpointMapping,
 } from "./types"
 import { appendLog } from "./job-store"
-import { SYNTHETIC_TEST_DATA } from "./full-app-utils"
+import { SYNTHETIC_TEST_DATA, inferContextualTestValue } from "./full-app-utils"
 import {
   parsePostmanCollection,
   matchEndpointToForm,
@@ -249,13 +249,21 @@ export function queueUnplannedLedgerActions(
     const name = entry.name || "Unnamed action"
     let syntheticValue: string | undefined
     if (actionType === "fill") {
-      const inputType = (element?.inputType || "").toLowerCase()
-      if (inputType === "email" || /email/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.email
-      else if (inputType === "password" || /password/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.password
-      else if (inputType === "tel" || /phone|mobile/i.test(name)) syntheticValue = SYNTHETIC_TEST_DATA.phone
-      else syntheticValue = SYNTHETIC_TEST_DATA.fullName
+      syntheticValue = inferContextualTestValue({
+        screenName: screen?.name || entry.screenPath,
+        fieldName: name,
+        inputType: element?.inputType,
+        placeholder: element?.placeholder,
+        options: element?.options,
+      })
     } else if (actionType === "select") {
-      syntheticValue = element?.options?.[0] || "Option 1"
+      syntheticValue = inferContextualTestValue({
+        screenName: screen?.name || entry.screenPath,
+        fieldName: name,
+        inputType: element?.inputType,
+        placeholder: element?.placeholder,
+        options: element?.options,
+      })
     }
 
     let fileTypeRequired: TestPlanStep["fileTypeRequired"]
@@ -496,22 +504,15 @@ export function generateStructuredTestPlan(
         !(screen.isLoginWall && options?.isAuthenticated && /(email|user|pass|login)/i.test(el.name))
     )
     for (const input of standaloneInputs) {
-      let syntheticVal = SYNTHETIC_TEST_DATA.fullName
       // Never store real credentials in the plan (persisted + shown in Plan tab).
       // executeStructuredTestPlan substitutes session credentials at fill time.
-      if (input.inputType === "email" || /email/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.email
-      } else if (input.inputType === "password" || /password/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.password
-      } else if (input.inputType === "tel" || /phone|mobile/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.phone
-      } else if (/first/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.firstName
-      } else if (/last/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.lastName
-      } else if (/note|description|comment/i.test(input.name)) {
-        syntheticVal = SYNTHETIC_TEST_DATA.notes
-      }
+      const syntheticVal = inferContextualTestValue({
+        screenName: screen.name,
+        fieldName: input.name,
+        inputType: input.inputType,
+        placeholder: input.placeholder,
+        options: input.options,
+      })
 
       steps.push({
         id: `step-${stepCounter++}`,

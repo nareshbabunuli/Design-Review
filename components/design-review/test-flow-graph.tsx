@@ -299,15 +299,54 @@ export default function TestFlowGraph({
   // Track locally deleted screen node IDs for instant UI responsiveness
   const [deletedNodeIds, setDeletedNodeIds] = useState<Set<string>>(new Set())
 
+  // Group same-route observations as expandable UI states. The complete graph stays
+  // intact; this only changes the default presentation so the map is readable.
+  const [expandedStateGroups, setExpandedStateGroups] = useState<Set<string>>(() => new Set())
+
+  const stateGroups = useMemo(() => {
+    const byRoute = new Map<string, typeof graph.nodes>()
+    for (const node of graph.nodes) {
+      let routeKey = node.url || node.title
+      try {
+        const parsed = new URL(node.url)
+        routeKey = `${parsed.origin}${parsed.pathname}`
+      } catch {
+        routeKey = (node.url || node.title).split(/[?#]/)[0]
+      }
+      const group = byRoute.get(routeKey) || []
+      group.push(node)
+      byRoute.set(routeKey, group)
+    }
+    return Array.from(byRoute.entries())
+      .filter(([, nodes]) => nodes.length > 1)
+      .map(([key, nodes]) => ({ key, parentId: nodes[0].id, childIds: nodes.slice(1).map((node) => node.id), count: nodes.length - 1 }))
+  }, [graph.nodes])
+
+  const groupByParent = useMemo(
+    () => new Map(stateGroups.map((group) => [group.parentId, group])),
+    [stateGroups]
+  )
+  const hiddenStateIds = useMemo(() => {
+    const hidden = new Set<string>()
+    for (const group of stateGroups) {
+      if (expandedStateGroups.has(group.key)) continue
+      for (const id of group.childIds) hidden.add(id)
+    }
+    return hidden
+  }, [stateGroups, expandedStateGroups])
+
   const visibleNodes = useMemo(() => {
-    return graph.nodes.filter((n) => !deletedNodeIds.has(n.id))
-  }, [graph.nodes, deletedNodeIds])
+    return graph.nodes.filter((n) => !deletedNodeIds.has(n.id) && !hiddenStateIds.has(n.id))
+  }, [graph.nodes, deletedNodeIds, hiddenStateIds])
+
+  const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes])
 
   const visibleEdges = useMemo(() => {
     return graph.edges.filter(
-      (e) => !deletedNodeIds.has(e.from) && !deletedNodeIds.has(e.to)
+      (e) => !deletedNodeIds.has(e.from) && !deletedNodeIds.has(e.to) &&
+        visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
     )
-  }, [graph.edges, deletedNodeIds])
+  }, [graph.edges, deletedNodeIds, visibleNodeIds])
 
   const handleDeleteNode = useCallback(
     (nodeId: string, e?: React.MouseEvent) => {
@@ -1132,9 +1171,34 @@ export default function TestFlowGraph({
                       </span>
                     )}
                   </div>
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 font-semibold border border-indigo-800/40 shrink-0">
-                    {elementsCount > 0 ? `${elementsCount} elements` : "View Screen"}
-                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {groupByParent.has(node.id) && (() => {
+                      const group = groupByParent.get(node.id)!
+                      const expanded = expandedStateGroups.has(group.key)
+                      return (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setExpandedStateGroups((previous) => {
+                              const next = new Set(previous)
+                              if (next.has(group.key)) next.delete(group.key)
+                              else next.add(group.key)
+                              return next
+                            })
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-violet-950/70 text-violet-200 font-semibold border border-violet-700/50 hover:bg-violet-900/80"
+                          aria-label={expanded ? `Collapse ${group.count} related states` : `Expand ${group.count} related states`}
+                          title="Show or hide related states discovered on this route"
+                        >
+                          {expanded ? "Hide" : `+${group.count} states`}
+                        </button>
+                      )
+                    })()}
+                    <span className="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 font-semibold border border-indigo-800/40 shrink-0">
+                      {elementsCount > 0 ? `${elementsCount} elements` : "View Screen"}
+                    </span>
+                  </div>
                 </div>
               </div>
             )
