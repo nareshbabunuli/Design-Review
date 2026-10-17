@@ -274,6 +274,71 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    if (action === "rediscover_missing_screen") {
+      const instruction = typeof body.instruction === "string" ? body.instruction.trim() : ""
+      if (!instruction) {
+        return NextResponse.json({ error: "Describe the missing screen, tab, dialog, or state you want rediscovered." }, { status: 400 })
+      }
+      if (!job.fullAppTestPlan) {
+        return NextResponse.json({ error: "Run initial app discovery first so new screens can be merged into the existing map." }, { status: 409 })
+      }
+      if (job.status === "running" && job.planApprovalState !== "awaiting_review") {
+        return NextResponse.json({ error: "Targeted rediscovery is available after the current execution finishes, or while its test plan is awaiting review." }, { status: 409 })
+      }
+
+      ;(job as any).rediscoveryPrompt = instruction
+      ;(job as any).lastProcessedRediscoveryPrompt = undefined
+      emitSessionEvent(job, "user_input", {
+        message: `User requested rediscovery of a missing screen: ${instruction.slice(0, 240)}`,
+        payload: { action: "rediscover_missing_screen", instruction },
+      })
+
+      if (job.status === "running" && job.planApprovalState === "awaiting_review") {
+        job.currentStep = "Rediscovery requested. Revisiting the application and merging any verified missing screens into the existing map..."
+        saveJob(job)
+        return NextResponse.json({
+          success: true,
+          message: "I’ll revisit the application, explore the requested area, merge newly verified states into the existing map, and regenerate the plan for your review.",
+          job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+        })
+      }
+
+      job.status = "running"
+      job.progress = 5
+      job.planApprovalState = undefined
+      job.testingPhase = "discovery"
+      job.error = undefined
+      job.finishedAt = undefined
+      job.currentStep = "Reopening the application to rediscover the missing screen and update the existing map..."
+      saveJob(job)
+      setImmediate(() => {
+        executeJob(job, {
+          url: job.targetUrl,
+          projectId: job.projectId,
+          mode: "full_app",
+          role: job.role,
+          layaBaseUrl: job.layaBaseUrl,
+          viewports: job.viewports,
+          maxScreens: Math.max(job.maxScreens || 10, 15),
+          aiModel: job.aiModel,
+          aiBaseUrl: job.aiBaseUrl,
+          dummyTestFiles: job.dummyTestFiles,
+          uploadFilesDir: job.uploadFilesDir,
+          postmanCollection: job.postmanCollection,
+        }).catch((err) => {
+          console.error(`[AI Bot] Targeted rediscovery failed for job ${job.id}:`, err)
+          job.status = "failed"
+          job.error = err?.message || "Targeted rediscovery failed"
+          saveJob(job)
+        })
+      })
+      return NextResponse.json({
+        success: true,
+        message: "Targeted rediscovery started. I’ll merge verified screens into the existing map and return a revised plan for review.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
+    }
+
     if (action === "edit_test_plan") {
       const instruction = typeof body.instruction === "string" ? body.instruction.trim() : ""
       const plan = job.fullAppTestPlan
