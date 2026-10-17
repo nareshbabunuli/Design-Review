@@ -22,7 +22,11 @@ test("revealed controls are present after modal, tab, SPA and hash transitions",
     assert.equal(await page.$eval("#revealed-spa", el => el.offsetParent !== null), true);
     await page.click("#hash-link");
     await page.waitForFunction(() => location.hash === "#details");
-    assert.equal(await page.$eval("#revealed-hash", el => el.offsetParent !== null), true);
+    // The URL may change before the hashchange handler reveals the section.
+    await page.waitForFunction(() => {
+      const element = document.querySelector("#revealed-hash");
+      return element instanceof HTMLElement && element.offsetParent !== null;
+    });
   } finally { await browser.close(); }
 });
 
