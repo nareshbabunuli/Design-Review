@@ -345,7 +345,7 @@ export default function FullAppTestingView({
     setPlanChatInput("")
     setPlanChatBusy(true)
     try {
-      const asksForRediscovery = /\\b(missing|missed|forgotten|not mapped|not in the map|not discovered)\\b.{0,100}\\b(screen|page|tab|dialog|modal|state|notification|settings|profile|security)\\b|\\b(screen|page|tab|dialog|modal|state)\\b.{0,100}\\b(missing|missed|not mapped|not discovered)\\b/i.test(instruction)
+      const asksForRediscovery = /\b(missing|missed|forgotten|not mapped|not in the map|not discovered)\b.{0,100}\b(screen|page|tab|dialog|modal|state|notification|settings|profile|security)\b|\b(screen|page|tab|dialog|modal|state)\b.{0,100}\b(missing|missed|not mapped|not discovered)\b/i.test(instruction)
       const action = asksForRediscovery ? "rediscover_missing_screen" : "edit_test_plan"
       const response = await fetch("/api/ai-automation/status", {
         method: "POST",
