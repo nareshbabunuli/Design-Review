@@ -2280,9 +2280,9 @@ function mergeRediscoveredGraph(
     let route = screen.path || screen.url
     try {
       const parsed = new URL(screen.url)
-      route = `${parsed.origin}${parsed.pathname.replace(/\\/$/, "") || "/"}`
+      route = `${parsed.origin}${parsed.pathname.replace(/\/$/, "") || "/"}`
     } catch {
-      route = route.split(/[?#]/)[0].replace(/\\/$/, "") || "/"
+      route = route.split(/[?#]/)[0].replace(/\/$/, "") || "/"
     }
     return `${route.toLowerCase()}::${screen.name.trim().toLowerCase()}::${(screen.modalTriggerText || "").trim().toLowerCase()}`
   }
@@ -2320,7 +2320,7 @@ function mergeRediscoveredGraph(
 }
 
 function extractRediscoveryUrl(prompt: string, fallback: string, origin: string): string {
-  const match = prompt.match(/https?:\\/\\/[^\\s"'<>]+/i)
+  const match = prompt.match(/https?:\/\/[^\s"'<>]+/i)
   if (!match) return fallback
   try {
     const candidate = new URL(match[0].replace(/[),.;]+$/, ""))
