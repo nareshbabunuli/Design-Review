@@ -16,6 +16,7 @@ export type DOMElement = {
 }
 
 export type VisualFeatures = {
+  engine?: "opencv-js" | "heuristic-fallback"
   annotatedImageUrl?: string
   annotatedImageBuffer?: Buffer
   features: {
@@ -361,11 +362,139 @@ function getColorForRank(rank: number): string {
  * Installation: npm install opencv4nodejs
  * Note: Requires native dependencies (CMake, OpenCV libraries)
  */
+let openCvPromise: Promise<any> | undefined
+
+async function loadOpenCv(): Promise<any> {
+  if (!openCvPromise) {
+    openCvPromise = (async () => {
+      const imported = await import("@techstark/opencv-js")
+      let cv: any = (imported as any).default ?? imported
+      if (cv instanceof Promise) cv = await cv
+      if (!cv?.Mat) {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("OpenCV.js initialization timed out")), 15000)
+          cv.onRuntimeInitialized = () => {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+      }
+      if (!cv?.Mat || !cv?.Canny) throw new Error("OpenCV.js did not expose the required image APIs")
+      return cv
+    })().catch((error) => {
+      openCvPromise = undefined
+      throw error
+    })
+  }
+  return openCvPromise
+}
+
+function measureEdgeDensity(
+  edgeData: Uint8Array,
+  imageWidth: number,
+  imageHeight: number,
+  box: [number, number, number, number]
+): number {
+  const [rawX, rawY, rawWidth, rawHeight] = box
+  const left = Math.max(0, Math.floor(rawX))
+  const top = Math.max(0, Math.floor(rawY))
+  const right = Math.min(imageWidth, Math.ceil(rawX + rawWidth))
+  const bottom = Math.min(imageHeight, Math.ceil(rawY + rawHeight))
+  if (right <= left || bottom <= top) return 0
+
+  let edgePixels = 0
+  let samples = 0
+  const step = Math.max(1, Math.floor(Math.min(right - left, bottom - top) / 32))
+  for (let y = top; y < bottom; y += step) {
+    for (let x = left; x < right; x += step) {
+      if (edgeData[y * imageWidth + x] > 0) edgePixels++
+      samples++
+    }
+  }
+  return samples ? Math.min(1, edgePixels / samples * 3) : 0
+}
+
+/**
+ * Use OpenCV.js edge detection to add image-derived evidence to DOM controls.
+ * Falls back to the existing Sharp-based analysis if OpenCV cannot initialize.
+ */
 export async function preprocessWithOpenCV(
   screenshotBuffer: Buffer,
   domElements: DOMElement[]
 ): Promise<VisualFeatures> {
-  // TODO: Implement when opencv4nodejs is available
-  // For now, fall back to lightweight preprocessing
-  return preprocessScreenshotForLaya(screenshotBuffer, domElements)
+  let gray: any
+  let edges: any
+  try {
+    const sharpModule = await import("sharp")
+    const sharp = sharpModule.default
+    const decoded = await sharp(screenshotBuffer).greyscale().raw().toBuffer({ resolveWithObject: true })
+    const imageWidth = decoded.info.width
+    const imageHeight = decoded.info.height
+    if (!imageWidth || !imageHeight || !decoded.data.length) {
+      throw new Error("Screenshot could not be decoded")
+    }
+
+    const cv = await loadOpenCv()
+    gray = new cv.Mat(imageHeight, imageWidth, cv.CV_8UC1)
+    gray.data.set(decoded.data)
+    edges = new cv.Mat()
+    cv.Canny(gray, edges, 50, 120)
+
+    const validElements = domElements.filter(
+      (element) => element.bounds && element.bounds.width > 0 && element.bounds.height > 0
+    ).slice(0, 150)
+
+    const elementBoundingBoxes = validElements.map((element) => {
+      const bounds = element.bounds!
+      const x = bounds.x ?? bounds.left ?? 0
+      const y = bounds.y ?? bounds.top ?? 0
+      const box: [number, number, number, number] = [x, y, bounds.width, bounds.height]
+      const edgeDensity = measureEdgeDensity(edges.data, imageWidth, imageHeight, box)
+      const areaNormalized = (bounds.width * bounds.height) / (imageWidth * imageHeight)
+      const sizeScore = Math.min(areaNormalized * 100, 1)
+      const positionScore = calculatePositionScore(x, y, bounds.width, bounds.height, imageWidth, imageHeight)
+      const visualWeight = Math.min(1, edgeDensity * 0.55 + sizeScore * 0.2 + positionScore * 0.25)
+      return {
+        selector: element.selector,
+        box,
+        saliency: visualWeight,
+        visualWeight,
+      }
+    })
+
+    const layoutClusters = clusterBySpatialProximity(elementBoundingBoxes, imageWidth, imageHeight)
+    const visualHierarchy = [...elementBoundingBoxes]
+      .sort((a, b) => b.visualWeight - a.visualWeight)
+      .map((element, index) => ({
+        selector: element.selector,
+        rank: index + 1,
+        prominence: element.visualWeight,
+      }))
+
+    let annotatedImageBuffer: Buffer | undefined
+    try {
+      annotatedImageBuffer = await annotateImageWithBoundingBoxes(
+        screenshotBuffer,
+        elementBoundingBoxes,
+        imageWidth,
+        imageHeight,
+        sharp
+      )
+    } catch (error) {
+      console.warn("[VisionPreprocessor] Could not annotate OpenCV output:", error)
+    }
+
+    return {
+      engine: "opencv-js",
+      annotatedImageBuffer,
+      features: { elementBoundingBoxes, layoutClusters, visualHierarchy },
+    }
+  } catch (error) {
+    console.warn("[VisionPreprocessor] OpenCV unavailable; using fallback analysis:", error)
+    const fallback = await preprocessScreenshotForLaya(screenshotBuffer, domElements)
+    return { ...fallback, engine: "heuristic-fallback" }
+  } finally {
+    try { edges?.delete() } catch {}
+    try { gray?.delete() } catch {}
+  }
 }
