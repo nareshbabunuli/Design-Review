@@ -73,10 +73,16 @@ export async function POST(request: NextRequest) {
     }
     const privilegePayload = await privilegesResponse.json()
     const allowedNames = new Set(["read_write_files", "read_only_gitlab", "run_commands"])
-    const privileges = (privilegePayload.all_privileges || [])
-      .filter((item: { id?: number; name?: string }) => item.name && allowedNames.has(item.name) && Number.isInteger(item.id))
-    const privilegeIds = privileges.map((item: { id: number }) => item.id)
-    const privilegeNames = new Set(privileges.map((item: { name: string }) => item.name))
+    type AgentPrivilege = { id: number; name: string }
+    const availablePrivileges = (privilegePayload.all_privileges || []) as Array<{ id?: number; name?: string }>
+    const privileges: AgentPrivilege[] = availablePrivileges.filter(
+      (item): item is AgentPrivilege =>
+        typeof item.id === "number" &&
+        typeof item.name === "string" &&
+        allowedNames.has(item.name)
+    )
+    const privilegeIds = privileges.map(item => item.id)
+    const privilegeNames = new Set(privileges.map(item => item.name))
     if (!privilegeNames.has("read_only_gitlab")) {
       return errorResponse(502, "GitLab did not provide the read-only repository privilege required for a safe Duo review.")
     }
