@@ -24,6 +24,53 @@ export const SYNTHETIC_TEST_DATA = {
   title: "Synthetic Test Document",
 }
 
+
+// Choose safe synthetic values from the field's meaning and its surrounding screen,
+// rather than filling every unknown text field with the same arbitrary string.
+export function inferContextualTestValue(input: {
+  screenName?: string
+  fieldName?: string
+  inputType?: string
+  placeholder?: string
+  options?: string[]
+}): string {
+  const screen = input.screenName || ""
+  const name = input.fieldName || ""
+  const type = (input.inputType || "").toLowerCase()
+  const placeholder = input.placeholder || ""
+  const context = `${screen} ${name} ${placeholder}`.toLowerCase()
+
+  if (type === "email" || /e-?mail/.test(context)) return SYNTHETIC_TEST_DATA.email
+  if (type === "password" || /password|passcode/.test(context)) return SYNTHETIC_TEST_DATA.password
+  if (type === "tel" || /phone|mobile|telephone/.test(context)) return SYNTHETIC_TEST_DATA.phone
+  if (type === "url" || /website|website url|url field/.test(context)) return "https://example.com"
+  if (/first name/.test(context)) return SYNTHETIC_TEST_DATA.firstName
+  if (/last name|surname/.test(context)) return SYNTHETIC_TEST_DATA.lastName
+  if (/note|description|comment|message/.test(context)) return SYNTHETIC_TEST_DATA.notes
+  if (/postal|zip code/.test(context)) return SYNTHETIC_TEST_DATA.postalCode
+  if (/city/.test(context)) return SYNTHETIC_TEST_DATA.city
+  if (/address/.test(context)) return SYNTHETIC_TEST_DATA.address
+
+  const meaningfulOptions = (input.options || []).filter((option) =>
+    option.trim() && !/^(select|choose|please select|choose an option|--)/i.test(option.trim())
+  )
+  if (meaningfulOptions.length > 0) return meaningfulOptions[0]
+
+  // Use domain-aware values for common search/filter surfaces. These are examples,
+  // not assertions about the app's data; the test runner must verify the outcome.
+  if (/drill|basketball|workout|training/.test(context)) {
+    if (/categor|filter|type/.test(context)) return "Finishing"
+    if (/search|query|keyword/.test(context)) return "Dribbling"
+    if (/level|difficulty/.test(context)) return "Beginner"
+  }
+  if (/categor|filter/.test(context)) return "General"
+  if (/search|query|keyword/.test(context)) return "sample"
+  if (/date/.test(context)) return "2026-01-15"
+  if (/name|title/.test(context)) return SYNTHETIC_TEST_DATA.title
+  if (/required|text|input/.test(context)) return SYNTHETIC_TEST_DATA.fullName
+  return SYNTHETIC_TEST_DATA.fullName
+}
+
 export function isFullAppCommand(text: string): boolean {
   if (!text) return false
   const t = text.toLowerCase()
