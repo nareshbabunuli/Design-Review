@@ -19,8 +19,8 @@ function extractProposals(messages: DuoMessage[]): DuoProposal[] {
     const message = messages[index]
     if (message.role === "user") continue
     const content = message.content.trim()
-    const fenced = content.match(/```(?:json)?\\s*([\\s\\S]*?)```/i)?.[1]
-    const objectMatch = content.match(/\\{[\\s\\S]*"proposals"\\s*:\\s*\\[[\\s\\S]*\\]\\s*\\}/)
+    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
+    const objectMatch = content.match(/\{[\s\S]*"proposals"\s*:\s*\[[\s\S]*\]\s*\}/)
     for (const candidate of [fenced, objectMatch?.[0], content].filter((value): value is string => Boolean(value))) {
       try {
         const parsed = JSON.parse(candidate)
@@ -49,7 +49,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [selectedProject, setSelectedProject] = useState("")
   const [loadingRepositories, setLoadingRepositories] = useState(false)
   const [connectionError, setConnectionError] = useState("")
-  const [goal, setGoal] = useState("Review the completed UI test findings and prepare evidence-backed fixes as unified diffs for human review.")
+  const [goal, setGoal] = useState("Review the completed UI test findings and prepare small, evidence-backed fixes as structured proposals for human review.")
   const [starting, setStarting] = useState(false)
   const [workflow, setWorkflow] = useState<DuoWorkflow | null>(null)
   const [messages, setMessages] = useState<DuoMessage[]>([])
