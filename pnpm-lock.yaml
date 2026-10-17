@@ -103,10 +103,10 @@ importers:
         specifier: 5.7.3
         version: 5.7.3
 
+packages:
   '@techstark/opencv-js@5.0.0-release.1':
     resolution: {tarball: https://registry.npmjs.org/@techstark/opencv-js/-/opencv-js-5.0.0-release.1.tgz}
 
-packages:
 
   '@ai-sdk/amazon-bedrock@3.0.138':
     resolution: {integrity: sha512-lXb0Fbfy4nJXGXObdGfpUQ0uwL+5NVd3E6BrOkiOdDwvTXZSo6NtXMSTU8Zs9Gu5lX1Pofa2rISYKPi6qA3TXg==}
@@ -2872,9 +2872,9 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
+snapshots:
   '@techstark/opencv-js@5.0.0-release.1': {}
 
-snapshots:
 
   '@ai-sdk/amazon-bedrock@3.0.138(zod@3.25.76)':
     dependencies:
