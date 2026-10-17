@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireUser } from "@/lib/auth/require-project-access"
 import {
   decryptConnection,
+  encryptConnection,
+  oauthCookieOptions,
   providerBaseUrl,
+  refreshRepositoryConnection,
   tokenCookieName,
+  type RepositoryConnection,
 } from "@/lib/integrations/repository-connections"
 
 export const dynamic = "force-dynamic"
 
-type GitLabConnection = { accessToken: string; userId: string; username?: string; connectedAt: number }
+type GitLabConnection = RepositoryConnection
 type ProposedFile = { path: string; content: string }
 type ProposedFix = { id: string; summary?: string; issue?: string; files: ProposedFile[] }
 
@@ -72,9 +76,14 @@ export async function POST(request: NextRequest) {
   const branchName = `open-design-ai/duo-fixes-${workflowId}`
   const projectUrl = `${baseUrl}/api/v4/projects/${encodeURIComponent(projectId)}`
 
+  let activeConnection = connection
+  let refreshedCookieValue: string | null = null
   try {
+    const refreshed = await refreshRepositoryConnection("gitlab", connection)
+    activeConnection = refreshed.connection
+    if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
     // Always apply approved proposals to a dedicated branch, never the base/default branch.
-    const branchCheck = await gitlabFetch(`${projectUrl}/repository/branches/${encodeURIComponent(branchName)}`, connection.accessToken)
+    const branchCheck = await gitlabFetch(`${projectUrl}/repository/branches/${encodeURIComponent(branchName)}`, activeConnection.accessToken)
     if (branchCheck.status === 404) {
       const createBranch = await gitlabFetch(`${projectUrl}/repository/branches`, connection.accessToken, {
         method: "POST",
@@ -119,7 +128,7 @@ export async function POST(request: NextRequest) {
       return errorResponse(502, `GitLab rejected the approved change (HTTP ${commitResponse.status}). ${commit.message || ""}`.trim())
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       approved: true,
       branch: branchName,
@@ -128,6 +137,8 @@ export async function POST(request: NextRequest) {
       proposalsApproved: proposals.length,
       pushPolicy: "User explicitly approved this branch commit. No changes were pushed to the default branch.",
     }, { status: 201 })
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
   } catch (error) {
     console.error("Failed to apply approved GitLab Duo fix", error)
     return errorResponse(502, "Could not apply the approved fix. No success was reported; check the GitLab branch and retry safely.")
