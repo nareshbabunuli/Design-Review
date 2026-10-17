@@ -13,6 +13,7 @@ import { normalizePath, normalizeUrlForRestore, deriveScreenName, isSameOriginUr
 import { humanClick, humanMouseMove } from "./human-actions"
 import { maskPageSecretsBeforeScreenshot, secretRedactor } from "./secure-credentials-manager"
 import { extractActionableInventory } from "./full-app-inventory"
+import { preprocessWithOpenCV, type DOMElement } from "./vision-preprocessor"
 import { mergeScreenActionsIntoLedger } from "./full-app-planner"
 
 export async function takeSecureScreenshot(page: Page, options: { type: "jpeg"; quality: number }): Promise<Buffer> {
@@ -944,16 +945,63 @@ export async function discoverAndMapApp(
 
     const id = `S${String(screenSeq++).padStart(3, "0")}`
     let shot = ""
+    let layaShot = ""
+    let visualSummary = ""
     try {
       const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
       shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
-    } catch {}
+      layaShot = shot
+
+      const viewport = page.viewport()
+      const scaleX = viewport?.deviceScaleFactor || 1
+      const scaleY = viewport?.deviceScaleFactor || 1
+      const domElements = await page.evaluate(() => {
+        const selector = "button, a, input, select, textarea, [role='button'], [role='tab'], [role='menuitem'], [onclick]"
+        return Array.from(document.querySelectorAll(selector)).slice(0, 150).map((element, index) => {
+          const rect = element.getBoundingClientRect()
+          const node = element as HTMLElement
+          const label = (node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || node.getAttribute("placeholder") || node.tagName).trim().replace(/\\s+/g, " ").slice(0, 80)
+          const stableId = node.id ? `#${node.id}` : node.getAttribute("data-testid") ? `[data-testid="${node.getAttribute("data-testid")}"]` : `${node.tagName.toLowerCase()}[visual-index="${index}"]`
+          return {
+            selector: stableId,
+            label,
+            type: node.getAttribute("role") || node.tagName.toLowerCase(),
+            bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          }
+        }).filter((element) => element.bounds.width > 0 && element.bounds.height > 0)
+      }).catch(() => [] as DOMElement[])
+
+      const visualElements = domElements.map((element) => ({
+        ...element,
+        bounds: element.bounds ? {
+          ...element.bounds,
+          x: element.bounds.x * scaleX,
+          y: element.bounds.y * scaleY,
+          width: element.bounds.width * scaleX,
+          height: element.bounds.height * scaleY,
+        } : undefined,
+      }))
+      const visual = await preprocessWithOpenCV(Buffer.from(buf), visualElements)
+      if (visual.annotatedImageBuffer) {
+        layaShot = `data:image/png;base64,${visual.annotatedImageBuffer.toString("base64")}`
+      }
+      visualSummary = visual.features.visualHierarchy.slice(0, 8)
+        .map((item) => {
+          const element = visualElements.find((candidate) => candidate.selector === item.selector)
+          return element ? `${element.label || item.selector} (visual prominence ${item.prominence.toFixed(2)})` : ""
+        })
+        .filter(Boolean)
+        .join("; ")
+    } catch (visionError) {
+      console.warn("[Visual Discovery]", visionError)
+    }
 
     // Laya Vision: visual classification and blocking UI check
     let layaInfo: { pageType?: string; hasBlockingIssue?: boolean; ready?: boolean } = {}
     try {
       const pageText = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => "")
-      const layaResult = await classifyPage(pageText, page.url(), layaUrl, shot)
+      const layaContext = visualSummary ? `${pageText}\\n\\nVisual prominence: ${visualSummary}` : pageText
+      const layaResult = await classifyPage(layaContext, page.url(), layaUrl, layaShot)
       if (layaResult) {
         layaInfo = layaResult
         if (layaResult.hasBlockingIssue) {
