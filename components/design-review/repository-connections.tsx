@@ -154,7 +154,7 @@ export function RepositoryConnections() {
               <div className="flex shrink-0 items-center gap-2">
                 {state.connected ? (
                   <>
-                    <button type="button" onClick={() => void loadProvider(provider)} disabled={state.loading || working !== null} className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-50 dark:hover:bg-slate-800" aria-label={`Refresh ${label} repositories`}><RefreshCw className={`h-3.5 w-3.5 ${state.loading ? "animate-spin" : ""}"} /></button>
+                    <button type="button" onClick={() => void loadProvider(provider)} disabled={state.loading || working !== null} className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-50 dark:hover:bg-slate-800" aria-label={`Refresh ${label} repositories`}><RefreshCw className={`h-3.5 w-3.5 ${state.loading ? "animate-spin" : ""}`} /></button>
                     <button type="button" onClick={() => void disconnect(provider)} disabled={working !== null} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-rose-950/40" aria-label={`Disconnect ${label}`}><Trash2 className="h-3.5 w-3.5" /></button>
                   </>
                 ) : (
