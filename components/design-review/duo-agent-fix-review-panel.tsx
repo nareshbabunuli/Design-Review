@@ -58,7 +58,8 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [refreshing, setRefreshing] = useState(false)
   const [applyingProposalIds, setApplyingProposalIds] = useState<string[]>([])
   const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])
-  const [checkingReadiness, setCheckingReadiness] = useState(false)\n  const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
+  const [checkingReadiness, setCheckingReadiness] = useState(false)
+  const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
 
   const proposals = useMemo(() => extractProposals(messages), [messages])
 
@@ -225,9 +226,14 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
             </p>
           </div>
         </div>
-        <button type="button" onClick={() => void loadRepositories()} disabled={loadingRepositories || starting} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-900 disabled:opacity-50">
-          <RefreshCw className={`h-3 w-3 ${loadingRepositories ? "animate-spin" : ""}`} /> Refresh repos
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void checkReadiness()} disabled={checkingReadiness || starting} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 hover:bg-indigo-950/40 disabled:opacity-50">
+            {checkingReadiness ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />} {checkingReadiness ? "Checking setup…" : "Check Duo setup"}
+          </button>
+          <button type="button" onClick={() => void loadRepositories()} disabled={loadingRepositories || starting} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-900 disabled:opacity-50">
+            <RefreshCw className={`h-3 w-3 ${loadingRepositories ? "animate-spin" : ""}`} /> Refresh repos
+          </button>
+        </div>
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
@@ -245,7 +251,12 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
         </label>
       </div>
 
-      {connectionError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><AlertCircle className="h-4 w-4 shrink-0" />{connectionError}</div>}\n      {readiness && <div className={`mt-3 rounded-xl border p-3 ${readiness.ready ? "border-emerald-700/40 bg-emerald-950/20" : "border-amber-700/40 bg-amber-950/20"}`} aria-live="polite">\n        <div className="flex items-center gap-2 text-xs font-bold">{readiness.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <AlertCircle className="h-4 w-4 text-amber-300" />}{readiness.ready ? "GitLab Duo setup looks ready" : "GitLab Duo setup needs attention"}{readiness.accountName ? <span className="font-normal text-slate-400">· @{readiness.accountName}</span> : null}</div>\n        <ul className="mt-2 space-y-2">{readiness.checks.map(check => <li key={check.id} className="flex items-start gap-2 text-[11px]"><span className={check.ok ? "text-emerald-300" : "text-amber-300"}>{check.ok ? "✓" : "!"}</span><span><span className="font-semibold text-slate-200">{check.label}:</span> <span className="text-slate-400">{check.detail}</span></span></li>)}</ul>\n        {readiness.note && <p className="mt-2 text-[10px] text-slate-500">{readiness.note}</p>}\n      </div>}
+      {connectionError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><AlertCircle className="h-4 w-4 shrink-0" />{connectionError}</div>}
+      {readiness && <div className={`mt-3 rounded-xl border p-3 ${readiness.ready ? "border-emerald-700/40 bg-emerald-950/20" : "border-amber-700/40 bg-amber-950/20"}`} aria-live="polite">
+        <div className="flex items-center gap-2 text-xs font-bold">{readiness.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <AlertCircle className="h-4 w-4 text-amber-300" />}{readiness.ready ? "GitLab Duo setup looks ready" : "GitLab Duo setup needs attention"}{readiness.accountName ? <span className="font-normal text-slate-400">· @{readiness.accountName}</span> : null}</div>
+        <ul className="mt-2 space-y-2">{readiness.checks.map(check => <li key={check.id} className="flex items-start gap-2 text-[11px]"><span className={check.ok ? "text-emerald-300" : "text-amber-300"}>{check.ok ? "✓" : "!"}</span><span><span className="font-semibold text-slate-200">{check.label}:</span> <span className="text-slate-400">{check.detail}</span></span></li>)}</ul>
+        {readiness.note && <p className="mt-2 text-[10px] text-slate-500">{readiness.note}</p>}
+      </div>}
       {workflowError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-700/40 bg-rose-950/30 p-3 text-xs text-rose-200"><AlertCircle className="h-4 w-4 shrink-0" />{workflowError}</div>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
