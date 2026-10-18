@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertCircle, CheckCircle2, ExternalLink, GitBranch, Loader2, Play, RefreshCw, Sparkles } from "lucide-react"
+import { AlertCircle, CheckCircle2, ExternalLink, GitBranch, Loader2, Play, RefreshCw, ShieldCheck, Sparkles } from "lucide-react"
 import type { AutomationJob, FullAppTestPlan } from "@/lib/ai-automation/types"
 
 type GitLabRepository = {
@@ -12,7 +12,7 @@ type GitLabRepository = {
 }
 type DuoMessage = { role: string; content: string; status?: string }
 type DuoWorkflow = { id: string; status: string; title: string; summary: string; webUrl: string | null; projectId?: string; baseBranch?: string }
-type DuoProposal = { id: string; issue: string; summary: string; files: Array<{ path: string; content: string }> }
+type DuoProposal = { id: string; issue: string; summary: string; files: Array<{ path: string; content: string }> }\ntype DuoReadiness = { ready: boolean; accountName?: string | null; checks: Array<{ id: string; label: string; ok: boolean; detail: string }>; error?: string; note?: string }
 
 function extractProposals(messages: DuoMessage[]): DuoProposal[] {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -56,7 +56,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [workflowError, setWorkflowError] = useState("")
   const [refreshing, setRefreshing] = useState(false)
   const [applyingProposalIds, setApplyingProposalIds] = useState<string[]>([])
-  const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])
+  const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])\n  const [checkingReadiness, setCheckingReadiness] = useState(false)\n  const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
 
   const proposals = useMemo(() => extractProposals(messages), [messages])
 
@@ -120,7 +120,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
     return () => window.clearInterval(timer)
   }, [workflow?.id, workflow?.status, refreshWorkflow])
 
-  const startReview = async () => {
+  const checkReadiness = async () => {\n    setCheckingReadiness(true)\n    setReadiness(null)\n    setConnectionError("")\n    try {\n      const response = await fetch("/api/integrations/gitlab/duo-flows/readiness", { cache: "no-store" })\n      const data = await response.json()\n      if (!response.ok && !Array.isArray(data.checks)) throw new Error(data.error || "Could not check GitLab Duo readiness.")\n      setReadiness(data)\n      if (!data.ready) setConnectionError(data.error || "GitLab Duo is not ready yet. Review the checks below.")\n    } catch (error) {\n      setConnectionError(error instanceof Error ? error.message : "Could not check GitLab Duo readiness.")\n    } finally {\n      setCheckingReadiness(false)\n    }\n  }\n\n  const startReview = async () => {
     if (!selectedProject || !job || !plan) return
     setStarting(true)
     setWorkflowError("")
@@ -226,7 +226,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
         </label>
       </div>
 
-      {connectionError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><AlertCircle className="h-4 w-4 shrink-0" />{connectionError}</div>}
+      {connectionError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><AlertCircle className="h-4 w-4 shrink-0" />{connectionError}</div>}\n      {readiness && <div className={`mt-3 rounded-xl border p-3 ${readiness.ready ? "border-emerald-700/40 bg-emerald-950/20" : "border-amber-700/40 bg-amber-950/20"}`} aria-live="polite">\n        <div className="flex items-center gap-2 text-xs font-bold">{readiness.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <AlertCircle className="h-4 w-4 text-amber-300" />}{readiness.ready ? "GitLab Duo setup looks ready" : "GitLab Duo setup needs attention"}{readiness.accountName ? <span className="font-normal text-slate-400">· @{readiness.accountName}</span> : null}</div>\n        <ul className="mt-2 space-y-2">{readiness.checks.map(check => <li key={check.id} className="flex items-start gap-2 text-[11px]"><span className={check.ok ? "text-emerald-300" : "text-amber-300"}>{check.ok ? "✓" : "!"}</span><span><span className="font-semibold text-slate-200">{check.label}:</span> <span className="text-slate-400">{check.detail}</span></span></li>)}</ul>\n        {readiness.note && <p className="mt-2 text-[10px] text-slate-500">{readiness.note}</p>}\n      </div>}
       {workflowError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-700/40 bg-rose-950/30 p-3 text-xs text-rose-200"><AlertCircle className="h-4 w-4 shrink-0" />{workflowError}</div>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
