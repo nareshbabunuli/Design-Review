@@ -33,7 +33,7 @@ After full-app testing completes, the report view can launch a GitLab Duo Agent 
 
 The panel reads the workflow trace and looks for structured proposals with complete replacement content. A user must explicitly approve an individual proposal or the remaining batch. Approved content is committed to a dedicated `open-design-ai/duo-fixes-<workflow-id>` branch; the default branch is never modified by this flow.
 
-GitHub and GitLab OAuth connections and repository listing are implemented. The current Duo workflow is GitLab-project based: the GitHub connector is not yet wired into the Duo execution/apply path. The workflow requires GitLab Duo Agent Platform access, API availability, and appropriate project configuration; an OAuth connection alone does not guarantee that GitLab will permit flow execution.
+GitHub and GitLab OAuth connections and repository listing are implemented. The current Duo workflow is GitLab-project based: the GitHub connector is not yet wired into the Duo execution/apply path. The workflow requires GitLab Duo Agent Platform access, API availability, and appropriate project configuration; an OAuth connection alone does not guarantee that GitLab will permit flow execution. The in-app **Check Duo setup** preflight checks the connected identity, Duo API access, and required safe-agent capabilities without starting a workflow or modifying files. See [DUO-SETUP-CHECKLIST.md](./DUO-SETUP-CHECKLIST.md) for the required server environment, OAuth callback, and troubleshooting steps. There is no separate Duo API-key variable in this implementation: the API calls use the connected GitLab OAuth token.
 
 ## Token storage note
 
