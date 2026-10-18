@@ -12,7 +12,8 @@ type GitLabRepository = {
 }
 type DuoMessage = { role: string; content: string; status?: string }
 type DuoWorkflow = { id: string; status: string; title: string; summary: string; webUrl: string | null; projectId?: string; baseBranch?: string }
-type DuoProposal = { id: string; issue: string; summary: string; files: Array<{ path: string; content: string }> }\ntype DuoReadiness = { ready: boolean; accountName?: string | null; checks: Array<{ id: string; label: string; ok: boolean; detail: string }>; error?: string; note?: string }
+type DuoProposal = { id: string; issue: string; summary: string; files: Array<{ path: string; content: string }> }
+type DuoReadiness = { ready: boolean; accountName?: string | null; checks: Array<{ id: string; label: string; ok: boolean; detail: string }>; error?: string; note?: string }
 
 function extractProposals(messages: DuoMessage[]): DuoProposal[] {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -56,7 +57,8 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [workflowError, setWorkflowError] = useState("")
   const [refreshing, setRefreshing] = useState(false)
   const [applyingProposalIds, setApplyingProposalIds] = useState<string[]>([])
-  const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])\n  const [checkingReadiness, setCheckingReadiness] = useState(false)\n  const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
+  const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])
+  const [checkingReadiness, setCheckingReadiness] = useState(false)\n  const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
 
   const proposals = useMemo(() => extractProposals(messages), [messages])
 
@@ -120,7 +122,24 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
     return () => window.clearInterval(timer)
   }, [workflow?.id, workflow?.status, refreshWorkflow])
 
-  const checkReadiness = async () => {\n    setCheckingReadiness(true)\n    setReadiness(null)\n    setConnectionError("")\n    try {\n      const response = await fetch("/api/integrations/gitlab/duo-flows/readiness", { cache: "no-store" })\n      const data = await response.json()\n      if (!response.ok && !Array.isArray(data.checks)) throw new Error(data.error || "Could not check GitLab Duo readiness.")\n      setReadiness(data)\n      if (!data.ready) setConnectionError(data.error || "GitLab Duo is not ready yet. Review the checks below.")\n    } catch (error) {\n      setConnectionError(error instanceof Error ? error.message : "Could not check GitLab Duo readiness.")\n    } finally {\n      setCheckingReadiness(false)\n    }\n  }\n\n  const startReview = async () => {
+  const checkReadiness = async () => {
+    setCheckingReadiness(true)
+    setReadiness(null)
+    setConnectionError("")
+    try {
+      const response = await fetch("/api/integrations/gitlab/duo-flows/readiness", { cache: "no-store" })
+      const data = await response.json()
+      if (!response.ok && !Array.isArray(data.checks)) throw new Error(data.error || "Could not check GitLab Duo readiness.")
+      setReadiness(data)
+      if (!data.ready) setConnectionError(data.error || "GitLab Duo is not ready yet. Review the checks below.")
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : "Could not check GitLab Duo readiness.")
+    } finally {
+      setCheckingReadiness(false)
+    }
+  }
+
+  const startReview = async () => {
     if (!selectedProject || !job || !plan) return
     setStarting(true)
     setWorkflowError("")
