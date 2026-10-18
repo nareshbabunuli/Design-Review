@@ -32,6 +32,45 @@ async function gitlabFetch(url: string, accessToken: string, init?: RequestInit)
   })
 }
 
+function extractTraceProposals(traceText: string): ProposedFix[] | null {
+  const entries = traceText.split("\n").filter(Boolean)
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    try {
+      const entry = JSON.parse(entries[index])
+      if (entry.message_type === "human" || typeof entry.content !== "string") continue
+      const raw = entry.content.trim()
+      const candidates = [raw.replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "")]
+      const firstBrace = raw.indexOf("{")
+      const lastBrace = raw.lastIndexOf("}")
+      if (firstBrace >= 0 && lastBrace > firstBrace) candidates.push(raw.slice(firstBrace, lastBrace + 1))
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate)
+          if (!parsed || !Array.isArray(parsed.proposals)) continue
+          const valid = parsed.proposals.every((proposal: unknown) => {
+            if (!proposal || typeof proposal !== "object") return false
+            const item = proposal as Record<string, unknown>
+            return typeof item.id === "string" &&
+              Array.isArray(item.files) &&
+              item.files.length > 0 &&
+              item.files.every((file: unknown) => {
+                if (!file || typeof file !== "object") return false
+                const proposedFile = file as Record<string, unknown>
+                return typeof proposedFile.path === "string" && typeof proposedFile.content === "string"
+              })
+          })
+          if (valid) return parsed.proposals as ProposedFix[]
+        } catch {
+          // Try the next candidate or earlier assistant trace entry.
+        }
+      }
+    } catch {
+      // Ignore malformed JSONL entries.
+    }
+  }
+  return null
+}
+
 export async function POST(request: NextRequest) {
   const user = await requireUser().catch(() => null)
   if (!user) return errorResponse(401, "Sign in before approving a proposed fix.")
@@ -82,10 +121,47 @@ export async function POST(request: NextRequest) {
     const refreshed = await refreshRepositoryConnection("gitlab", connection)
     activeConnection = refreshed.connection
     if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
+
+    // Verify that the workflow belongs to the selected project and that the target
+    // base branch exists before creating or changing any repository branch.
+    const [workflowResponse, traceResponse, baseBranchResponse] = await Promise.all([
+      gitlabFetch(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}`, activeConnection.accessToken),
+      gitlabFetch(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}/trace.jsonl`, activeConnection.accessToken),
+      gitlabFetch(`${projectUrl}/repository/branches/${encodeURIComponent(baseBranch)}`, activeConnection.accessToken),
+    ])
+    if (!workflowResponse.ok) {
+      return errorResponse(workflowResponse.status === 404 ? 404 : 502, `Could not verify the Duo workflow (HTTP ${workflowResponse.status}).`)
+    }
+    const workflow = await workflowResponse.json().catch(() => null)
+    const workflowProjectId = workflow?.project_id ?? workflow?.project?.id
+    if (workflowProjectId === undefined || String(workflowProjectId) !== projectId) {
+      return errorResponse(403, "The Duo workflow could not be verified as belonging to this GitLab project.")
+    }
+    if (!traceResponse.ok) {
+      return errorResponse(502, `Could not verify the approved proposals against the Duo trace (HTTP ${traceResponse.status}).`)
+    }
+    const traceText = await traceResponse.text()
+    const authoritativeProposals = extractTraceProposals(traceText)
+    if (!authoritativeProposals) {
+      return errorResponse(409, "The Duo trace does not contain a verifiable proposals JSON object. Refresh the review and try again.")
+    }
+    for (const approvedProposal of proposals) {
+      const authoritative = authoritativeProposals.find(item => item.id === approvedProposal?.id)
+      if (!authoritative) return errorResponse(403, "An approved proposal was not found in the server-side Duo trace.")
+      const expectedFiles = new Map(authoritative.files.map(file => [file.path, file.content]))
+      if (approvedProposal.files.length !== expectedFiles.size ||
+          approvedProposal.files.some(file => expectedFiles.get(file.path) !== file.content)) {
+        return errorResponse(403, `Approved proposal ${approvedProposal.id} does not match the server-side Duo trace.`)
+      }
+    }
+    if (!baseBranchResponse.ok) {
+      return errorResponse(baseBranchResponse.status === 404 ? 400 : 502, `Could not verify base branch ${baseBranch} (HTTP ${baseBranchResponse.status}).`)
+    }
+
     // Always apply approved proposals to a dedicated branch, never the base/default branch.
     const branchCheck = await gitlabFetch(`${projectUrl}/repository/branches/${encodeURIComponent(branchName)}`, activeConnection.accessToken)
     if (branchCheck.status === 404) {
-      const createBranch = await gitlabFetch(`${projectUrl}/repository/branches`, connection.accessToken, {
+      const createBranch = await gitlabFetch(`${projectUrl}/repository/branches`, activeConnection.accessToken, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ branch: branchName, ref: baseBranch }).toString(),
@@ -101,7 +177,7 @@ export async function POST(request: NextRequest) {
     const actions: Array<{ action: "create" | "update"; file_path: string; content: string }> = []
     for (const [path, content] of files.entries()) {
       const encodedPath = encodeURIComponent(path)
-      const fileCheck = await gitlabFetch(`${projectUrl}/repository/files/${encodedPath}?ref=${encodeURIComponent(branchName)}`, connection.accessToken)
+      const fileCheck = await gitlabFetch(`${projectUrl}/repository/files/${encodedPath}?ref=${encodeURIComponent(branchName)}`, activeConnection.accessToken)
       if (fileCheck.ok) {
         actions.push({ action: "update", file_path: path, content })
       } else if (fileCheck.status === 404) {
@@ -114,7 +190,7 @@ export async function POST(request: NextRequest) {
     const title = proposals.length === 1
       ? (proposals[0].summary || proposals[0].issue || "approved Duo fix")
       : `approved batch of ${proposals.length} Duo fixes`
-    const commitResponse = await gitlabFetch(`${projectUrl}/repository/commits`, connection.accessToken, {
+    const commitResponse = await gitlabFetch(`${projectUrl}/repository/commits`, activeConnection.accessToken, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
