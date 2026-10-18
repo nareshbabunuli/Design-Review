@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     }]
     const createResponse = await gitlabRequest(
       `${baseUrl}/api/v4/ai/duo_workflows/workflows`,
-      connection.accessToken,
+      activeConnection.accessToken,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
