@@ -96,8 +96,13 @@ export async function POST(request: NextRequest) {
     )
     const privilegeIds = privileges.map(item => item.id)
     const privilegeNames = new Set(privileges.map(item => item.name))
-    if (!privilegeNames.has("read_only_gitlab")) {
-      return errorResponse(502, "GitLab did not provide the read-only repository privilege required for a safe Duo review.")
+    const requiredPrivileges = ["read_only_gitlab", "read_write_files", "run_commands"]
+    const missingPrivileges = requiredPrivileges.filter(name => !privilegeNames.has(name))
+    if (missingPrivileges.length > 0) {
+      return errorResponse(
+        502,
+        `GitLab did not provide the required safe Duo capabilities: ${missingPrivileges.join(", ")}. Check Duo Agent Platform access and project configuration.`
+      )
     }
 
     const fullGoal = [
