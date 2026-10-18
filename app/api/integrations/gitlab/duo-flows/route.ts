@@ -188,8 +188,8 @@ export async function GET(request: NextRequest) {
     activeConnection = refreshed.connection
     if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
     const [flowResponse, traceResponse] = await Promise.all([
-      gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}`, connection.accessToken),
-      gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}/trace.jsonl`, connection.accessToken),
+      gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}`, activeConnection.accessToken),
+      gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}/trace.jsonl`, activeConnection.accessToken),
     ])
     if (!flowResponse.ok) {
       return errorResponse(flowResponse.status === 404 ? 404 : 502, `Could not retrieve the Duo workflow status (HTTP ${flowResponse.status}).`)
