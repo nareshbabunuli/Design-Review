@@ -1063,18 +1063,37 @@ export async function discoverAndMapApp(
     transitions.push({ id: `tr-${transitions.length + 1}`, fromScreenId: from, toScreenId: to, action, actionType })
   }
 
-  // Map starting screen (wait for SPA splash to finish first)
-  await waitForSpaPageReady(page, 4500)
+  // Map starting screen (wait for SPA splash and interactive controls to finish mounting first)
+  await page.waitForSelector('input, button, a, [role="button"], div[class*="r-cursor"]', { timeout: 10000 }).catch(() => null)
+  await waitForSpaPageReady(page, 5000)
+  await new Promise((r) => setTimeout(r, 1000))
   const startingHadLoginWall = await hasLoginWall(page)
   const root = await mapCurrentScreen()
-  if (startingHadLoginWall) {
-    const rootNode = screens.find((s) => s.id === root.id)
-    if (rootNode) rootNode.isLoginWall = true
+  const rootNode = screens.find((s) => s.id === root.id)
+  if (startingHadLoginWall && rootNode) {
+    rootNode.isLoginWall = true
   }
   let startId = root.id
 
-  // Login wall: use provided creds, or pause and ask the user
+  // Login wall: ensure the sign-in form is captured cleanly, then use provided creds or pause for user
   if (startingHadLoginWall) {
+    if (rootNode) {
+      try {
+        await page.waitForSelector('input[type="password"], input[type="email"], input[name*="user" i]', { timeout: 8000 }).catch(() => null)
+        await new Promise((r) => setTimeout(r, 600))
+        const loginBuf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
+        rootNode.screenshotUrl = `data:image/jpeg;base64,${Buffer.from(loginBuf).toString("base64")}`
+        const loginInv = await extractActionableInventory(page, layaUrl)
+        if (loginInv.actionableElements.length > 0) {
+          rootNode.actionableElements = loginInv.actionableElements
+        }
+        if (loginInv.forms.length > 0) {
+          rootNode.forms = loginInv.forms
+        }
+        mergeScreenActionsIntoLedger(job, rootNode)
+        saveJob(job)
+      } catch {}
+    }
     const loggedIn = await authenticateIfNeeded(job, page, options.credentials)
     if (loggedIn) {
       await waitForSpaPageReady(page, 3000)

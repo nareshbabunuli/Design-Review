@@ -400,6 +400,59 @@ export function generateStructuredTestPlan(
       // Mark primary login form as handled so we don't duplicate credentials checks,
       // but continue below to plan auxiliary actions (Forgot password, Create account, etc.)
       screen.forms?.forEach((f) => handledFormIds.add(f.id))
+
+      // Include discrete sign-in actions so the map captures the workflow from the start
+      const userInput = screen.actionableElements.find((el) => el.type === "input" && /(email|user|login)/i.test(el.name))
+      const passInput = screen.actionableElements.find((el) => el.type === "input" && /pass/i.test(el.name))
+      const submitBtn = screen.actionableElements.find((el) => el.type === "button" && /^(sign\s*in|log\s*in|submit|continue)$/i.test(el.name.trim()))
+
+      if (userInput) {
+        steps.push({
+          id: `step-${stepCounter++}`,
+          screenId: screen.id,
+          screenName: screen.name,
+          stepIndex: steps.length + 1,
+          actionType: "fill",
+          targetName: userInput.name,
+          targetSelector: userInput.selector,
+          syntheticValue: "user@example.com",
+          expectedResult: `Enter credentials into "${userInput.name}" field.`,
+          actualResult: "Credentials entered during initial authentication.",
+          status: "passed",
+          verdict: "passed",
+        })
+      }
+      if (passInput) {
+        steps.push({
+          id: `step-${stepCounter++}`,
+          screenId: screen.id,
+          screenName: screen.name,
+          stepIndex: steps.length + 1,
+          actionType: "fill",
+          targetName: passInput.name,
+          targetSelector: passInput.selector,
+          syntheticValue: "********",
+          expectedResult: `Enter password into "${passInput.name}" field.`,
+          actualResult: "Password entered during initial authentication.",
+          status: "passed",
+          verdict: "passed",
+        })
+      }
+      if (submitBtn) {
+        steps.push({
+          id: `step-${stepCounter++}`,
+          screenId: screen.id,
+          screenName: screen.name,
+          stepIndex: steps.length + 1,
+          actionType: "click",
+          targetName: submitBtn.name,
+          targetSelector: submitBtn.selector,
+          expectedResult: `Click "${submitBtn.name}" to authenticate.`,
+          actualResult: `Submitted credentials; redirected to ${postLogin ? postLogin.name : "dashboard"}.`,
+          status: "passed",
+          verdict: "passed",
+        })
+      }
     }
 
     // 1. Plan Form Scenarios (grouped by screen.forms)

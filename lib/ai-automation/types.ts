@@ -395,11 +395,27 @@ export type ActionableElement = {
   error?: string
 }
 
+export type ScreenArchetype =
+  | "AUTH_WALL"
+  | "LOGIN_FORM"
+  | "REGISTER_FORM"
+  | "RECOVERY_FORM"
+  | "ENTITY_PAGE"
+  | "LIST_PAGE"
+  | "DETAIL_PAGE"
+  | "WIZARD_PAGE"
+  | "DASHBOARD"
+  | "FILE_UPLOAD_PAGE"
+  | "SETTINGS_PAGE"
+  | "PAYMENT_PAGE"
+  | "OTHER"
+
 export type AppScreenNode = {
   id: string // Unique: S001, S002, S003...
   name: string // Human readable: Login, Register, Dashboard, etc.
   url: string
   path: string
+  archetype?: ScreenArchetype
   componentLocation?: string // e.g. "app/settings/page.tsx" or "src/components/Checkout.tsx"
   sourceFile?: string // alias for componentLocation
   screenshotUrl?: string

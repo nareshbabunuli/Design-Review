@@ -1204,6 +1204,26 @@ export async function executeStructuredTestPlan(
             inputVal = credentials.username
           }
         }
+
+        const isSearchField = /search|filter|find|query/i.test(step.targetName) || /search|filter/i.test(step.targetSelector || "")
+        if (isSearchField) {
+          // Grounded DOM extraction: look for real text in visible table cells or card titles
+          const realDomValue = await page.evaluate(() => {
+            const cells = Array.from(document.querySelectorAll("table tbody tr td, [data-testid*='row'] td, div[role='row'] div"))
+              .map((el) => (el.textContent || "").trim())
+              .filter((t) => t.length > 2 && t.length < 35 && !/^\d+$/.test(t) && !/^(active|pending|edit|delete|view|completed|status)$/i.test(t))
+            if (cells.length > 0) return cells[0].split(/\s+/)[0]
+            const titles = Array.from(document.querySelectorAll("[class*='title'], [class*='name'], h3, h4, li"))
+              .map((el) => (el.textContent || "").trim())
+              .filter((t) => t.length > 2 && t.length < 25)
+            return titles.length > 0 ? titles[0].split(/\s+/)[0] : null
+          }).catch(() => null)
+          if (realDomValue) {
+            inputVal = realDomValue
+            appendLog(job, "info", `[DOM GROUNDING] Extracted visible entity "${realDomValue}" from page for search field "${step.targetName}".`)
+          }
+        }
+
         const isSensitiveField = /password|passcode|secret|token|api[-_ ]?key|private[-_ ]?key|card|cvv|cvc|security code/i.test(step.targetName)
         const displayValue = isSensitiveField ? "[REDACTED]" : secretRedactor.redact(inputVal)
         const field = await findVisibleInput(page, step.targetSelector, step.targetName)
@@ -1913,8 +1933,12 @@ export async function executeStructuredTestPlan(
       }
 
       if (!currentScreen) {
+        // Only stay on the origin screen when the click did not change route or view.
+        // Previously any step on a non-root screen always resolved back to its origin,
+        // so clicks from S002+ never produced new map nodes.
+        const routeChanged = normalizePath(preActionUrl, origin).split("#")[0] !== currentNorm.split("#")[0]
         currentScreen = testPlan.screens.find((screen) => {
-          if (screen.id === step.screenId && screen.id !== "S001") return true
+          if (screen.id === step.screenId && screen.id !== "S001" && !routeChanged && !isSignificantViewChange) return true
           if (hasActiveModal) return screen.name.toLowerCase() === currentScreenName.toLowerCase()
           return (
             screen.path.split("#")[0] === currentNorm &&

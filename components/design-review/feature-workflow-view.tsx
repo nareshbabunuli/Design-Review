@@ -43,6 +43,7 @@ import {
   FastForward,
   Zap,
   Search,
+  FolderOpen,
 } from "lucide-react"
 import type {
   AutomationJob,
@@ -1279,20 +1280,56 @@ export default function FeatureWorkflowView({
                   <div className="pt-1.5 border-t border-slate-800/60 flex items-center justify-between text-[10px] text-slate-400 gap-2 flex-wrap">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {availableProjects && availableProjects.length > 0 && (
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5">
                           <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
                           <span className="font-semibold text-slate-300">Project:</span>
                           <select
-                            value={selectedProjectDir}
-                            onChange={(e) => onSelectProjectDir && onSelectProjectDir(e.target.value)}
-                            className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] text-white font-mono outline-none"
+                            value={availableProjects.some((p) => p.name === selectedProjectDir || p.path === selectedProjectDir) ? selectedProjectDir : "custom"}
+                            onChange={(e) => {
+                              if (e.target.value !== "custom" && onSelectProjectDir) {
+                                onSelectProjectDir(e.target.value)
+                              }
+                            }}
+                            className="bg-transparent text-[10px] text-white font-mono outline-none cursor-pointer max-w-[120px]"
                           >
                             {availableProjects.map((p) => (
-                              <option key={p.path} value={p.path}>
+                              <option key={p.path} value={p.path} className="bg-slate-900 text-white">
                                 {p.name}
                               </option>
                             ))}
+                            <option value="custom" className="bg-slate-900 text-indigo-300">Custom Path/URL...</option>
                           </select>
+                          <input
+                            type="text"
+                            placeholder="Directory path or URL"
+                            value={selectedProjectDir}
+                            onChange={(e) => onSelectProjectDir && onSelectProjectDir(e.target.value)}
+                            className="bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-slate-200 font-mono w-32 focus:border-indigo-500 outline-none"
+                            title="Enter custom local project directory path (e.g. D:\wamp64\www\hh) or target URL"
+                          />
+                          <label
+                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 cursor-pointer transition text-[9px] font-semibold shrink-0"
+                            title="Select test files / fixtures directly"
+                          >
+                            <FolderOpen className="h-2.5 w-2.5 text-indigo-400" />
+                            <span>Select Files</span>
+                            <input
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={(e) => {
+                                const files = e.target.files
+                                if (files && files.length > 0 && onSelectProjectDir) {
+                                  // Update path reference from selected file
+                                  const firstFile = files[0] as any
+                                  const filePath = firstFile.path || firstFile.webkitRelativePath || firstFile.name
+                                  if (filePath) {
+                                    onSelectProjectDir(filePath)
+                                  }
+                                }
+                              }}
+                            />
+                          </label>
                         </div>
                       )}
                       {onGenerateTestData && (

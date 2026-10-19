@@ -52,17 +52,32 @@ export async function planScenarios(
     try {
       const model = resolveModel(base, opts.model)
       const routes = opts.routePaths.length > 0 ? opts.routePaths.join(", ") : "(no routes discovered yet)"
-      const prompt = `You are a QA test planner. The target is a web application at ${opts.targetUrl}.
+      const prompt = `You are an autonomous QA Automation Engineer. Target App: ${opts.targetUrl}.
 Known in-app routes: ${routes}.
 ${opts.landingHint ? `Landing page hint: ${opts.landingHint}` : ""}
-${opts.hasCredentials ? "Valid test credentials WILL be supplied to the agent at runtime — include login success + login failure scenarios." : "No credentials are available — do NOT include scenarios that require login; include one scenario that probes whether the app requires authentication."}
+${opts.hasCredentials ? "Valid test credentials WILL be supplied to the agent at runtime — include login success, authenticated dashboard, and session logout scenarios." : "No credentials are available — probe whether the app requires authentication."}
 
-Write exactly ${count} realistic end-to-end test scenarios covering: navigation, form validation, successful submissions (use obviously-fake data like "Test User" / qa+timestamp@example.com), error handling, auth, broken assets/console errors, and edge cases (404, back button, mobile viewport).
+GOAL: Plan exactly ${count} systematic end-to-end test scenarios using screen archetype templates grounded in real app state.
+
+SCREEN ARCHETYPE TEMPLATES:
+- AUTH_WALL / LOGIN_FORM: happy login -> dashboard render; wrong password -> error message; empty submit -> validation. Must end with clean logout teardown.
+- REGISTER_FORM: dynamic user qa+<timestamp>@example.com -> redirect assert -> logout teardown. Duplicate email -> "exists" error.
+- RECOVERY_FORM: enter test email -> recovery request -> confirmation message -> return to login.
+- ENTITY_PAGE: full CRUD lifecycle (create with unique name -> verify in list -> edit -> verify change -> delete -> verify gone).
+- LIST_PAGE: wait for data to render, read text from first visible row/card, search that exact string, assert filtering works, search guaranteed non-match ("zzz-no-match"), assert friendly empty state, clear search to restore.
+- WIZARD_PAGE: complete all steps with valid data; separately abandon mid-way and verify state on return.
+- FILE_UPLOAD_PAGE: upload fixture file from test fixtures, assert confirmation.
+- DASHBOARD: assert primary metrics and widgets render with plausible values.
+
+EXECUTION & SAFETY RULES:
+1. Every journey is isolated and atomic. Authenticated journeys start from a fresh login and MUST end with explicit logout.
+2. NEVER mix unauthenticated controls (Register, Forgot Password) into an active authenticated session.
+3. DOM Grounding: interact only with elements that actually exist on screen — never assume or hallucinate selectors.
+4. Dynamic uniqueness: use qa+<timestamp>@example.com for unique constraint fields.
+5. No destructive deletion outside intended entity test teardown.
 
 Return STRICTLY valid JSON: an array of objects with keys:
-{ "name": string, "category": one of navigation|auth|forms|validation|error-handling|content|edge, "goal": string, "instruction": string (imperative steps for a browser agent), "needsAuth": boolean, "fillsForms": boolean, "expectedOutcome": string }
-
-Rules: never invent credentials; never touch delete/destroy/purchase/checkout/logout controls; stay on the target origin; form submissions must use clearly-labeled test data.`
+{ "name": string, "category": one of navigation|auth|forms|validation|error-handling|content|edge, "goal": string, "instruction": string (imperative steps for a browser agent), "needsAuth": boolean, "fillsForms": boolean, "expectedOutcome": string }`
 
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
@@ -234,13 +249,13 @@ function heuristicScenarios(opts: PlannerOpts, count: number): TestScenario[] {
       expectedOutcome: "Success state reached with fake data; pre-submit screenshot captured.",
     },
     {
-      name: "In-app search or filter",
+      name: "In-app search or filter (DOM Grounded)",
       category: "content",
-      goal: "Search/filter controls respond and show coherent results.",
-      instruction: `If the app has a search box or filter dropdown, use it: search for a common term, then for a nonsense term ("zzz-no-match"). Verify: results update for the real term, and the nonsense term shows an empty state (not a crash). If no search exists, report that and skip.`,
+      goal: "Search/filter controls respond and show coherent results based on real visible data.",
+      instruction: `On screens with a table or list, wait for data to render. Read the text of the first visible row or card cell. Type that EXACT string into the search/filter box. Verify: the list filters and retains the matching row. Next, type a guaranteed non-match ("zzz-no-match"). Verify: a friendly empty state appears (not a crash). Clear the search box and verify full list restores.`,
       needsAuth: false,
       fillsForms: true,
-      expectedOutcome: "Results update; empty query shows a designed empty state.",
+      expectedOutcome: "Search accurately filters for real visible row text, displays empty state on non-match, and restores upon clearing.",
     },
     {
       name: "Console error and broken-asset sweep",
