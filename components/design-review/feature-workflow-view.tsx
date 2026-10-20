@@ -149,10 +149,6 @@ export interface BotWorkflowChatMessage {
 
 const CONVERSATIONAL_PROMPT_SUGGESTIONS = [
   {
-    label: "🚀 Full App Test",
-    prompt: "Run full app test across all screens and user flows",
-  },
-  {
     label: "👤 Act as Customer & test checkout",
     prompt: "Act as a customer and test the checkout flow with synthetic payment details",
   },
@@ -623,12 +619,6 @@ export default function FeatureWorkflowView({
       {/* 1. TOP HEADER: MODE TOGGLE & STATUS BANNER */}
       <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
-          {/* Header Title: Test */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs shadow-xs">
-            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-            <span className="font-bold text-white tracking-wide">Test</span>
-          </div>
-
           {/* Laya Status Pill */}
           <div
             onClick={() => onToggleLaya && onToggleLaya(!enableLaya)}
@@ -766,14 +756,12 @@ export default function FeatureWorkflowView({
             {/* 1. Chat Top Bar: Provider / Model badge + AI Config + Clear Chat */}
             <div className="px-3.5 py-2 rounded-xl border border-slate-800 bg-slate-900/80 flex items-center justify-between text-xs shrink-0 gap-2 shadow-sm">
               <div className="flex items-center gap-2 min-w-0">
-                <button
-                  type="button"
-                  onClick={onOpenAiConfig}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/50 text-left transition cursor-pointer group"
-                  title="Configure Nebius Token Factory, OmniRouter, or local AI (Draggable Window)"
+                <div
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/20 border border-purple-800/40 text-left select-none"
+                  title="Vision & Automation Engine Active"
                 >
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="font-semibold text-white text-[11px] truncate">
+                  <span className="font-semibold text-slate-200 text-[11px] truncate">
                     {aiProvider === "omnirouter"
                       ? "OmniRouter"
                       : aiProvider === "local"
@@ -783,8 +771,7 @@ export default function FeatureWorkflowView({
                   <span className="text-[10px] text-purple-300 font-mono truncate max-w-[160px]">
                     ({aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()})
                   </span>
-                  <Settings className="h-3 w-3 text-purple-400 opacity-70 group-hover:opacity-100 transition-opacity shrink-0 ml-0.5" />
-                </button>
+                </div>
                 <span className="text-[10px] text-slate-500 hidden sm:inline">Vision &amp; Automation Active</span>
               </div>
 
@@ -1218,16 +1205,6 @@ export default function FeatureWorkflowView({
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onSubTabChange) onSubTabChange("plan")
-                    }}
-                    disabled={isAnalyzing || isRunning}
-                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-purple-600/30 border border-purple-500 text-purple-200 hover:bg-purple-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
-                  >
-                    🎯 Feature Test
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => onStartFullAppTest && onStartFullAppTest()}
                     disabled={isAnalyzing || isRunning}
                     className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-600/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
@@ -1244,7 +1221,6 @@ export default function FeatureWorkflowView({
                     {[
                       "🎯 Test creating a new task",
                       "👤 Test the registration flow",
-                      "🚀 Full App Testing (Map & Plan First)",
                       "🖼️ Test uploading profile picture",
                       "🔄 Test All Clickable Options",
                       "🧠 Analyze Screen & Build UI Checklist",
@@ -1254,13 +1230,9 @@ export default function FeatureWorkflowView({
                         key={idx}
                         type="button"
                         onClick={() => {
-                          if (chip.includes("Full App Testing")) {
-                            if (onStartFullAppTest) onStartFullAppTest()
-                          } else {
-                            const cleanPrompt = chip.replace(/^[^\s]+\s+/, "")
-                            setChatInput(cleanPrompt)
-                            handleSendChatMessage(cleanPrompt)
-                          }
+                          const cleanPrompt = chip.replace(/^[^\s]+\s+/, "")
+                          setChatInput(cleanPrompt)
+                          handleSendChatMessage(cleanPrompt)
                         }}
                         disabled={isAnalyzing || isRunning}
                         className={`shrink-0 px-2.5 py-1 rounded-lg border text-[10px] transition cursor-pointer disabled:opacity-50 ${

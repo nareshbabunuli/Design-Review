@@ -125,6 +125,52 @@ export function getJob(jobId: string): AutomationJob | null {
   return null
 }
 
+export function getLatestJobForProject(projectId: string): AutomationJob | null {
+  if (!projectId) return null
+
+  let latestJob: AutomationJob | null = null
+  let latestTime = 0
+
+  // 1. Scan in-memory store
+  for (const job of jobStore.values()) {
+    if (job.projectId === projectId) {
+      const time = new Date(job.startedAt || (job as any).createdAt || 0).getTime()
+      if (time >= latestTime) {
+        latestTime = time
+        latestJob = job
+      }
+    }
+  }
+
+  // 2. Scan disk storage
+  try {
+    ensureJobsDir()
+    if (fs.existsSync(JOBS_DIR)) {
+      const files = fs.readdirSync(JOBS_DIR)
+      for (const file of files) {
+        if (!file.endsWith(".json")) continue
+        try {
+          const filePath = path.join(JOBS_DIR, file)
+          const raw = fs.readFileSync(filePath, "utf8")
+          const parsed = JSON.parse(raw) as AutomationJob
+          if (parsed && parsed.projectId === projectId) {
+            const time = new Date(parsed.startedAt || (parsed as any).createdAt || 0).getTime()
+            if (time >= latestTime) {
+              latestTime = time
+              latestJob = parsed
+              jobStore.set(parsed.id, parsed)
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.warn("[job-store] Error searching disk jobs for project:", err)
+  }
+
+  return latestJob
+}
+
 import { secretRedactor } from "./secure-credentials-manager"
 
 /**

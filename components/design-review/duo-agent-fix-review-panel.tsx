@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertCircle, CheckCircle2, ExternalLink, GitBranch, Loader2, Play, RefreshCw, ShieldCheck, Sparkles } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, ExternalLink, GitBranch, Loader2, Play, RefreshCw, ShieldCheck, Sparkles } from "lucide-react"
 import type { AutomationJob, FullAppTestPlan } from "@/lib/ai-automation/types"
 
 type GitLabRepository = {
@@ -60,6 +60,8 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [approvedProposalIds, setApprovedProposalIds] = useState<string[]>([])
   const [checkingReadiness, setCheckingReadiness] = useState(false)
   const [readiness, setReadiness] = useState<DuoReadiness | null>(null)
+  const [isOpen, setIsOpen] = useState(false)
+  const isExpanded = isOpen || Boolean(workflow)
 
   const proposals = useMemo(() => extractProposals(messages), [messages])
 
@@ -212,33 +214,123 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
     }
   }
 
-  if (!job || job.status !== "completed" || !plan?.screens?.length) return null
-
-  return (
-    <section className="mx-4 mb-5 rounded-2xl border border-indigo-500/30 bg-slate-950/90 p-4 text-slate-100 shadow-lg" aria-label="GitLab Duo fix review">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+  if (!job || job.status !== "completed" || !plan?.screens?.length) {
+    return (
+      <section className="mx-2 my-2 rounded-2xl border border-indigo-500/30 bg-slate-950/90 p-4 text-slate-100 shadow-lg" aria-label="GitLab Duo fix review">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300"><Sparkles className="h-5 w-5" /></div>
-          <div>
-            <h3 className="text-sm font-bold">GitLab Duo · Prepare fixes for review</h3>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">
-              Mapping and testing are complete. Send the findings to Duo for a proposed fix review. The agent has no GitLab-write or git-push privilege; this action does not change your repository.
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold">GitLab Duo · Autonomous Fix Review</h3>
+              <span className="rounded-full bg-purple-500/10 border border-purple-500/30 px-2 py-0.5 text-[10px] font-medium text-purple-300">
+                AI Agent Platform
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-400 leading-relaxed max-w-xl">
+              When an autonomous test run finishes, GitLab Duo will inspect any failed user flows, broken buttons, or errors and prepare safe code fix proposals for review.
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void checkReadiness()}
+                disabled={checkingReadiness}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 hover:bg-indigo-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {checkingReadiness ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />}
+                {checkingReadiness ? "Checking setup…" : "Preflight Check Duo Setup"}
+              </button>
+            </div>
+            {readiness && (
+              <div className={`mt-3 rounded-xl border p-3 ${readiness.ready ? "border-emerald-700/40 bg-emerald-950/20" : "border-amber-700/40 bg-amber-950/20"}`}>
+                <div className="flex items-center gap-2 text-xs font-bold">
+                  {readiness.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <AlertCircle className="h-4 w-4 text-amber-300" />}
+                  {readiness.ready ? "GitLab Duo setup looks ready" : "GitLab Duo setup needs attention"}
+                </div>
+                <ul className="mt-2 space-y-1">
+                  {readiness.checks.map((check) => (
+                    <li key={check.id} className="flex items-start gap-2 text-[11px]">
+                      <span className={check.ok ? "text-emerald-300" : "text-amber-300"}>{check.ok ? "✓" : "!"}</span>
+                      <span className="text-slate-300">{check.label}: <span className="text-slate-400">{check.detail}</span></span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => void checkReadiness()} disabled={checkingReadiness || starting} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 hover:bg-indigo-950/40 disabled:opacity-50">
-            {checkingReadiness ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />} {checkingReadiness ? "Checking setup…" : "Check Duo setup"}
-          </button>
-          <button type="button" onClick={() => void loadRepositories()} disabled={loadingRepositories || starting} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-900 disabled:opacity-50">
-            <RefreshCw className={`h-3 w-3 ${loadingRepositories ? "animate-spin" : ""}`} /> Refresh repos
+      </section>
+    )
+  }
+
+  return (
+    <section className="mx-4 mb-5 rounded-2xl border border-indigo-500/30 bg-slate-950/90 p-4 text-slate-100 shadow-lg transition-all" aria-label="GitLab Duo fix review">
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold">GitLab Duo · Prepare fixes for review</h3>
+              <span className="rounded-full bg-indigo-500/10 border border-indigo-500/30 px-2 py-0.5 text-[10px] font-medium text-indigo-300">
+                Optional
+              </span>
+            </div>
+            {!isExpanded && (
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Send test findings to Duo for a safe, proposed fix review. Click to expand.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isExpanded && (
+            <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => void checkReadiness()}
+                disabled={checkingReadiness || starting}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 hover:bg-indigo-950/40 disabled:opacity-50 cursor-pointer"
+              >
+                {checkingReadiness ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />} {checkingReadiness ? "Checking setup…" : "Check Duo setup"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void loadRepositories()}
+                disabled={loadingRepositories || starting}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-900 disabled:opacity-50 cursor-pointer"
+              >
+                <RefreshCw className={`h-3 w-3 ${loadingRepositories ? "animate-spin" : ""}`} /> Refresh repos
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            title={isExpanded ? "Hide GitLab Duo panel" : "Show GitLab Duo panel"}
+            aria-expanded={isExpanded}
+          >
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <label className="space-y-1.5 text-xs font-semibold text-slate-300">
-          GitLab repository
+      {isExpanded && (
+        <div className="mt-3 pt-3 border-t border-slate-800/80 animate-in fade-in duration-150">
+          <p className="max-w-2xl text-xs leading-relaxed text-slate-400">
+            Mapping and testing are complete. Send the findings to Duo for a proposed fix review. The agent has no GitLab-write or git-push privilege; this action does not change your repository.
+          </p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <label className="space-y-1.5 text-xs font-semibold text-slate-300">
+              GitLab repository
           <select value={selectedProject} onChange={event => setSelectedProject(event.target.value)} disabled={loadingRepositories || repositories.length === 0} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-xs text-white outline-none focus:border-indigo-400">
             {repositories.length === 0 && <option value="">Connect GitLab in Settings</option>}
             {repositories.map(repo => <option key={repo.id} value={repo.id}>{repo.fullName} · {repo.defaultBranch}</option>)}
@@ -323,6 +415,8 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
           <p className="border-t border-slate-800 bg-slate-900/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
             Human review is required. No changes are applied to the connected repository and no push is performed by this workflow. Review the proposed changes below and explicitly approve each fix or the remaining batch before applying it.
           </p>
+        </div>
+      )}
         </div>
       )}
     </section>

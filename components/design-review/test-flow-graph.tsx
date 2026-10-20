@@ -36,7 +36,9 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
+  FileCode,
 } from "lucide-react"
+import { generateAppMapHtml } from "@/lib/ai-automation/map-html-exporter"
 
 interface TestFlowGraphProps {
   graph: FlowGraph
@@ -72,38 +74,51 @@ function calculateDefaultLayout(graph: FlowGraph): Record<string, NodePos> {
   const nodes = graph.nodes
   if (nodes.length === 0) return positions
 
-  // Find root node (default to first or S001)
+  // Find root node (default to S001 or first node)
   const rootId = nodes.find((n) => n.id === "S001")?.id || nodes[0].id
 
-  // Determine levels: root is level 0, targets of root are level 1, etc.
+  // Determine levels using only FORWARD progression edges (ignore return/back cycles)
   const levels = new Map<string, number>()
   levels.set(rootId, 0)
 
-  // Outgoing map
-  const outgoing = new Map<string, string[]>()
+  // Outgoing map excluding explicit return/back actions
+  const forwardOutgoing = new Map<string, string[]>()
   for (const e of graph.edges) {
-    if (!outgoing.has(e.from)) outgoing.set(e.from, [])
-    outgoing.get(e.from)!.push(e.to)
+    if (e.from === e.to) continue
+    const isExplicitReturn = /back|return|cancel|close|previous|undo/i.test(e.label || "")
+    if (isExplicitReturn) continue
+
+    if (!forwardOutgoing.has(e.from)) forwardOutgoing.set(e.from, [])
+    forwardOutgoing.get(e.from)!.push(e.to)
   }
 
-  // BFS to assign levels
+  // BFS with depth limit
   const queue = [rootId]
+  const visited = new Set<string>([rootId])
   while (queue.length > 0) {
     const curr = queue.shift()!
     const currLevel = levels.get(curr) || 0
-    const children = outgoing.get(curr) || []
+    const children = forwardOutgoing.get(curr) || []
     for (const child of children) {
-      if (!levels.has(child)) {
+      if (!visited.has(child)) {
+        visited.add(child)
         levels.set(child, currLevel + 1)
         queue.push(child)
       }
     }
   }
 
-  // Any unreached nodes go to level 1 or 2
+  // Any unreached nodes distributed across subsequent columns
+  let maxAssignedLevel = 0
+  for (const l of levels.values()) {
+    if (l > maxAssignedLevel) maxAssignedLevel = l
+  }
+  let unreachedCount = 0
   for (const n of nodes) {
     if (!levels.has(n.id)) {
-      levels.set(n.id, 1)
+      const targetLvl = Math.max(1, Math.min(maxAssignedLevel, 1 + Math.floor(unreachedCount / 3)))
+      levels.set(n.id, targetLvl)
+      unreachedCount++
     }
   }
 
@@ -114,25 +129,27 @@ function calculateDefaultLayout(graph: FlowGraph): Record<string, NodePos> {
     byLevel.get(lvl)!.push(id)
   }
 
-  const colSpacingX = 360
-  const rowSpacingY = 195
-  const startX = 60
-  const startY = 60
+  const colSpacingX = 460
+  const rowSpacingY = 280
+  const startX = 80
+  const startY = 80
 
-  // Position root node
-  positions[rootId] = { x: startX, y: startY + 120 }
-
-  // Position subsequent levels
   const sortedLevels = Array.from(byLevel.keys()).sort((a, b) => a - b)
+
+  // Position root node centered vertically against first column
+  const lvl1Ids = byLevel.get(1) || []
+  const rootCenterY = startY + Math.max(0, (Math.min(3, lvl1Ids.length) - 1) * 140)
+  positions[rootId] = { x: startX, y: rootCenterY }
+
   for (const lvl of sortedLevels) {
     if (lvl === 0) continue
     const ids = byLevel.get(lvl)!
-    // Limit vertical column to at most 4 items before wrapping to next sub-column
-    const maxPerCol = 4
+    // Maximum 3 cards per column before expanding horizontally to avoid card piling
+    const maxPerCol = 3
     ids.forEach((id, idx) => {
-      const colOffset = Math.floor(idx / maxPerCol) * colSpacingX
+      const subCol = Math.floor(idx / maxPerCol)
       const rowIdx = idx % maxPerCol
-      const x = startX + lvl * colSpacingX + colOffset
+      const x = startX + lvl * colSpacingX + subCol * 380
       const y = startY + rowIdx * rowSpacingY
       positions[id] = { x, y }
     })
@@ -199,11 +216,12 @@ function getSmartBezier(
     } else {
       // Source is right of Target -> Backward return path curves gracefully underneath
       x1 = fromPos.x
-      y1 = fromPos.y + height * 0.75
+      y1 = fromPos.y + height * 0.8
       x2 = toPos.x + width
-      y2 = toPos.y + height * 0.75
-      const curveOffset = Math.max(60, Math.abs(dx) * 0.45)
-      const arcDroop = 45
+      y2 = toPos.y + height * 0.8
+      const curveOffset = Math.max(70, Math.abs(dx) * 0.35)
+      // Droop proportional to span so long return jumps don't slice middle cards
+      const arcDroop = Math.min(130, Math.max(55, Math.abs(dx) * 0.12))
       cp1x = x1 - curveOffset
       cp1y = y1 + arcDroop
       cp2x = x2 + curveOffset
@@ -296,6 +314,10 @@ export default function TestFlowGraph({
   const [operationFilter, setOperationFilter] = useState<"all" | "passed" | "failed">("all")
   const [evidencePreviewModal, setEvidencePreviewModal] = useState<string | null>(null)
 
+  // Navigation line visibility filters: Forward vs Back/Return
+  const [showForwardLines, setShowForwardLines] = useState(true)
+  const [showReturnLines, setShowReturnLines] = useState(true)
+
   // Track locally deleted screen node IDs for instant UI responsiveness
   const [deletedNodeIds, setDeletedNodeIds] = useState<Set<string>>(new Set())
 
@@ -352,9 +374,39 @@ export default function TestFlowGraph({
   // Reset Layout to automatic hierarchical DAG
   const handleResetLayout = () => {
     setNodePositions(calculateDefaultLayout(graph))
-    setZoom(1.0)
-    setPan({ x: 0, y: 0 })
+    setShowForwardLines(true)
+    setShowReturnLines(true)
+    setZoom(0.9)
+    setPan({ x: 40, y: 30 })
   }
+
+  // Export standalone interactive HTML map
+  const [isExportingHtml, setIsExportingHtml] = useState(false)
+  const handleExportMapHtml = useCallback(() => {
+    try {
+      setIsExportingHtml(true)
+      const html = generateAppMapHtml({
+        plan,
+        screens: screens || plan?.screens || [],
+        transitions: transitions || plan?.transitions || [],
+        title: (plan as any)?.title || plan?.targetUrl || "Interactive App Map",
+        timestamp: new Date().toISOString(),
+      })
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `app-map-${Date.now()}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error("Failed to export app map HTML:", err)
+    } finally {
+      setIsExportingHtml(false)
+    }
+  }, [plan, screens, transitions])
 
   // Zoom controls
   const handleZoomIn = () => setZoom((z: number) => Math.min(2.0, +(z + 0.15).toFixed(2)))
@@ -842,6 +894,52 @@ export default function TestFlowGraph({
 
           <div className="w-px h-4 bg-slate-700 mx-0.5" />
 
+          {/* Front / Forward Navigations Line Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowForwardLines((prev) => !prev)}
+            className={`p-1.5 rounded transition cursor-pointer flex items-center gap-1 text-[11px] font-medium ${
+              showForwardLines
+                ? "bg-indigo-600/25 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/35"
+                : "bg-slate-800/60 text-slate-400 line-through hover:text-slate-200 border border-slate-700/50"
+            }`}
+            title={showForwardLines ? "Hide Front / Forward navigation lines" : "Show Front / Forward navigation lines"}
+          >
+            <span className="inline-block w-2 h-2 rounded-full bg-indigo-500" />
+            <span className="hidden sm:inline">Front Nav</span>
+          </button>
+
+          {/* Back / Return Navigations Line Toggle */}
+          <button
+            type="button"
+            onClick={() => setShowReturnLines((prev) => !prev)}
+            className={`p-1.5 rounded transition cursor-pointer flex items-center gap-1 text-[11px] font-medium ${
+              showReturnLines
+                ? "bg-emerald-600/25 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/35"
+                : "bg-slate-800/60 text-slate-400 line-through hover:text-slate-200 border border-slate-700/50"
+            }`}
+            title={showReturnLines ? "Hide Back / Return navigation lines" : "Show Back / Return navigation lines"}
+          >
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="hidden sm:inline">Back Nav</span>
+          </button>
+
+          <div className="w-px h-4 bg-slate-700 mx-0.5" />
+
+          {/* Export Standalone Map HTML */}
+          <button
+            type="button"
+            onClick={handleExportMapHtml}
+            disabled={isExportingHtml}
+            className="p-1.5 rounded hover:bg-slate-800 text-slate-300 hover:text-emerald-300 transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
+            title="Export interactive standalone HTML map (offline viewable & printable to PDF)"
+          >
+            <FileCode className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Export HTML</span>
+          </button>
+
+          <div className="w-px h-4 bg-slate-700 mx-0.5" />
+
           {/* Fullscreen / Full Page Toggle */}
           <button
             type="button"
@@ -951,6 +1049,10 @@ export default function TestFlowGraph({
               if (!fromPos || !toPos || e.from === e.to) return null
 
               const isReturn = /back|return|close/i.test(e.label) || fromPos.x > toPos.x
+
+              // Filter out lines based on user visibility toggles
+              if (isReturn && !showReturnLines) return null
+              if (!isReturn && !showForwardLines) return null
 
               const { path, midX, midY } = getSmartBezier(
                 fromPos,

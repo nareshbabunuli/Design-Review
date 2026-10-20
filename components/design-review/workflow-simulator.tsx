@@ -2819,25 +2819,6 @@ export function WorkflowSimulator({
         )}
       </div>
 
-
-      {/* Floating Fullscreen button below (Scoped inside workspace canvas, clear of activity rail and status bar) */}
-      <div className="absolute bottom-5 left-5 z-30 flex items-center gap-2 select-none">
-        <button
-          type="button"
-          onClick={toggleFullscreen}
-          className={`px-3.5 py-2 rounded-xl shadow-2xl border transition-all cursor-pointer hover:scale-105 flex items-center gap-2 text-xs font-semibold backdrop-blur-md ${
-            isFullscreen
-              ? "bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-400 shadow-indigo-500/30"
-              : "bg-white/95 dark:bg-[#161822]/95 hover:bg-white dark:hover:bg-[#1f2330] text-slate-800 dark:text-slate-100 border-slate-300 dark:border-[#2b3040] shadow-slate-900/10 dark:shadow-black/50"
-          }`}
-          title={isFullscreen ? "Exit Fullscreen (Show Total Header - Esc)" : "Fullscreen (Hide Total Header)"}
-          aria-label="Toggle Fullscreen"
-        >
-          {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />}
-          <span>{isFullscreen ? "Exit Fullscreen" : "Fullscreen"}</span>
-        </button>
-      </div>
-
       {/* ================= SCREEN INFO MODAL (Notes & Reason) ================= */}
       {showInfoModal && (
         <div

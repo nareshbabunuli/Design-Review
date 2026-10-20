@@ -9,7 +9,6 @@ import type {
   ActionableElement,
 } from "@/lib/ai-automation/types"
 import TestFlowGraph from "./test-flow-graph"
-import { DuoAgentFixReviewPanel } from "./duo-agent-fix-review-panel"
 import ActionLedgerPanel from "./action-ledger-panel"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import {
@@ -1815,8 +1814,6 @@ export default function FullAppTestingView({
           </div>
         )}
       </div>
-
-      <DuoAgentFixReviewPanel job={job} plan={plan} />
 
       {/* Screenshot Preview Modal */}
       {screenshotModal && (

@@ -63,6 +63,7 @@ import {
   User,
   Archive,
   FileBarChart,
+  Save,
 } from "lucide-react"
 import type { Session, AuthChangeEvent } from "@supabase/supabase-js"
 import type { Project, Workflow } from "@/lib/design-review-types"
@@ -76,6 +77,7 @@ import FeatureWorkflowView from "@/components/design-review/feature-workflow-vie
 import AiConfigPanel from "@/components/design-review/ai-config-panel"
 import MovableAiConfigModal from "@/components/design-review/movable-ai-config-modal"
 import ActionLedger from "@/components/design-review/action-ledger"
+import { DuoAgentFixReviewPanel } from "@/components/design-review/duo-agent-fix-review-panel"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import type {
   AutomationJob,
@@ -207,7 +209,16 @@ export default function AISimulatorPage() {
   const [isAiConfigModalOpen, setIsAiConfigModalOpen] = useState(false)
 
   // Movable split pane width state between Phone Simulator and Stage
-  const [splitWidth, setSplitWidth] = useState(500)
+  const [splitWidth, setSplitWidth] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("ai_simulator_split_width")
+      if (saved) {
+        const num = parseInt(saved, 10)
+        if (!isNaN(num) && num >= 300) return num
+      }
+    }
+    return 540
+  })
   const [isDraggingSplitter, setIsDraggingSplitter] = useState(false)
   const isDraggingSplitterRef = useRef(false)
 
@@ -215,22 +226,38 @@ export default function AISimulatorPage() {
     e.preventDefault()
     isDraggingSplitterRef.current = true
     setIsDraggingSplitter(true)
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
     const startX = e.clientX
     const startWidth = splitWidth
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingSplitterRef.current) return
       const delta = moveEvent.clientX - startX
-      const minLeft = 300
-      const minRight = 360
+      const minLeft = 320
+      const minRight = 380
       const maxLeft = Math.max(minLeft, window.innerWidth - minRight)
       const newWidth = Math.max(minLeft, Math.min(maxLeft, startWidth + delta))
       setSplitWidth(newWidth)
     }
 
-    const onMouseUp = () => {
+    const onMouseUp = (upEvent: MouseEvent) => {
       isDraggingSplitterRef.current = false
       setIsDraggingSplitter(false)
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+
+      const finalDelta = upEvent.clientX - startX
+      const minLeft = 320
+      const minRight = 380
+      const maxLeft = Math.max(minLeft, window.innerWidth - minRight)
+      const finalWidth = Math.max(minLeft, Math.min(maxLeft, startWidth + finalDelta))
+      setSplitWidth(finalWidth)
+      try {
+        localStorage.setItem("ai_simulator_split_width", String(finalWidth))
+      } catch {}
+
       window.removeEventListener("mousemove", onMouseMove)
       window.removeEventListener("mouseup", onMouseUp)
     }
@@ -280,6 +307,30 @@ export default function AISimulatorPage() {
       alert(`Export failed: ${err?.message || "Could not generate ZIP bundle"}`)
     } finally {
       setIsExportingZip(false)
+    }
+  }
+
+  const [isSavingData, setIsSavingData] = useState(false)
+  const [saveDataSuccess, setSaveDataSuccess] = useState(false)
+
+  const handleSaveTestData = async () => {
+    if (!currentJob?.id || isSavingData) return
+    setIsSavingData(true)
+    try {
+      const res = await fetch("/api/ai-automation/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: currentJob.id, action: "save_test_data" }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to save test data")
+      if (data.job) setCurrentJob(data.job)
+      setSaveDataSuccess(true)
+      setTimeout(() => setSaveDataSuccess(false), 2500)
+    } catch (err: any) {
+      alert(`Save failed: ${err?.message || "Could not save data"}`)
+    } finally {
+      setIsSavingData(false)
     }
   }
 
@@ -383,7 +434,7 @@ export default function AISimulatorPage() {
 
   // VS Code Collapsible Bottom Panel State (Terminal, Coverage Breakdown, Action Logs)
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false)
-  const [bottomPanelTab, setBottomPanelTab] = useState<"terminal" | "coverage" | "actions">("terminal")
+  const [bottomPanelTab, setBottomPanelTab] = useState<"terminal" | "coverage" | "actions" | "duo">("terminal")
 
   // Check URL query param on mount: e.g. /ai-simulator?tab=map or ?view=screens opens directly
   useEffect(() => {
@@ -480,9 +531,9 @@ export default function AISimulatorPage() {
     if (tabId === "simulator") {
       setWorkspaceLayoutMode("device")
     } else {
-      // Keep stage view
-      if (workspaceLayoutMode === "stage") {
-        setWorkspaceLayoutMode("stage")
+      // If currently in device-only mode, return to split view so the stage is visible
+      if (workspaceLayoutMode === "device") {
+        setWorkspaceLayoutMode("split")
       }
     }
     if (tabId === "map" && !currentJob) {
@@ -509,25 +560,7 @@ export default function AISimulatorPage() {
     handleSelectWorkspaceTab("simulator")
   }, [handleSelectWorkspaceTab])
 
-  // Workspace tabs matching Full App Testing components
-  const workspaceTabs: Array<{
-    id: StageViewMode
-    label: string
-    icon: any
-    count?: number | string
-    isLive?: boolean
-  }> = useMemo(() => {
-    const passedCount = activePlan?.steps?.filter((s) => s.status === "passed").length || 0
-    const totalSteps = activePlan?.steps?.length || 0
-    const coveragePct =
-      totalSteps > 0 ? Math.round((passedCount / totalSteps) * 100) : activePlan?.coverage?.percentage || 100
 
-    return [
-      { id: "simulator", label: "Simulator", icon: Smartphone },
-      { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: currentJob?.status === "running" },
-      { id: "map", label: "Full App Stage & Map", icon: MapIcon, count: activePlan?.screens.length || 0 },
-    ]
-  }, [activePlan, currentJob])
 
   const handleSelectScreenFromGraph = useCallback(
     (screenId: string) => {
@@ -752,7 +785,7 @@ export default function AISimulatorPage() {
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<"account" | "integrations">("account")
+  const [settingsTab, setSettingsTab] = useState<"account" | "integrations" | "ai">("ai")
   const activityProfileRef = useRef<HTMLDivElement>(null)
   const [chatInput, setChatInput] = useState("")
   const [commandQueue, setCommandQueue] = useState<Array<{ id: string; text: string; image?: string }>>([])
@@ -1169,9 +1202,10 @@ export default function AISimulatorPage() {
     }
   }
 
-  const handleSaveSettingsCredentials = async () => {
+  const handleSaveSettingsCredentials = async (creds?: Record<string, string>) => {
     if (!currentJob?.id || isSubmittingSettings) return
     setIsSubmittingSettings(true)
+    const effectiveCredentials = creds && Object.keys(creds).length > 0 ? creds : settingsFormValues
     try {
       await fetch("/api/ai-automation/status", {
         method: "POST",
@@ -1179,7 +1213,7 @@ export default function AISimulatorPage() {
         body: JSON.stringify({
           jobId: currentJob.id,
           action: "provide_settings_credentials",
-          credentials: settingsFormValues,
+          credentials: effectiveCredentials,
         }),
       })
       setSettingsFormValues({})
@@ -1584,20 +1618,54 @@ export default function AISimulatorPage() {
     return projects.find((p) => p.id === activeProjectId) || projects[0] || DEFAULT_AI_PROJECT
   }, [projects, activeProjectId])
 
-  // Resume previous background job from localStorage if present
+  // Persist active job ID globally and per project in localStorage
   useEffect(() => {
-    const savedJobId = localStorage.getItem("ai_automation_last_job_id")
-    if (savedJobId) {
-      fetch(`/api/ai-automation/status?jobId=${savedJobId}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data?.success && data.job) {
-            setCurrentJob(data.job)
-          }
-        })
-        .catch(() => {})
+    if (currentJob?.id) {
+      localStorage.setItem("ai_automation_last_job_id", currentJob.id)
+      if (activeProjectId) {
+        localStorage.setItem(`ai_automation_job_${activeProjectId}`, currentJob.id)
+      }
     }
-  }, [])
+  }, [currentJob?.id, activeProjectId])
+
+  // Restore previous job when project is opened or changed
+  useEffect(() => {
+    if (!activeProjectId) return
+
+    let cancelled = false
+    const projectJobId =
+      localStorage.getItem(`ai_automation_job_${activeProjectId}`) ||
+      localStorage.getItem("ai_automation_last_job_id")
+
+    const queryUrl = projectJobId
+      ? `/api/ai-automation/status?jobId=${projectJobId}`
+      : `/api/ai-automation/status?projectId=${activeProjectId}`
+
+    fetch(queryUrl)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.success && data.job) {
+          if (!data.job.projectId || data.job.projectId === activeProjectId) {
+            setCurrentJob(data.job)
+          } else if (projectJobId && data.job.projectId !== activeProjectId) {
+            // Global ID was for a different project; load latest job for this project
+            fetch(`/api/ai-automation/status?projectId=${activeProjectId}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((pData) => {
+                if (!cancelled && pData?.success && pData.job) {
+                  setCurrentJob(pData.job)
+                }
+              })
+              .catch(() => {})
+          }
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectId])
 
   // Poll job status while running or queued
   useEffect(() => {
@@ -2255,76 +2323,10 @@ export default function AISimulatorPage() {
                 >
                   <Pencil className="h-5 w-5 transition group-hover:scale-105" />
                 </Link>
-
-                <div className="w-6 h-px bg-slate-800/80 my-0.5" />
-
-                {/* Workspace Stage Switching Tabs */}
-                {workspaceTabs.map((tab) => {
-                  const Icon = tab.icon
-                  const isActive =
-                    stageViewMode === tab.id ||
-                    (tab.id === "map" && ["map", "screens", "plan", "execution", "files", "coverage"].includes(stageViewMode))
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => handleSelectWorkspaceTab(tab.id)}
-                      className={`w-full py-2 flex flex-col items-center justify-center relative transition group cursor-pointer ${
-                        isActive
-                          ? "text-white"
-                          : "text-slate-500 hover:text-slate-200"
-                      }`}
-                      title={`${tab.label}${tab.count !== undefined ? ` (${tab.count})` : ""}`}
-                    >
-                      {/* Active Indicator Bar on Left */}
-                      {isActive && (
-                        <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-indigo-500 rounded-r" />
-                      )}
-                      <div className="relative">
-                        <Icon className={`h-5 w-5 transition ${isActive ? "text-indigo-400" : "group-hover:scale-105"}`} />
-                        {tab.count !== undefined && (
-                          <span className="absolute -top-1.5 -right-2.5 px-1 py-0.2 rounded-full text-[8px] font-mono font-bold bg-indigo-600 text-white min-w-[14px] text-center leading-tight">
-                            {typeof tab.count === "string" ? tab.count.replace(/[^0-9]/g, "") || tab.count : tab.count}
-                          </span>
-                        )}
-                        {tab.isLive && (
-                          <span className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 ring-2 ring-slate-950 animate-pulse" />
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
               </div>
 
-              {/* Bottom Activity Icons: Terminal, AI Bot, Theme, Fullscreen, Profile */}
+              {/* Bottom Activity Icons: GitHub, Theme, Fullscreen, Profile */}
               <div className="flex flex-col items-center gap-2 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
-                {/* Toggle Bottom Terminal/Panel */}
-                <button
-                  type="button"
-                  onClick={() => setIsBottomPanelOpen((prev) => !prev)}
-                  className={`p-2 rounded-lg transition cursor-pointer relative group ${
-                    isBottomPanelOpen
-                      ? "text-indigo-400 bg-indigo-600/10"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                  title={isBottomPanelOpen ? "Close Terminal / Bottom Panel" : "Open Terminal / Bottom Panel"}
-                >
-                  <Terminal className="h-5 w-5" />
-                </button>
-
-                {/* Open Movable AI Vision & Engine Settings Modal */}
-                <button
-                  type="button"
-                  onClick={() => setIsAiConfigModalOpen((prev) => !prev)}
-                  className={`p-2 rounded-lg transition cursor-pointer relative group ${
-                    isAiConfigModalOpen
-                      ? "text-purple-400 bg-purple-600/10"
-                      : "text-slate-500 hover:text-slate-300"
-                  }`}
-                  title="Open AI Vision & Engine Settings (Movable Window)"
-                >
-                  <Sparkles className="h-5 w-5" />
-                </button>
 
                 {/* GitHub Repository Link */}
                 <a
@@ -2479,10 +2481,10 @@ export default function AISimulatorPage() {
                           ? "bg-indigo-600 text-white shadow-xs"
                           : "text-slate-400 hover:text-white"
                       }`}
-                      title="Full AI Section (Maximize AI Bot & Testing workspace)"
+                      title="Expand AI Workspace (Hide Phone)"
                     >
-                      <Maximize2 className="h-3 w-3" />
-                      <span>Full AI Section</span>
+                      <PanelRightOpen className="h-3 w-3" />
+                      <span>AI Only</span>
                     </button>
                     <button
                       type="button"
@@ -2505,27 +2507,18 @@ export default function AISimulatorPage() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsAiConfigModalOpen(true)}
-                    className="px-2.5 py-1 rounded-md bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                    title="Configure AI Vision Model, Provider, and API keys (Movable Window)"
-                  >
-                    <Settings className="h-3.5 w-3.5 text-purple-400" />
-                    <span>AI Settings</span>
-                    <span className="text-[10px] text-purple-300 font-mono hidden sm:inline">
-                      ({aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()})
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={() => {
-                      setSettingsTab("account")
+                      setSettingsTab("ai")
                       setIsSettingsOpen(true)
                     }}
-                    className="p-1.5 rounded-md hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
-                    title="Open Project & Application Settings"
+                    className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="Settings: AI Engine, Integrations & Account"
                   >
-                    <Settings className="h-3.5 w-3.5" />
+                    <Settings className="h-3.5 w-3.5 text-slate-400" />
+                    <span>Settings</span>
+                    <span className="text-[10px] text-purple-300 font-mono hidden sm:inline px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
+                      {aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()}
+                    </span>
                   </button>
 
                   {currentJob?.id && (
@@ -2538,6 +2531,25 @@ export default function AISimulatorPage() {
                       >
                         <FileBarChart className="h-3 w-3" />
                         <span>View Report</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.open(`/api/ai-automation/map-html?jobId=${currentJob.id}`, '_blank')}
+                        className="px-2.5 py-1 rounded-md bg-emerald-600/30 hover:bg-emerald-600 border border-emerald-500/50 text-emerald-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                        title="View interactive standalone App Map in browser (with search, pan-zoom, & element inspector)"
+                      >
+                        <FileCode className="h-3 w-3 text-emerald-300" />
+                        <span>Map HTML</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveTestData}
+                        disabled={isSavingData}
+                        className="px-2.5 py-1 rounded-md bg-emerald-950/40 hover:bg-emerald-800/60 border border-emerald-500/50 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                        title="Save session test data and discovered map durably so nothing is lost when closing"
+                      >
+                        {isSavingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3 text-emerald-400" />}
+                        <span>{saveDataSuccess ? "Saved!" : isSavingData ? "Saving..." : "Save Data"}</span>
                       </button>
                       <button
                         type="button"
@@ -2638,11 +2650,17 @@ export default function AISimulatorPage() {
                 {workspaceLayoutMode === "split" && (
                   <div
                     onMouseDown={handleSplitterMouseDown}
-                    onDoubleClick={() => setSplitWidth(Math.round(window.innerWidth / 2))}
-                    className="w-2 hover:w-2.5 bg-slate-900 hover:bg-indigo-600/30 active:bg-indigo-600/50 transition-all cursor-col-resize shrink-0 z-30 flex items-center justify-center group select-none border-x border-slate-800"
+                    onDoubleClick={() => {
+                      const half = Math.round(window.innerWidth / 2)
+                      setSplitWidth(half)
+                      try {
+                        localStorage.setItem("ai_simulator_split_width", String(half))
+                      } catch {}
+                    }}
+                    className="w-3 hover:w-3.5 bg-slate-900/90 hover:bg-indigo-600/40 active:bg-indigo-600/60 transition-colors cursor-col-resize shrink-0 z-30 flex items-center justify-center group select-none border-x border-slate-800"
                     title="Drag to resize Live Phone vs AI Section (Double-click to reset 50/50)"
                   >
-                    <div className="w-0.5 h-8 bg-slate-600 group-hover:bg-indigo-400 group-active:bg-white rounded-full transition-colors" />
+                    <div className="w-1 h-10 bg-slate-500 group-hover:bg-indigo-400 group-active:bg-white rounded-full transition-colors" />
                   </div>
                 )}
 
@@ -2655,7 +2673,8 @@ export default function AISimulatorPage() {
                 )}
 
                 {/* Stage View Pane (Map / Screens / Plan / Execution) - Full Width */}
-                <div className={`flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0 ${isDraggingSplitter ? "pointer-events-none select-none" : ""}`}>
+                {workspaceLayoutMode !== "device" && (
+                  <div className={`flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0 ${isDraggingSplitter ? "pointer-events-none select-none" : ""}`}>
                     {stageViewMode === "chat" || testingMode === "feature_workflow" ? (
                       <FeatureWorkflowView
                         job={currentJob}
@@ -2734,6 +2753,7 @@ export default function AISimulatorPage() {
                       />
                     )}
                   </div>
+                )}
               </div>
             </div>
 
@@ -2824,6 +2844,20 @@ export default function AISimulatorPage() {
                     {activePlan?.steps?.length}
                   </span>
                 )}
+              </button>
+
+              {/* GitLab Duo Fix Review Tab */}
+              <button
+                type="button"
+                onClick={() => setBottomPanelTab("duo")}
+                className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
+                  bottomPanelTab === "duo"
+                    ? "bg-[#0a0c12] text-purple-400 border-t-2 border-purple-500 text-white"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                <span>Duo Agent</span>
               </button>
             </div>
 
@@ -2982,6 +3016,12 @@ export default function AISimulatorPage() {
                 history={actionLedgerHistory}
               />
             )}
+
+            {bottomPanelTab === "duo" && (
+              <div className="h-full overflow-y-auto custom-scrollbar p-2">
+                <DuoAgentFixReviewPanel job={currentJob} plan={activePlan} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3101,14 +3141,43 @@ export default function AISimulatorPage() {
           </span>
         </div>
 
-        {/* Right: Console Toggle, Target & AI Provider */}
-        <div className="flex items-center gap-3 shrink-0 ml-2">
+        {/* Right: Duo Agent & Console Toggles, Target */}
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          {/* Toggle GitLab Duo Agent Panel */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isBottomPanelOpen && bottomPanelTab === "duo") {
+                setIsBottomPanelOpen(false)
+              } else {
+                setBottomPanelTab("duo")
+                setIsBottomPanelOpen(true)
+              }
+            }}
+            className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded transition cursor-pointer ${
+              isBottomPanelOpen && bottomPanelTab === "duo"
+                ? "text-purple-300 bg-purple-950/60 border border-purple-800/60"
+                : "text-slate-400 hover:text-purple-300 hover:bg-slate-800/40"
+            }`}
+            title="Toggle GitLab Duo AI Fix Review"
+          >
+            <Sparkles className="h-3 w-3 text-purple-400" />
+            <span className="hidden sm:inline">Duo Agent</span>
+          </button>
+
           {/* Toggle Terminal / Console Panel */}
           <button
             type="button"
-            onClick={() => setIsBottomPanelOpen((prev) => !prev)}
+            onClick={() => {
+              if (isBottomPanelOpen && bottomPanelTab === "terminal") {
+                setIsBottomPanelOpen(false)
+              } else {
+                setBottomPanelTab("terminal")
+                setIsBottomPanelOpen(true)
+              }
+            }}
             className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded transition cursor-pointer ${
-              isBottomPanelOpen
+              isBottomPanelOpen && bottomPanelTab === "terminal"
                 ? "text-indigo-300 bg-indigo-950/60 border border-indigo-800/60"
                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
             }`}
@@ -3123,16 +3192,6 @@ export default function AISimulatorPage() {
           <span className="text-slate-500 hidden sm:inline truncate max-w-[200px]">
             {targetUrl || "http://localhost:3001"}
           </span>
-          <div className="w-px h-3.5 bg-slate-800 hidden sm:block" />
-          <button
-            type="button"
-            onClick={() => setIsAiConfigModalOpen((prev) => !prev)}
-            className="flex items-center gap-1 text-slate-300 hover:text-white transition cursor-pointer"
-            title="Configure AI Vision & Engine"
-          >
-            <Sparkles className="h-3 w-3 text-purple-400" />
-            <span className="hidden sm:inline">AI Config</span>
-          </button>
         </div>
       </footer>
 
@@ -3547,7 +3606,7 @@ export default function AISimulatorPage() {
         </div>
       )}
 
-      {/* Settings & Third-Party Integrations Modal */}
+      {/* Unified Settings Modal (AI Engine, Third-Party Integrations, Account) */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -3556,6 +3615,25 @@ export default function AISimulatorPage() {
         initialTab={settingsTab}
         onOpenFigmaImport={() => {
           window.location.href = "/?import=figma"
+        }}
+        aiConfigProps={{
+          aiProvider,
+          onUpdateAiProvider: handleUpdateAiProvider,
+          nebiusApiKey,
+          onUpdateNebiusApiKey: handleUpdateNebiusApiKey,
+          selectedAiModel,
+          onUpdateAiModel: handleUpdateAiModel,
+          omniRouterBaseUrl,
+          onUpdateOmniRouterUrl: handleUpdateOmniRouterUrl,
+          omniRouterKey,
+          onUpdateOmniRouterKey: handleUpdateOmniRouterKey,
+          omniRouterModel,
+          onUpdateOmniRouterModel: handleUpdateOmniRouterModel,
+          localAiBaseUrl,
+          onUpdateLocalBaseUrl: handleUpdateLocalBaseUrl,
+          isTestingAiConnection,
+          onTestAiConnection: handleTestAiConnection,
+          aiConnectionTestResult,
         }}
       />
     </div>

@@ -23,14 +23,16 @@ import {
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { RepositoryConnections } from "@/components/design-review/repository-connections"
+import AiConfigPanel, { AiConfigPanelProps } from "./ai-config-panel"
 
-interface SettingsModalProps {
+export interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
   userEmail?: string | null
   userId?: string | null
-  initialTab?: "account" | "integrations"
+  initialTab?: "account" | "integrations" | "ai"
   onOpenFigmaImport?: () => void
+  aiConfigProps?: AiConfigPanelProps
 }
 
 export function SettingsModal({
@@ -40,9 +42,16 @@ export function SettingsModal({
   userId,
   initialTab = "account",
   onOpenFigmaImport,
+  aiConfigProps,
 }: SettingsModalProps) {
   const supabase = createClient()
-  const [activeTab, setActiveTab] = useState<"account" | "integrations">(initialTab)
+  const [activeTab, setActiveTab] = useState<"account" | "integrations" | "ai">(initialTab)
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab)
+    }
+  }, [isOpen, initialTab])
 
   // Account tab state
   const [newPassword, setNewPassword] = useState("")
@@ -223,25 +232,27 @@ export function SettingsModal({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 px-6 bg-slate-50/30 dark:bg-slate-900/30">
-          <button
-            type="button"
-            onClick={() => setActiveTab("account")}
-            className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
-              activeTab === "account"
-                ? "border-blue-600 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
-            }`}
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-            <span>Account Security</span>
-          </button>
+        <div className="flex border-b border-slate-200 dark:border-slate-800 px-6 bg-slate-50/30 dark:bg-slate-900/30 overflow-x-auto">
+          {aiConfigProps && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("ai")}
+              className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer relative shrink-0 ${
+                activeTab === "ai"
+                  ? "border-purple-600 text-purple-600 dark:text-purple-400"
+                  : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+              <span>AI Vision &amp; Engine</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveTab("integrations")}
-            className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer relative ${
+            className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer relative shrink-0 ${
               activeTab === "integrations"
-                ? "border-purple-600 text-purple-600 dark:text-purple-400"
+                ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
                 : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
@@ -251,10 +262,33 @@ export function SettingsModal({
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("account")}
+            className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shrink-0 ${
+              activeTab === "account"
+                ? "border-blue-600 text-blue-600 dark:text-blue-400"
+                : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+            }`}
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            <span>Account Security</span>
+          </button>
         </div>
 
         {/* Content Area */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {/* TAB 0: AI VISION & ENGINE */}
+          {activeTab === "ai" && aiConfigProps && (
+            <div className="space-y-4">
+              <AiConfigPanel
+                {...aiConfigProps}
+                isEmbedded={true}
+                onClose={onClose}
+              />
+            </div>
+          )}
+
           {/* TAB 1: ACCOUNT */}
           {activeTab === "account" && (
             <div className="space-y-6">

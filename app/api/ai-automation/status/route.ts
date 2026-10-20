@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getJob, cancelJob, saveJob, executeJob, appendLog } from "@/lib/ai-automation/runner"
+import { getJob, getLatestJobForProject, cancelJob, saveJob, executeJob, appendLog } from "@/lib/ai-automation/runner"
 import {
   requireUser,
   requireProjectAccess,
@@ -27,14 +27,15 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const jobId = searchParams.get("jobId")
+    const projectId = searchParams.get("projectId")
 
-    if (!jobId) {
-      return NextResponse.json({ error: "Missing jobId parameter" }, { status: 400 })
+    if (!jobId && !projectId) {
+      return NextResponse.json({ error: "Missing jobId or projectId parameter" }, { status: 400 })
     }
 
-    const job = getJob(jobId)
+    const job = jobId ? getJob(jobId) : getLatestJobForProject(projectId!)
     if (!job) {
-      return NextResponse.json({ error: "Job not found" }, { status: 404 })
+      return NextResponse.json({ error: "Job not found", job: null }, { status: 404 })
     }
 
     await assertJobAccess(job as any)
@@ -71,6 +72,19 @@ export async function POST(req: NextRequest) {
     await assertJobAccess(job as any)
     if (job.projectId) {
       await requireProjectAccess(job.projectId, "edit")
+    }
+
+    if (action === "save_test_data") {
+      saveJob(job)
+      emitSessionEvent(job, "progress", {
+        message: "Session test data and discovered screen map durably saved to disk.",
+      })
+      return NextResponse.json({
+        success: true,
+        saved: true,
+        message: "Test data and app map successfully saved to disk.",
+        job: sanitizeJobForClient(job as unknown as Record<string, unknown>),
+      })
     }
 
     if (action === "navigate_session") {
